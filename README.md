@@ -203,6 +203,9 @@ See [CONTRIBUTING.md](https://github.com/awesomenull-dev/GoldenNugget/blob/main/
 - [pymobiledevice3][pymobiledevice3GitHub] for restoring and device algorithms.
 - [PySide6][PySide6Doc] for the GUI library.
 
+## Discord server
+Wanted support? join our [Discord Server][server].
+
 [i18n]: https://github.com/awesomenull-dev/gNugget-i18n
 [NuggetLogo]: https://github.com/awesomenull-dev/GoldenNugget/blob/main/src/qt/credits/small_nugget.png
 [LeminLimez]: https://github.com/leminlimez
@@ -238,3 +241,4 @@ See [CONTRIBUTING.md](https://github.com/awesomenull-dev/GoldenNugget/blob/main/
 [DuyGitHub]: https://github.com/khanhduytran0
 [HuyTwitter]: https://x.com/Little_34306
 [iTechExpertTwitter]: https://twitter.com/iTechExpert21
+[server]: https://discord.gg/RwbtH7pW5e

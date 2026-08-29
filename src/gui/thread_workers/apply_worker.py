@@ -5,8 +5,6 @@ import queue
 import traceback
 import threading
 
-from src.gui.pages.pages_list import Page
-
 
 class ApplyAlertMessage:
     def __init__(self, txt: str, title: str = "Error!", icon=QMessageBox.Critical, detailed_txt: str = None, backup_path: str = None):
@@ -58,7 +56,7 @@ class ApplyThread(QThread):
     # would corrupt the device state.
     _PROMPT_TIMEOUT_SEC = 10 * 60
 
-    def __init__(self, manager, settings: QSettings, reset_pages: Optional[list[Page]] = None):
+    def __init__(self, manager, settings: QSettings, reset_pages=None):
         super().__init__()
         self.manager = manager
         self.settings = settings

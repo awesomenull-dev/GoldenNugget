@@ -1,7 +1,25 @@
-from PySide6.QtCore import Qt, QCoreApplication
+from PySide6.QtCore import Qt, QCoreApplication, QRectF
+from PySide6.QtGui import QPixmap, QImage, QPainter
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame
 )
+
+import os
+
+_ICON_DIR = os.path.join(os.path.dirname(__file__), "..", "qt", "icon")
+
+
+def _render_svg(path: str, width: int, height: int) -> QPixmap:
+    """Render an SVG file into a monochrome-friendly QPixmap (no QtSvg widget needed)."""
+    renderer = QSvgRenderer(path)
+    image = QImage(width, height, QImage.Format.Format_ARGB32)
+    image.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    renderer.render(painter, QRectF(0, 0, width, height))
+    painter.end()
+    return QPixmap.fromImage(image)
 
 
 class InterfacePickerDialog(QDialog):
@@ -42,6 +60,12 @@ class InterfacePickerDialog(QDialog):
         """)
         cf_lay = QVBoxLayout(classic_frame)
         cf_lay.setContentsMargins(16, 12, 16, 12)
+        classic_art = QLabel()
+        classic_art.setPixmap(_render_svg(
+            os.path.join(_ICON_DIR, "ui_classic.svg"), 340, 160))
+        classic_art.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        classic_art.setStyleSheet("border: none; background: transparent;")
+        cf_lay.addWidget(classic_art)
         cf_title = QLabel(QCoreApplication.translate("Nugget", "Classic"))
         cf_title.setStyleSheet("font-size: 16px; font-weight: 600; border: none;")
         cf_desc = QLabel(QCoreApplication.translate(
@@ -62,6 +86,12 @@ class InterfacePickerDialog(QDialog):
         """)
         io_lay = QVBoxLayout(ios_frame)
         io_lay.setContentsMargins(16, 12, 16, 12)
+        ios_art = QLabel()
+        ios_art.setPixmap(_render_svg(
+            os.path.join(_ICON_DIR, "ui_ios.svg"), 340, 160))
+        ios_art.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        ios_art.setStyleSheet("border: none; background: transparent;")
+        io_lay.addWidget(ios_art)
         io_title = QLabel(QCoreApplication.translate("Nugget", "iOS-style"))
         io_title.setStyleSheet("font-size: 16px; font-weight: 600; border: none;")
         io_desc = QLabel(QCoreApplication.translate(

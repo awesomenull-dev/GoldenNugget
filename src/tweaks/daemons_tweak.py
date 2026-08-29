@@ -88,3 +88,45 @@ class Daemon(Enum):
     ]
     NanoTimeKit = ["com.apple.nanotimekitcompaniond"]
     FollowUp = ["com.apple.followupd"]
+    # --- Safe additions (from MiniVoidyy/GoldenNugget-) grouped by function.
+    # Only daemons whose disable is safe and not already removed/disabled by iOS.
+    AppleAds = [
+        "com.apple.promotedcontentd",
+        "com.apple.adprivacyd",
+        "com.apple.adservicesd"
+    ]
+    News = ["com.apple.newsd"]
+    AskPermissions = ["com.apple.askpermissiond"]
+    FamilySharing = [
+        "com.apple.familycircled",
+        "com.apple.familynotificationd"
+    ]
+    VideoSubscriptions = ["com.apple.videosubscriptionsd"]
+    WebBookmarks = ["com.apple.webbookmarksd"]
+    AppleWatchNano = [
+        "com.apple.nanoregistryd",
+        "com.apple.nanomediacontrold",
+        "com.apple.nanopreferencesd"
+    ]
+    SiriServices = [
+        "com.apple.siriactionsd",
+        "com.apple.siriinferenced",
+        "com.apple.assistant.intentdaemon"
+    ]
+    Feedback = ["com.apple.feedbackd"]
+    Commerce = ["com.apple.commerce"]
+    Automount = ["com.apple.automountd"]
+    WifiLogging = ["com.apple.wifilogd"]
+    Maps = ["com.apple.geod"]
+    SafariSuggestions = ["com.apple.parsecd"]
+    Shazam = ["com.apple.shazamd"]
+    SettingsStats = ["com.apple.settings-statsd"]
+    StatusKit = ["com.apple.statuskit"]
+    Reminders = ["com.apple.reminderd"]
+    AirPlay = ["com.apple.airplay"]
+    GameKitService = ["com.apple.gamekitservice"]
+    Sidecar = ["com.apple.sidecarcore"]
+    SpeechRecognition = ["com.apple.speechrecognition"]
+    Translate = ["com.apple.translated"]
+    MockLocation = ["com.apple.mocksynclocationd"]
+    DeviceCheck = ["com.apple.devicecheckd"]

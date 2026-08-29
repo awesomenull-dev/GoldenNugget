@@ -9,7 +9,7 @@ if target_arch:
 
 # Base PyInstaller args
 args = [
-'main_app.py',
+'nugget_cli.py',
     '--name=Nugget',
     '--icon=nugget.ico',
     '--onedir',
@@ -23,6 +23,12 @@ args = [
     '--hidden-import=zeroconf._handlers.answers',
     '--hidden-import=src.qt.resources_rc',
     '--add-data=src/qt:src/qt',
+    # Bundle the helper tool modules (imported lazily by the CLI wrapper).
+    '--hidden-import=apply_wallpaper',
+    '--hidden-import=restore_cache',
+    '--hidden-import=restore',
+    '--hidden-import=skip_setup',
+    '--hidden-import=main_app',
 ]
 
 if target_arch:

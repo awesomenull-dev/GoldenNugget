@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="200" viewBox="0 0 360 200">
+  <!-- Classic: top device bar + left sidebar + content area -->
+  <g>
+    <!-- window frame -->
+    <rect x="8" y="6" width="344" height="188" rx="10" fill="none" stroke="#8E8E93" stroke-width="2"/>
+    <!-- device bar (top) -->
+    <rect x="16" y="16" width="328" height="22" rx="6" fill="none" stroke="#8E8E93" stroke-width="2"/>
+    <circle cx="30" cy="27" r="5" fill="#E5E5EA"/>
+    <rect x="44" y="24" width="60" height="6" rx="3" fill="#E5E5EA"/>
+    <rect x="292" y="24" width="44" height="6" rx="3" fill="#D1D1D6"/>
+  </g>
+
+  <!-- sidebar with menu items -->
+  <g>
+    <rect x="16" y="46" width="96" height="140" rx="8" fill="none" stroke="#8E8E93" stroke-width="2"/>
+  </g>
+  <g>
+    <!-- active item (highlighted) -->
+    <rect x="22" y="56" width="84" height="16" rx="5" fill="#FFFFFF"/>
+    <rect x="30" y="61" width="12" height="6" rx="3" fill="#8E8E93"/>
+    <rect x="48" y="61" width="44" height="6" rx="3" fill="#3A3A3C"/>
+    <!-- other items -->
+    <g fill="#E5E5EA">
+      <rect x="30" y="82" width="12" height="6" rx="3"/>
+      <rect x="30" y="102" width="12" height="6" rx="3"/>
+      <rect x="30" y="122" width="12" height="6" rx="3"/>
+      <rect x="30" y="142" width="12" height="6" rx="3"/>
+      <rect x="30" y="162" width="12" height="6" rx="3"/>
+    </g>
+    <g fill="#8E8E93">
+      <rect x="48" y="82" width="52" height="6" rx="3"/>
+      <rect x="48" y="102" width="46" height="6" rx="3"/>
+      <rect x="48" y="122" width="52" height="6" rx="3"/>
+      <rect x="48" y="142" width="40" height="6" rx="3"/>
+      <rect x="48" y="162" width="48" height="6" rx="3"/>
+    </g>
+  </g>
+
+  <!-- content area with grouped panels -->
+  <g>
+    <rect x="122" y="46" width="222" height="60" rx="8" fill="none" stroke="#8E8E93" stroke-width="2"/>
+    <rect x="122" y="114" width="222" height="72" rx="8" fill="none" stroke="#8E8E93" stroke-width="2"/>
+  </g>
+  <g fill="#E5E5EA">
+    <!-- top panel -->
+    <rect x="132" y="56" width="80" height="10" rx="5"/>
+    <rect x="222" y="56" width="46" height="10" rx="5"/>
+    <!-- toggle rows -->
+    <rect x="132" y="76" width="120" height="7" rx="3"/>
+    <rect x="324" y="72" width="14" height="14" rx="7" fill="#D1D1D6"/>
+    <rect x="132" y="90" width="150" height="7" rx="3"/>
+    <rect x="324" y="86" width="14" height="14" rx="7" fill="#D1D1D6"/>
+    <!-- bottom panel -->
+    <rect x="132" y="124" width="90" height="10" rx="5"/>
+    <rect x="132" y="142" width="160" height="7" rx="3"/>
+    <rect x="132" y="156" width="130" height="7" rx="3"/>
+    <rect x="132" y="170" width="180" height="7" rx="3"/>
+  </g>
+</svg>

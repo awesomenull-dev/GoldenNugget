@@ -92,13 +92,24 @@ class PosterboardTweak(Tweak):
         return None
     
     def update_for_family(self, data: bytes):
-        # set the assets/lockAndHome/default/name to Lavender
-        # and family to Marble
+        # Bring a wallpaper in line with the Configs (Marble) model that iOS
+        # 26.4+ expects: family/name forced to Lavender and the top-level and
+        # nested identifiers kept consistent. System wallpapers (iOS 17 etc.)
+        # carry their own family/name and a distinct descriptor identifier
+        # that no longer resolve once Win11 26.4 moved to DB-driven configs,
+        # so every identifier field is rewritten to the randomized id.
         plist = plistlib.loads(data)
+        # the randomized (top-level) identifier set by the caller
+        new_id = plist.get("identifier")
         if ("assets" in plist
             and "lockAndHome" in plist["assets"]
             and "default" in plist["assets"]["lockAndHome"]):
-            plist["assets"]["lockAndHome"]["default"]["name"] = "Lavender"
+            default = plist["assets"]["lockAndHome"]["default"]
+            default["name"] = "Lavender"
+            # keep the nested identifier in sync with the top-level one so the
+            # provider can resolve the .ca animation files by that id
+            if new_id is not None:
+                default["identifier"] = new_id
         plist["family"] = "Marble"
         plist["name"] = "Lavender"
         return plistlib.dumps(plist)
@@ -173,11 +184,18 @@ class PosterboardTweak(Tweak):
                 # look for container folder
                 name = folder.lower()
                 if name == "container":
-                    self.recursive_add(files_to_restore, os.path.join(curr_path, folder), restore_path="/", isAdding=True)
+                    # A container is a full data-store snapshot: walk it (non-adding)
+                    # so the descriptor folders inside get routed to configurations,
+                    # exactly like a custom .tendie, and registered in the DB.
+                    self.recursive_add(files_to_restore, os.path.join(curr_path, folder), restore_path="/", isAdding=False)
                     return
                 elif "descriptor" in name:
                     # get the extension
-                    if "video" in name or "photos" in name:
+                    parent = os.path.basename(curr_path)
+                    if parent.startswith("com.apple."):
+                        # container: the provider extension is the descriptor's parent folder
+                        ext = parent
+                    elif "video" in name or "photos" in name:
                         ext = "com.apple.PhotosUIPrivate.PhotosPosterProvider"
                     elif "mercury" in name:
                         ext = "com.apple.MercuryPoster"

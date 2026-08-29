@@ -25,8 +25,9 @@ from src.devicemanagement.device_manager import DeviceManager
 from src.tweaks.tweaks import tweaks, TweakID
 from src.gui.logger import setup_logging, get_logger
 
-if __name__ == "__main__":
-    multiprocessing.freeze_support()
+
+def main() -> int:
+    """GUI + fallback CLI dispatcher entry point (importable for the wrapper)."""
 
     # 2. CLI DISPATCHER
     if len(sys.argv) > 1:
@@ -154,3 +155,8 @@ if __name__ == "__main__":
 
     logger.info("GoldenNugget launched.")
     sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    multiprocessing.freeze_support()
+    sys.exit(main())

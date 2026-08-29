@@ -771,7 +771,40 @@ class MainWindow(QtWidgets.QMainWindow):
         detailsBox.setText(alert.txt)
         if alert.detailed_txt != None:
             detailsBox.setDetailedText(alert.detailed_txt)
+        restore_btn = None
+        if alert.backup_path:
+            restore_btn = detailsBox.addButton(
+                self.tr("Restore data from backup"), QtWidgets.QMessageBox.AcceptRole)
         detailsBox.exec()
+        if restore_btn is not None and detailsBox.clickedButton() is restore_btn:
+            self._start_cache_restore()
+
+    def _start_cache_restore(self):
+        from src.gui.thread_workers.apply_worker import RestoreCacheThread
+        if getattr(self, '_cache_restore_in_progress', False):
+            return
+        self._cache_restore_in_progress = True
+        worker = RestoreCacheThread(manager=self.device_manager)
+        worker.progress.connect(self._update_restore_label)
+        worker.alert.connect(self.alert_message)
+        worker.finished_with_result.connect(self._finish_cache_restore)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _update_restore_label(self, txt: str):
+        try:
+            self.ios_home.show_process_status(txt)
+        except Exception:
+            pass
+
+    def _finish_cache_restore(self, success: bool, error_msg: str = ""):
+        self._cache_restore_in_progress = False
+        if not success or error_msg:
+            self.alert_message(ApplyAlertMessage(
+                txt=f"Restore data: {error_msg or 'failed'}",
+                title="Restore data",
+                icon=QtWidgets.QMessageBox.Critical,
+            ), log_to_console=False)
 
     def on_password_request(self, title: str, label: str, box):
         try:

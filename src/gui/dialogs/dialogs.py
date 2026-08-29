@@ -218,6 +218,14 @@ class AboutProgramDialog(QDialog):
         website_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://cowabun.ga/wallpapers")))
         links_layout.addWidget(website_btn)
         
+        discord_btn = QToolButton()
+        discord_btn.setText("Discord")
+        discord_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        discord_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        discord_btn.setStyleSheet("QToolButton { color: #007AFF; font-size: 14px; font-weight: 500; background: none; border: none; padding: 4px 8px; } QToolButton:hover { text-decoration: underline; }")
+        discord_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://discord.gg/RwbtH7pW5e")))
+        links_layout.addWidget(discord_btn)
+        
         layout.addLayout(links_layout)
         layout.addWidget(self.buttonBox)
         self.setLayout(layout)

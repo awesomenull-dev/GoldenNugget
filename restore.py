@@ -1,26 +1,21 @@
 #! python3
+"""Restore the last protective backup cache to the device (safe, pruned).
 
-from pymobiledevice3.services.mobilebackup2 import Mobilebackup2Service
-from pymobiledevice3.lockdown import create_using_usbmux
-import asyncio
+Same engine as ``restore_cache.py`` except it is optimized for the interactive
+case: it auto-detects the connected device, waits for the unlock, and restores
+the pruned protective backup that GoldenNugget keeps after an apply.
+
+    python3 restore.py                    # restore for the connected device
+    python3 restore.py --udid UDID        # ... for a specific device
+    python3 restore.py --password XXXX    # encrypted cache
+
+Invocations that used the old raw ``restore.py <backup> <uid>`` (which did an
+unsafe system-wide mobilebackup restore) are no longer supported - that path is
+replaced by this safe, manifest-pruned restore of the protective cache.
+"""
+
 import sys
-
-async def main(argv: list):
-    lockdown_client = await create_using_usbmux()
-    async with Mobilebackup2Service(lockdown_client) as mb:
-        await mb.restore(
-            str(argv[1]),
-            system=True, copy=True, remove=False,
-            reboot=True, source=argv[2],
-            skip_apps=False,
-            progress_callback=(lambda v: print(f"progress: {v}\r"))
-        )
-        print("Restore done!")
-
-
+from restore_cache import main
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: restore.py <backup path> <device UUID>", file=sys.stderr)
-        exit(1)
-    asyncio.run(main(sys.argv))
+    sys.exit(main())

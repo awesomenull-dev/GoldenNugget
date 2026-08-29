@@ -1154,6 +1154,23 @@ QSlider::tick:horizontal {
                        <number>0</number>
                       </property>
                       <item>
+                       <widget class="QToolButton" name="discordBtn">
+                        <property name="cursor">
+                         <cursorShape>PointingHandCursor</cursorShape>
+                        </property>
+                        <property name="text">
+                         <string>  Join the Discord</string>
+                        </property>
+                        <property name="icon">
+                         <iconset resource="resources.qrc">
+                          <normaloff>:/icon/discord.svg</normaloff>:/icon/discord.svg</iconset>
+                        </property>
+                        <property name="toolButtonStyle">
+                         <enum>Qt::ToolButtonTextBesideIcon</enum>
+                        </property>
+                       </widget>
+                      </item>
+                      <item>
                        <widget class="QToolButton" name="starOnGithubBtn">
                         <property name="cursor">
                          <cursorShape>PointingHandCursor</cursorShape>

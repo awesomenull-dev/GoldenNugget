@@ -1,4 +1,5 @@
 from PySide6.QtCore import QCoreApplication
+from webbrowser import open_new_tab
 from ..page import Page
 from src.qt.mainwindow_ui import Ui_Nugget
 
@@ -12,6 +13,7 @@ class HomePage(Page):
     def load_page(self):
         ## HOME PAGE ACTIONS
         self.ui.phoneVersionLbl.linkActivated.connect(self.toggle_version_label)
+        self.ui.discordBtn.clicked.connect(lambda: open_new_tab("https://discord.gg/RwbtH7pW5e"))
 
     ## ACTIONS
     def updatePhoneInfo(self):

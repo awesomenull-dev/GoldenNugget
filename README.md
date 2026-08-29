@@ -120,7 +120,7 @@ Want to see your name here? Open [Pull Request](https://github.com/awesomenull-d
 
 > [!NOTE]
 > ## Mobilegestalt
-> Don't even ask me for it. It will be NEVER realized again. 
+> Don't even ask me for it. It will be NEVER implemented again. 
 
 ## Requirements:
 <details>

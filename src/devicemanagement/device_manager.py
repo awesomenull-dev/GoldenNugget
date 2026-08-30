@@ -551,34 +551,43 @@ class DeviceManager:
                 and len(tweaks[TweakID.Templates].templates) == 0)
             log_info(f'needs_posterboard={needs_posterboard}, tendies={len(pb.tendies)}, videoFile={pb.videoFile is not None}')
 
-            # Phase 0: protective backup. On NotEnoughDiskSpaceError the user
-            # can choose to continue without it — tweaks still apply, but
-            # there is no data protection (photos/settings get wiped).
-            try:
-                prepared_root, pb_from_cache = await self._prepare_protective_backup(
-                    update_label, needs_posterboard=needs_posterboard,
-                    prompt_password=prompt_password)
-            except Exception as e:
-                if "disk space" in str(e).lower() or "NotEnoughDiskSpace" in type(e).__name__:
-                    from PySide6.QtWidgets import QMessageBox
-                    reply = QMessageBox.question(
-                        None,
-                        QCoreApplication.tr("Not Enough Disk Space"),
-                        QCoreApplication.tr(
-                            "The protective backup failed because the device or "
-                            "computer does not have enough free disk space.\n\n"
-                            "Continue anyway WITHOUT data protection?\n"
-                            "(Photos, settings and app data may be lost.)"),
-                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                        QMessageBox.StandardButton.No)
-                    if reply == QMessageBox.StandardButton.Yes:
-                        log_warn("User chose to continue without protective backup")
-                        prepared_root = None
-                        pb_from_cache = False
+            # Phase 0: protective backup. On iOS 26.x the apply uses a plain
+            # sparse restore (no security-recovery wipe), so there is nothing
+            # for the protective cache to protect and the heavy backup is
+            # skipped entirely. Only iOS 27+ builds+restores it.
+            prepared_root = None
+            pb_from_cache = False
+            if self.get_current_device_partially_supported():
+                # On NotEnoughDiskSpaceError the user can choose to continue
+                # without it — tweaks still apply, but there is no data
+                # protection (photos/settings get wiped).
+                try:
+                    prepared_root, pb_from_cache = await self._prepare_protective_backup(
+                        update_label, needs_posterboard=needs_posterboard,
+                        prompt_password=prompt_password)
+                except Exception as e:
+                    if "disk space" in str(e).lower() or "NotEnoughDiskSpace" in type(e).__name__:
+                        from PySide6.QtWidgets import QMessageBox
+                        reply = QMessageBox.question(
+                            None,
+                            QCoreApplication.tr("Not Enough Disk Space"),
+                            QCoreApplication.tr(
+                                "The protective backup failed because the device or "
+                                "computer does not have enough free disk space.\n\n"
+                                "Continue anyway WITHOUT data protection?\n"
+                                "(Photos, settings and app data may be lost.)"),
+                            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                            QMessageBox.StandardButton.No)
+                        if reply == QMessageBox.StandardButton.Yes:
+                            log_warn("User chose to continue without protective backup")
+                            prepared_root = None
+                            pb_from_cache = False
+                        else:
+                            return
                     else:
-                        return
-                else:
-                    raise
+                        raise
+            else:
+                log_info("iOS 26.x apply: plain sparse restore — skipping protective backup cache")
 
             # fallback: PosterBoard DB missing from the cache backup (e.g. the
             # device rejected container inclusion) -> legacy separate backup

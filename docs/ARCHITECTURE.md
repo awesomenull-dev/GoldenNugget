@@ -3,7 +3,8 @@
 A guided tour of every part of the codebase: what each package does, how the
 main flows work end-to-end, and which conventions hold the whole thing
 together. For agent-facing operational notes see [AGENTS.md](../AGENTS.md);
-for the iOS 27 status-bar research see [iOS27_StatusBar_Research.md](iOS27_StatusBar_Research.md).
+for the iOS 27 status-bar research see [iOS27_StatusBar_Research.md](iOS27_StatusBar_Research.md);
+for line-level verified facts gathered during a codebase audit see [FINDINGS.md](FINDINGS.md).
 
 ```
 main_app.py ──► src/gui/main_window.py ──► pages/ (classic UI)  +  ios/ (iOS-style UI)
@@ -19,25 +20,46 @@ main_app.py ──► src/gui/main_window.py ──► pages/ (classic UI)  +  i
 
 ---
 
-## Entry point — `main_app.py`
+## Entry point — `nugget_cli.py` / `main_app.py`
 
-1. Adds `src/qt` to `sys.path` so the generated resource modules import.
-2. CLI dispatcher: `python main_app.py -m <script>` runs a tool module;
-   `--test-mode` creates a mock device (no USB needed); `--debug` enables
-   verbose logging; `GOLDENNUGGET_LOG_FILE` overrides the log path.
-3. Creates `QApplication`, installs the `Translator`, builds `MainWindow`,
-   `DeviceManager` and the global `tweaks` registry.
+`nugget_cli.py` is the unified binary entry point (required by the bundled
+executable). It dispatches subcommands then falls through to the GUI:
 
-Build: `compile.py` wraps PyInstaller (`Nugget.spec`, `version.txt` for
-Windows metadata, icons, i18n resources).
+```
+Nugget                          launch the GUI
+Nugget apply-wallpaper [TENDIE] [--udid UDID] [--list]
+Nugget restore-cache [...opts]  restore last protective cache (Phase-3 recovery)
+Nugget restore [same as above]  alias for restore-cache
+Nugget skip-setup [--udid]      mark all iOS setup panes completed
+Nugget -m <module>| <script>.py  backward-compatible dispatcher
+```
 
-## Global state — three singletons
+`main_app.py` is the underlying GUI/CLI dispatcher:
+1. Adds `src/qt` to `sys.path` (joined with `__file__`) so the generated
+   resource modules import; silences warnings and Wayland text-input spam.
+2. CLI forms: `python main_app.py -m <module>` runs a tool module (falls back
+   to `<module>.__main__` for packages); a trailing `<file>.py` (that does not
+   end in `.tendies`/`.batter`) is run via `runpy.run_path`.
+3. GUI startup: `--test-mode` fabricates **two** mock devices (iPhone 15 Pro /
+   iPhone 16) with no USB; `--debug` upgrades logging to DEBUG + captures
+   pymobiledevice3; `GOLDENNUGGET_LOG_FILE` overrides the stdlib log path.
+4. Restores the `last_loaded_preset` (or "AutoSave") before the window is
+   built; handles `.tendies`/`.batter` args by adding them to the tweaks.
+
+Build: `compile.py` calls `PyInstaller.__main__.run(...)` directly (it does
+**not** consume `Nugget.spec` — that file only applies if you run
+`pyinstaller Nugget.spec` manually). `version.txt` supplies Windows version
+metadata only; macOS adds `--osx-bundle-identifier`/codesign. i18n is not
+compiled by `compile.py` — `.qm`/`resources_rc.py` are produced by the
+pyside6-lrelease/lupdate/rcc pipeline (README / CI).
+
+## Global state — one real singleton, two process singletons
 
 | Object | File | Purpose |
 |---|---|---|
-| `tweaks` | `src/tweaks/tweaks.py` | `dict[TweakID → Tweak instance]`; the single source of runtime tweak state both UIs read and write |
-| `DeviceManager` | `src/devicemanagement/device_manager.py` | device discovery, apply/reset orchestration |
-| `DataSingleton` | `src/devicemanagement/data_singleton.py` | `current_device` + `device_available` shared across UI layers |
+| `tweaks` | `src/tweaks/tweaks.py` | **The only true module-level singleton**: `dict[TweakID → Tweak instance]`; the single source of runtime tweak state both UIs read and write |
+| `DeviceManager` | `src/devicemanagement/device_manager.py` | device discovery, apply/reset orchestration (one instance, created in `main_app.py`) |
+| `DataSingleton` | `src/devicemanagement/data_singleton.py` | **not a real singleton** — a plain 6-line class holding `current_device` + `device_available`. Each `DeviceManager` owns its own instance (`device_manager.py:115`); there is no global accessor. Treat its per-manager value as the source (e.g. read `window.device_manager.data_singleton`). Note: `ios/daemons.py:151-152` constructs a **fresh** instance, so `current_device` is always `None` there — the iPhone-14 location warning guard is effectively dead. |
 
 ---
 
@@ -49,7 +71,7 @@ connection. Async context manager that always closes safely (a rebooted
 device makes `close()` raise `ConnectionTerminatedError`, which must never
 mask the real result). `create_using_usbmux` appears directly only where
 connection ownership transfers to a caller (`_wait_for_device`,
-`perform_restore`).
+`perform_restore`, `skip_setup`, `tools/` scripts).
 
 ### `constants.py`
 - `Device` — plain data object (udid, version, model, locale…).
@@ -98,77 +120,145 @@ apply_changes()
 ## src/tweaks/ — what gets written
 
 ### Registry-first design (`registry.py`)
-Every plist-based tweak is defined **once** as a `TweakSpec`:
-id, section (Liquid Glass / SpringBoard / Internal), title (marked with
-`QT_TRANSLATE_NOOP` — translated at render time), plist location, key,
-default value, UI kind (`switch` / `text` / `number`), compatibility
-(`min_version`, `iphone_only`, `ipad_only`) and an optional `factory` for
-non-basic tweaks (e.g. the AdvancedPlistTweak behind WatchOS Compatibility).
+Every *registry-managed* plist tweak is defined **once** as a `TweakSpec`:
+`id`, `section` (Liquid Glass / SpringBoard / Internal Options), `title`
+(marked with `QT_TRANSLATE_NOOP` — see below), `location`, `key`, `value`,
+`kind` (`switch` / `text` / `number`, plus `min_value`/`max_value` for
+numbers), compatibility (`min_version`, `max_version`, `iphone_only`,
+`ipad_only`) and an optional `factory` for non-basic tweaks. The only
+factory-backed spec is WatchOS Compatibility → an `AdvancedPlistTweak` over
+`FileLocation.nanoregistry` (also `ipad_only=True`).
+
+Not every plist tweak is a spec: `Daemons` (an `AdvancedPlistTweak` over
+`disabled.plist`) and `ClearScreenTimeAgentPlist` (a `NullifyFileTweak`) are
+hand-built in `load_daemons()`, and the three non-plist extra tweaks
+(`PosterBoard`, `Templates`, `StatusBar`) live outside the registry.
+
+**Translation:** titles are wrapped in `QT_TRANSLATE_NOOP("Nugget", title)` at
+*definition* time (registry.py) so they reach pyside6-lupdate; the real
+`QCoreApplication.translate("Nugget", spec.title)` happens at *render* time in
+`src/gui/ios/tweaks.py`.
 
 Consumers:
 - `tweak_loader.load_plist_tweaks()` builds instances into `tweaks`
-  (the classic `load_internal/load_liquidglass/load_springboard` names remain
-  as aliases; Daemons stay hand-defined there).
-- The iOS tweaks page renders sections straight from `SPECS_BY_SECTION`.
-- `gui/ios/compat.py` evaluates `min_version` / device restrictions from the
-  spec (public API unchanged).
+  (idempotent — already-loaded IDs keep their live instance so UI state
+  survives re-entry; the classic `load_internal/load_liquidglass/load_springboard`
+  names are literal aliases of `load_plist_tweaks`; `load_daemons()` is a
+  separate hand-built loader).
+- The iOS tweaks page renders sections straight from `SPECS_BY_SECTION`
+  (`SPECS_BY_ID` powers compatibility lookups).
+- `gui/ios/compat.py` evaluates `min_version` / `max_version` / device
+  restrictions from the spec (public API unchanged).
 
 Adding a tweak = adding one registry entry.
 
 ### Tweak classes (`tweak_classes.py`)
-`Tweak` base (enabled/value/change-notification) with concrete generators:
-- `BasicPlistTweak` — one key into one managed plist.
-- `AdvancedPlistTweak` — a dict of keys into one plist.
-- `NullifyFileTweak` — writes an empty file (plist nuking).
-- `StatusBarTweak`, `PasscodeThemeTweak`… — special generators.
+`Tweak` base (key/owner/group, `enabled=False`, change-notification via a
+module-level callback that drives the autosave) with concrete generators:
+- `BasicPlistTweak` — one key into one managed plist, **merges** into existing
+  plists (does not wipe sibling keys).
+- `AdvancedPlistTweak` — a dict of keys into one plist; `apply_tweak`
+  **replaces** the whole plist dict (unlike BasicPlistTweak's merge);
+  `set_multiple_values(keys, value)` stamps one value across many keys (used
+  by the Daemons UI).
+- `NullifyFileTweak` — writes a zero-byte file (plist nuking).
+- Special generators live outside `tweak_classes.py`: `StatusBarTweak`
+  (`status_bar/`), `PosterboardTweak` + `TemplatesTweak`
+  (`posterboard/`). (There is **no** `PasscodeThemeTweak` — that class does
+  not exist; only parked Qt-Designer chrome remains.)
 
-`Daemons` is an AdvancedPlistTweak over `Daemon` enum values
-(`src/tweaks/daemons_tweak.py`); disabling the Location Services daemon on an
-iPhone 14 triggers a wallpaper-risk warning in both UIs.
+`Daemons` is an `AdvancedPlistTweak` over the `Daemon` enum's bundle IDs
+(`src/tweaks/daemons_tweak.py`); the class itself is enum-agnostic — the UI
+translates `Daemon.X → [bundle IDs]`. Disabling the Location daemon on an
+iPhone 14-family device (`iPhone14,*`) triggers a wallpaper-risk warning in
+both UIs (the classic Daemons page embeds the same `IOSDaemonsContent`).
 
 ### PosterBoard subsystem (`tweaks/posterboard/`)
 Wallpapers are always applied **as configurations written into the
 PosterBoard sqlite database** (the old descriptor-file method was removed —
 broken on iOS 26+).
 
-- `posterboard_tweak.py` — extracts tendies/templates into a temp dir,
-  walks them (`recursive_add`), registers configuration entries, stages the
-  modified DB and appends it as an AppDomain file; optional live-photo /
-  video-loop CAML generation (`video_handler`).
+- `posterboard_tweak.py` — `use_configs = True` (the descriptor apply method
+  is gone, broken on iOS 26+), `structure_version = 61`. `verify_tendie` caps
+  total descriptors at 10 and warns when a tendie ships its own `.sqlite3`
+  (`unsafe_container`). `recursive_add` walks tendies/templates, randomizes
+  UUIDs, classifies parenthesized descriptor types into Photos / Mercury /
+  Collections extension providers, registers them (`add_config`), and stages
+  the modified DB (`update_sqlite`) appended as an AppDomain file; `ordered`
+  descriptors get reverse-sorted sequential ids. iOS 26.4+ uses a Configs
+  model (`update_for_family` forces the Marble/Lavender family) plus
+  `update_plist_id` rewriting. Optional live-photo (`create_live_photo_files`,
+  bundling HEIC thumbnails + `.aar` via `wrap_in_aar`) and video-loop CAML
+  (`create_video_loop_files`) generation via `video_handler`.
 - `pb_config_manager.py` — the DB pipeline: pulls the live DB (from the
-  protective-backup cache), validates (WAL-consolidated, schema-relaxed for
-  db5+), stages config entries, produces the modified database.
+  protective-backup cache), validates (`_validate_posterboard_db` with
+  `strict=True` for the classic schema, `strict=False` for any healthy
+  poster-ish DB because the schema varies on iOS db5+; always runs
+  `PRAGMA integrity_check`), stages config entries
+  (`update_sqlite` re-writes `poster`/`posterAttributes`/`posterRoleMembership`
+  rows, computing `roleSortKey`), and produces the modified database. It also
+  surfaces the SQLCipher "disable backup encryption" error.
 - `template_file.py` + `template_options/` — the `.batter`-style template
   format: JSON-defined option widgets (picker/remove/replace/set) that edit
   caml/xml/plist payloads at apply time.
 - `status_bar/status_setter.py` + `status_bar_tweak.py` — binary
-  `StatusBarOverrideData` struct (cffi) translated into the Speakeasy
-  FeatureFlags payload; disabled on iOS 27+ (no write permission).
+  `StatusBarOverrideData` struct (cffi, `-malign-double`) translated into the
+  Speakeasy FeatureFlags payload (`SpringBoard.SpeakeasyNewStatusBar` in
+  `FeatureFlags/Global.plist`); `apply_tweak` returns early (no-op) on iOS
+  ≥27.0 (no write permission). **The Speakeasy dict schema is explicitly
+  unconfirmed in code** (keys are "guesses" mirroring the classic
+  `statusBarOverrides`). Reset writes an empty dict
+  (`{"SpringBoard": {"SpeakeasyNewStatusBar": {}}}`) to avoid disabling the
+  whole status bar. Caveat: the UI offers status-bar controls on iOS 27+ but
+  the apply silently no-ops.
 
 ---
 
 ## src/restore/ — how it gets written
 
-### `restore.py` — three-phase restore (`_restore_ios27`)
+### `restore.py` — five-phase restore (`_restore_ios27`)
 All supported devices (26.2+) take this path:
 
 ```
 Phase 0 (in device_manager): cached protective backup + PosterBoard DB
-Phase 1 (0-40%):  working copy of the cached master (hardlinks)
+Phase 1 (0-40%):  working copy of the cached master (hardlinks), or a fresh
+                  perform_protective_backup() when there is no cache
                   → clean_backup_for_restore() prune
-                  → inject HomeDomain/SystemPreferencesDomain tweak files
+                  → inject PosterBoard files (pb_inject_files, AppDomain)
 Phase 2 (40-60%): perform_restore() sparse restore → reboot
                   → iOS 27 "safe state recovery" wipes data volume
-Phase 3 (60-100%): _wait_for_device() (20 min budget)
+Phase 3 (60-90%): _wait_for_device() (20 min budget, _RECONNECT_TIMEOUT)
                   → _restore_protective_backup() puts user data back
+                  (max_retries=18, fixed 3s sleep, only for transient errors)
+Phase 4 (90-95%): skip_all_setup27()  — only if skip-setup requested
+Phase 5 (95-100%): reboot_device()    — only if auto_reboot (default on iOS 27)
 ```
 
 `prepared_backup_root` is a `PreparedBackup(root, manifest_password)`; when
 absent (encrypted-without-password / kill switch), Phase 1 falls back to an
 in-place `perform_protective_backup()`.
 
+Progress ranges are the real `_PHASE_BACKUP_END=40`, `_PHASE_TWEAK_END=60`,
+and the hardcoded `90`/`95`/`100` bounds in `_restore_ios27` — the old
+"Phase 3 = 60-100%" summary is simplified: the last 10% belongs to skip-setup
+and reboot.
+
+Phase 3 details: `perform_protective_backup` itself has **no** retry loop —
+the only retry is `ProtectiveBackupService.connect()` with **5** attempts
+(backoff 2, 4, 8, 15 s). Phase 3 restore retries transient errors only
+(`_is_transient_restore_error`: ConnectionTerminatedError/OSError, ssl,
+"InvalidService", "SpringBoard ... ready for a restore", "start ... service").
+
+Phase 2 has its own guard: if the sparse restore drops at 0% it waits 25 s and
+retries once on a fresh connection (`max_sparse_attempts = 2`).
+
+A 1-hour stale-working-copy GC removes old `nugget_protective_*` temp dirs at
+the start of `_restore_ios27`.
+
 Sparse staging itself lives in `backup.py` + `mbdb.py` (MBDB/Manifest
-construction) and `__init__.py::perform_restore`.
+construction) and `__init__.py::perform_restore` (with `GOLDENNUGGET_KEEP_SPARSE`
+debug copy support). `_Mobilebackup2NoEscrow` is used when a fresh post-wipe
+re-pair carries no EscrowBag.
 
 ### `protective.py` — the cache and everything around it
 - `ProtectiveBackupCache` — per-device master copy in
@@ -182,70 +272,109 @@ construction) and `__init__.py::perform_restore`.
   incremental cheap). Keep-set: CameraRoll/Media (photos),
   SystemPreferencesDomain, HomeDomain Accounts / ConfigurationProfiles /
   Preferences / SpringBoard / ControlCenter, optionally the PosterBoard DB.
+  (Note: the module's own doc-comment at `protective.py:212-220` claims
+  ConfigurationProfiles was reverted, but the code still keeps it.)
 - `make_protective_working_copy()` — hardlink clone (metadata real-copied);
   pruning never corrupts the master.
 - `clean_backup_for_restore()` — prunes to the keep-set; self-heals by
   dropping regular-file rows whose payload is missing (MBErrorDomain/205)
   while keeping directory rows (renameatx ENOENT). Encrypted manifests are
   decrypted/pruned/re-encrypted locally via pymobiledevice3 when a password
-  is supplied.
-- `inject_file_into_backup()` — adds fresh tweak content (incl. directory
-  rows, donor MBFile blobs, unique inodes) so injected tweaks survive the
-  wipe through Phase 3's native restore.
+  is supplied (prune only touches the working copy, never the master).
+- `inject_file_into_backup()` — adds fresh tweak content so injected tweaks
+  survive the wipe through Phase 3's native restore. **Only PosterBoard files
+  (`pb_inject_files`, `AppDomain-com.apple.PosterBoard`) are injected today** —
+  the old `_HOME_DOMAIN_TWEAK_PATHS`/`_SYSTEM_PREFERENCES_TWEAK_PATHS`
+  constants are dead code. For **encrypted** backups injection is **always
+  skipped** (plaintext payloads would fail the restore agent's decrypt).
 - `extract_posterboard_db()` — resolves the PB database by FILE NAME
   (structure version varies), pulls `-wal`/`-shm` siblings and checkpoints
   them into one consolidated database.
 - `verify_backup_payloads()` — last-line diagnostic before Phase 3.
 - `check_disk_space_for_backup()` — sizes the requirement from the device's
-  real used storage; `GOLDENNUGGET_MIN_FREE_GB` overrides the floor.
+  real used storage; `GOLDENNUGGET_MIN_FREE_GB` overrides the floor and
+  `GOLDENNUGGET_CACHE_PERSIST_MIN_GB`/`GOLDENNUGGET_CACHE_REFRESH_SECS`
+  tune the cache placement/refresh.
 
 ### `original_plist.py`
 `psysbackup()` — full capture of the plists listed by `FileLocation` so
-Reset can restore originals instead of empty files; skipped when backup
-encryption is on.
+Reset can restore originals instead of empty files. When backup encryption is
+enabled it returns `{}` (skips) **only if no `backup_password` is provided**;
+with a password it decrypts the manifest and proceeds.
 
 ---
 
 ## src/gui/ — two UIs, one state
 
-- **Classic** — Qt Designer stack (`mainwindow.ui` → `mainwindow_ui.py`),
-  page wrappers in `pages/main/*` and `pages/tools/*`, registered in
-  `pages_list.py` (`Page` enum doubles as the QStackedWidget index).
-- **iOS-style** — hand-built widget pages in `ios/` (`home`, `tweaks`,
-  `posterboard`, `daemons`, `settings`, `statusbar`), rendered from the
-  registry where applicable.
-- Both bind to the same `tweaks` instances — toggling in either UI changes
-  the same state; `theme_manager.py` switches between visual themes.
-- Dialogs: PosterBoard fetch wizard (`pb_dialog.py`), reset picker
-  (`reset_dialog.py`), about/update/help (`dialogs.py`).
-- Thread workers (`thread_workers/`): `PBDBThread` runs backup functions off
-  the UI thread; `ApplyThread`/`RefreshDevicesThread` wrap asyncio entry
-  points and surface alerts.
+The `Page` enum (`pages_list.py`) and the designer `pages` QStackedWidget
+share 15 indices, but the designer stack is **parked** (`main_window.py:150-152`)
+and is not the live navigator. Real navigation uses:
+- `self.pages` — dict of the 9 live classic page wrappers (`pages/main/*`,
+  `pages/tools/*`), keyed by `Page`.
+- `self.content_stack` — 3 entries: classic home / iOS root / classic daemons.
+- `self.ios_pages` — 10 hand-built iOS pages (`ios/`): home, tweaks,
+  posterboard, daemons, settings, statusbar, apply, springboard, internal,
+  liquidglass (the last three are `IOSSectionPage` built from the registry
+  `Section` enum).
+
+- **Classic** — Qt Designer (`mainwindow.ui` → `mainwindow_ui.py`) wrappers in
+  `pages/main/*` and `pages/tools/*`. The classic Daemons page literally embeds
+  the shared `IOSDaemonsContent`.
+- **iOS-style** — hand-built widgets in `ios/`, rendered from the registry
+  where applicable; a single shared `IOSNavBar` is reconfigured per page.
+- Both bind to the same `tweaks` instances — toggling in either UI changes the
+  same state. `theme_manager.py` (`CLASSIC`/`IOS`) only *persists* the choice;
+  `MainWindow.apply_theme()` actually flips the chrome.
+- Dialogs: PosterBoard fetch wizard (`pb_dialog.py`, 3-step `PosterBoardDBWizard`
+  + `PBDBThread`), reset picker (`reset_dialog.py`), about/update/help
+  (`dialogs.py`).
+- Thread workers (`thread_workers/`): 
+  - `PBDBThread` (`pb_worker.py`) — signals `progress`/`infoLbl`/`alert`; there
+    is **no declared** `finished` (callers use inherited `QThread.finished`).
+  - `ApplyThread` — applies/resets; `alert.emit(None)` triggers the sudo prompt;
+    `prompt_password` builds password dialogs on the main thread via
+    `request_text`, with a 10-minute timeout.
+  - `RestoreCacheThread` — standalone Phase-1+3 recovery (working copy → prune →
+    verify → `_restore_protective_backup`, `reboot=False, skip_apps=True`).
+  - `RefreshDevicesThread` — device refresh.
 
 ## src/controllers/ — support services
 
 | Module | Role |
 |---|---|
-| `settings.py` | QSettings with org-name migration |
-| `preset_manager.py` | export/import/apply of tweak presets (per-tweak serializers) |
-| `translator.py` | language switching (+ RTL fixes), `.ts/.qm` pipeline via pyside6-lupdate/lrelease |
-| `plist_handler.py` / `xml_handler.py` | plist key writes; XML/caml value setters (hardened eval) |
-| `video_handler.py` | ffmpeg-based video→CAML conversion for video wallpapers |
+| `settings.py` | QSettings: writes to org `GoldenNugget`, falls back to legacy `Nugget`; SIGBUS-avoiding `value()` |
+| `preset_manager.py` | export/import/apply of tweak presets (`PRESET_VERSION=2`; serializes all tweaks except PosterBoard; statusbar uses cffi base64) |
+| `translator.py` | language switching (`os.execl` restart), RTL fixes, `.ts/.qm` pipeline via pyside6-lupdate/lrelease |
+| `plist_handler.py` / `xml_handler.py` | plist key writes; namespace-aware XML/caml value setters matching on `nuggetId`/`id` (hardened `eval` for `nuggetOffset` equations) |
+| `video_handler.py` | ffmpeg/opencv video→CAML conversion for video wallpapers (400-frame limit) |
 | `files_handler.py` / `path_handler.py` | bundled-resource access, Windows path fixes |
-| `web_request_handler.py` | update checks |
+| `web_request_handler.py` | update checks against the GitHub releases API |
+| `nugget_logger.py` / `aar.py` | logging setup; `.aar` assembly (`wrap_in_aar`) |
 
 ## Conventions
 
-- **Errors**: `NuggetException` for user-facing failures; connection/locked
-  error classification lives in `src/exceptions/device_errors.py` and feeds
-  uniform retry loops (`min(2**attempt, 15)s`; Phase 3 uses fixed 10 s × 12).
+- **Errors**: `NuggetException(message, detailed_text)` for user-facing
+  failures. Connection/locked classification lives **once** in
+  `src/exceptions/device_errors.py` (`is_device_locked_error`,
+  `is_connection_error`) and is imported (aliased) by other modules, feeding
+  the retry loops (`min(2**attempt, 15)s` connection backoff; Phase 3 restore
+  uses 18 × fixed 3 s for transient errors only).
 - **Logging**: `log_info/log_warn/log_error` in `protective.py` → console +
-  `/tmp/goldennugget_log.txt` (`GOLDENNUGGET_LOG_FILE` overrides).
-- **i18n**: all UI strings go through `QCoreApplication.translate("Nugget", …)`
-  (or `QT_TRANSLATE_NOOP` in data modules); catalogs are crowdsourced in the
-  gNugget-i18n submodule and synced by CI.
-- **Kill switches**: `GOLDENNUGGET_NO_BACKUP_CACHE`,
-  `GOLDENNUGGET_SKIP_PB_BACKUP`, `GOLDENNUGGET_MIN_FREE_GB`.
+  `/tmp/goldennugget_log.txt`. `GOLDENNUGGET_LOG_FILE` overrides the stdlib
+  `setup_logging` path (`main_app.py`/`nugget_logger.py`); note that
+  `protective.py`'s own `_LOG_FILE` is a hardcoded constant and does **not**
+  read the env var.
+- **i18n**: registry titles use `QT_TRANSLATE_NOOP("Nugget", …)` at definition
+  time and are evaluated with `QCoreApplication.translate("Nugget", …)` at
+  render time; other UI strings translate inline. Catalogs are crowdsourced in
+  the gNugget-i18n submodule and synced by CI (note: the `i18n/` submodule may
+  be unchecked out locally).
+- **Kill switches / env**: `GOLDENNUGGET_NO_BACKUP_CACHE`,
+  `GOLDENNUGGET_SKIP_PB_BACKUP`, `GOLDENNUGGET_MIN_FREE_GB`,
+  `GOLDENNUGGET_CACHE_PERSIST_MIN_GB`, `GOLDENNUGGET_CACHE_REFRESH_SECS`,
+  `GOLDENNUGGET_PB_SPARSE`, `GOLDENNUGGET_KEEP_SPARSE`, `GOLDENNUGGET_LOG_FILE`.
 - **Testing**: offline regression for the backup cache in
-  `tools/test_protective_cache.py` (no device needed); smoke run =
-  `QT_QPA_PLATFORM=offscreen python main_app.py --test-mode`.
+  `tools/test_protective_cache.py` and cache placement in
+  `tools/test_cache_placement.py` (no device needed); smoke run =
+  `QT_QPA_PLATFORM=offscreen python main_app.py --test-mode`. `tools/` also
+  holds device operation utilities (backups, syslog capture, sparse inspection).

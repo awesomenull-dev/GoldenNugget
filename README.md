@@ -140,9 +140,25 @@ Want to see your name here? Open [Pull Request](https://github.com/awesomenull-d
 <summary>For Running Python</summary>
 
   - [pymobiledevice3][pymobiledevice3GitHub]
-  - [PySide6][PySide6Doc]
+  - [PySide6][PySide6Doc] (PySide6-Essentials on non-Linux, selected automatically)
+  - [ffmpeg-python](https://pypi.org/project/ffmpeg-python/) (video wallpapers)
+  - [opencv-python](https://pypi.org/project/opencv-python/) (video wallpapers)
   - Python 3.10 or newer
 </details>
+
+> All pinned deps are in `requirements.txt` (incl. PyInstaller for building).
+
+## CLI Commands
+The bundled binary (and `nugget_cli.py`) exposes a small CLI:
+```py
+Nugget                                # launch the GUI
+Nugget apply-wallpaper [TENDIE] [--udid UDID] [--list]   # apply a .tendies wallpaper
+Nugget restore-cache [--udid] [--password] [--cache-root] [--timeout MIN]
+                    [--no-skip-setup] [--no-reboot]      # recover from a failed apply (Phase 5)
+Nugget restore [same options]         # alias for restore-cache
+Nugget skip-setup [--udid UDID]       # mark iOS setup panes as done
+```
+Each subcommand supports `--help`.
 
 ## Running the Python Program
 > [!NOTE]

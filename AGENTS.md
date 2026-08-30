@@ -13,9 +13,11 @@ plist location, key, default value, UI kind (switch/text/number).
   aliases kept for classic pages; daemons stay hand-defined there).
 - The iOS tweaks page (`src/gui/ios/tweaks.py`) renders its sections straight
   from `SPECS_BY_SECTION` — adding a tweak means adding one registry entry.
-- Titles are wrapped in `QCoreApplication.translate("Nugget", ...)` at
-  definition time; keep `src/tweaks/registry.py` in the pyside6-lupdate file
-  list so new strings reach the translators.
+- Titles are marked with `QT_TRANSLATE_NOOP("Nugget", ...)` at
+  definition time (so pyside6-lupdate sees them) and evaluated with
+  `QCoreApplication.translate("Nugget", ...)` at render time in
+  `src/gui/ios/tweaks.py`; keep `src/tweaks/registry.py` in the
+  pyside6-lupdate file list so new strings reach the translators.
 - Device compatibility (min iOS version, iPad/iPhone-only) is part of the
   spec (`min_version` / `iphone_only` / `ipad_only`);
   `src/gui/ios/compat.py` only evaluates it.
@@ -32,8 +34,8 @@ result). Do not call `create_using_usbmux` directly in new code.
 ### PBDBThread
 **File**: `src/gui/thread_workers/pb_worker.py`
 - **Purpose**: Generic background thread for backup-driven operations (PosterBoard database, etc.)
-- **Signals**: `progress` (float), `infoLbl` (str), `finished`
-- Used by the PosterBoard "Fetch Database File" wizard
+- **Signals**: `progress` (float), `infoLbl` (str), `alert` (object). There is **no declared `finished`** — callers use the inherited `QThread.finished`.
+- Used by the PosterBoard "Fetch Database File" wizard (`PosterBoardDBWizard`)
 
 ## Apply / Reset Flow (src/devicemanagement/device_manager.py)
 
@@ -75,14 +77,20 @@ backup in `<temp>/goldennugget_protective_cache/master/<udid>`:
   `manifest_password`). Without a password — or when the encryption state
   flips vs. what the master was built with — the cache is bypassed.
   Caveat: injected tweak payloads stay plaintext inside an otherwise
-  device-encrypted backup; restore-agent behaviour for that mix is
-  unverified, so injection may be skipped for encrypted backups.
+  device-encrypted backup, so injection is **always skipped** for encrypted
+  backups (a decrypt mismatch would fail the restore). Also, encrypted +
+  `needs_posterboard` forces the legacy separate PB backup
+  (`(PreparedBackup, False)`).
   Kill switch: `GOLDENNUGGET_NO_BACKUP_CACHE=1`.
 
 ### `_apply_tweak_pass()`
 - Generates every tweak's files in a single pass and restores them together
 - iOS 27+: prompts for backup password if encryption is enabled (`use_encrypted_backup` pref)
-- Writes `FileLocation.globalPreferencesHomeDomain` copy merged with the device's current `.GlobalPreferences.plist` so user region/language/appearance survive the iOS 27 wipe
+- Writes a `.GlobalPreferences.plist` copy to the HomeDomain path
+  (`FileLocation.globalPreferencesHomeDomain`) so user
+  region/language/appearance survive the iOS 27 wipe. Note: this copy is **not
+  merged** with the device's current file — it is written verbatim from the
+  bundled base plist.
 - Calls `start_restore(prepared_backup_root=...)` internally
 
 ### `start_restore()`
@@ -100,27 +108,36 @@ backup in `<temp>/goldennugget_protective_cache/master/<udid>`:
 - Builds a `backup.Backup` object from the `FileToRestore` list
 - Always delegates to `_restore_ios27()` (three-phase) — all supported devices (26.2+) go through this path
 
-### `_restore_ios27()` — Three-Phase Restore
+### `_restore_ios27()` — Five-Phase Restore
+> The code executes **five** phases; the older docs summarised it as three, but
+> Phase 3 ends at 90% and the last 10% belongs to skip-setup and reboot.
+
 **Phase 1 (0-40%)**: Protective Backup
 - With `prepared_backup_root` (cache hit): builds a hardlink working copy of the cached master — no device backup runs here
 - Otherwise: `perform_protective_backup()` — selective backup of photos, Apple ID, settings
 - `clean_backup_for_restore()` — prunes manifest to protective files only
-- Injects HomeDomain/SystemPreferencesDomain tweak files into the pruned backup
+- Injects PosterBoard files (`pb_inject_files`, AppDomain) — the only injected tweak payload today
 
 **Phase 2 (40-60%)**: Sparse Restore + Reboot
-- `perform_restore()` — applies tweaks via sparse restore
+- `perform_restore()` — applies tweaks via sparse restore; if it drops at 0% it waits 25 s and retries once on a fresh connection
 - Triggers the iOS 27 "safe state recovery" wipe on reboot
 
-**Phase 3 (60-100%)**: Protective Restore
-- `_wait_for_device()` — reconnects after reboot (20 min timeout)
-- `_restore_protective_backup()` — restores the Phase 1 backup, with password if encrypted
+**Phase 3 (60-90%)**: Protective Restore
+- `_wait_for_device()` — reconnects after reboot (default 20 min timeout)
+- `_restore_protective_backup()` — restores the Phase 1 backup, with password if encrypted; retries **18 times at fixed 3 s**, only for `_is_transient_restore_error` results
+
+**Phase 4 (90-95%)**: `skip_all_setup27()` — only when skip-setup is requested
+
+**Phase 5 (95-100%)**: `reboot_device()` — only when auto-reboot is on
 
 ### `perform_protective_backup()` (src/restore/protective.py)
 - Creates a selective device backup via mobilebackup2
-- Filters: keeps HomeDomain (Accounts, ConfigurationProfiles, Preferences, SpringBoard, ControlCenter), CameraRoll/Media (photos)
+- Filters: keeps HomeDomain (Accounts, ConfigurationProfiles, Preferences, SpringBoard, ControlCenter), CameraRoll/Media (photos), SystemPreferencesDomain
 - Skips: AppDomain-* containers (empty `Applications` in factory info), KeychainDomain
 - Encryption: uses existing encryption if enabled, otherwise unencrypted
-- Retry logic: 3 attempts, backoff `min(2**attempt, 15)`s (2s, 4s) for connection errors
+- Connection handling: the only retry is `ProtectiveBackupService.connect()`
+  with **5 attempts** (backoff 2s, 4s, 8s, 15s); `perform_protective_backup`
+  itself has no retry loop
 
 ### `clean_backup_for_restore()` (src/restore/protective.py)
 - Prunes Manifest.db to protective files only (temp-table keep-set, single DELETE)
@@ -129,7 +146,9 @@ backup in `<temp>/goldennugget_protective_cache/master/<udid>`:
 
 ### `_restore_protective_backup()` (src/restore/restore.py)
 - Restores the pruned backup after the security recovery
-- Retries up to 12 times, fixed 10s between attempts (SpringBoard/mobilebackup2 startup delay)
+- Retries up to **18 times, fixed 3s between attempts** (`max_retries = 18`), and
+  only for results matching `_is_transient_restore_error` (SpringBoard /
+  mobilebackup2 startup delay)
 - Accepts `backup_password` for encrypted backups
 
 ## Original Plist Capture (src/restore/original_plist.py)
@@ -137,7 +156,9 @@ backup in `<temp>/goldennugget_protective_cache/master/<udid>`:
 ### `psysbackup()`
 - Full device backup to capture original plists before a reset
 - Templates device-specific values (SerialNumber, DeviceName, etc.)
-- Skipped if backup encryption is enabled
+- Skipped (returns `{}`) if backup encryption is enabled **and no
+  `backup_password` is provided**; with a password it decrypts the manifest
+  and proceeds
 - Retry logic: 3 attempts, backoff `min(2**attempt, 15)`s (2s, 4s) for connection errors
 - Validates Manifest.db is valid SQLite before reading
 
@@ -152,13 +173,19 @@ backup in `<temp>/goldennugget_protective_cache/master/<udid>`:
 ## Error Handling
 
 ### Device Lock Detection
-- `_is_device_locked_error()` — detects ErrorCode 208 (MBErrorDomain/208)
-- Defined in `device_manager.py`, `protective.py`, `original_plist.py`, `pb_dialog.py`
+- `is_device_locked_error()` — detects "ErrorCode" + "208", "Device locked",
+  or "MBErrorDomain" in the message (defined **once** in
+  `src/exceptions/device_errors.py`; imported/aliased locally as
+  `_is_device_locked_error` in `device_manager.py`, `protective.py`,
+  `original_plist.py`, `pb_dialog.py`)
 - Used in: `psysbackup()`, `backup_posterboard_database()`, `perform_protective_backup()`, `_backup_posterboard_database()`, `_capture_original_plists()`
 - User message: "Device locked - unlock and keep awake"
 
 ### Connection Error Detection
-- `_is_connection_error()` — detects ConnectionTerminatedError, IncompleteReadError, ConnectionError, OSError, asyncio.TimeoutError
+- `is_connection_error()` — detects ConnectionTerminatedError, ConnectionError,
+  OSError, asyncio.TimeoutError by `isinstance`, plus lowercase substring
+  heuristics ("connection", "incomplete", "terminated") — same single
+  definition in `device_errors.py`
 - Retry logic: 3 attempts with backoff `min(2**attempt, 15)`s — actual delays are 2s and 4s
 - Used in all backup/restore operations
 
@@ -166,7 +193,7 @@ backup in `<temp>/goldennugget_protective_cache/master/<udid>`:
 - Checks `get_will_encrypt()` before operations
 - iOS 27+ apply: prompts for password via QInputDialog if encryption is enabled and `use_encrypted_backup` is set
 - Phase 3 passes the password to `mb.restore(password=backup_password)`
-- `psysbackup` capture is skipped if encrypted (cannot read manifest)
+- `psysbackup` capture is skipped if encrypted **without a password** (cannot read manifest)
 
 ## Async/Await Patterns
 
@@ -191,10 +218,12 @@ update_label (UI)
 
 | Operation | Max Retries | Backoff | Errors Handled |
 |-----------|-------------|---------|----------------|
-| Protective Backup | 3 | 2s, 4s | Connection, Device Locked |
+| Protective Backup connect | 5 | 2s, 4s, 8s, 15s | Connection |
 | psysbackup (pre-reset capture) | 3 | 2s, 4s | Connection, Device Locked |
 | PosterBoard Backup | 3 | 2s, 4s | Connection, Device Locked |
-| Phase 3 Restore | 12 | 10s fixed | Transient (service not ready) |
+| Phase 2 Sparse Restore | 2 | 25s once (if drop at 0%) | Transient |
+| Phase 3 Restore | 18 | 3s fixed | Transient (service not ready) |
+| InstallationProxy (AppDomain) | 3 | 2s, 4s, 8s | Any Exception |
 
 ## Data Flow Summary
 
@@ -213,14 +242,18 @@ _apply_changes()
          |_ start_restore(prepared_backup_root)
               |_ restore_files()
                    |_ _restore_ios27()
-                        Phase 1: hardlink working copy of cache master (or perform_protective_backup())
-                                 + clean_backup_for_restore() + inject tweaks
-                        Phase 2: perform_restore() (sparse) -> reboot
-                        Phase 3: _wait_for_device() -> _restore_protective_backup(password)
+                        Phase 1 (0-40%):  hardlink working copy of cache master (or perform_protective_backup())
+                                         + clean_backup_for_restore() + inject PosterBoard (AppDomain)
+                        Phase 2 (40-60%): perform_restore() (sparse) -> reboot (25s+retry if drop at 0%)
+                        Phase 3 (60-90%): _wait_for_device() -> _restore_protective_backup(password) [18x3s]
+                        Phase 4 (90-95%): skip_all_setup27()      (only if skip-setup)
+                        Phase 5 (95-100%): reboot_device()        (only if auto_reboot)
 ```
 
 ## Logging
 
 - Console output: `print()` for immediate feedback
-- Log file: `/tmp/goldennugget_log.txt` (via `src/restore/protective.py` log functions)
-- Verbose logging: pass `--debug` to `main_app.py`; log file path can be overridden with the `GOLDENNUGGET_LOG_FILE` env var
+- Log file: `/tmp/goldennugget_log.txt` (via `src/restore/protective.py` log functions;
+  note `protective.py`'s `_LOG_FILE` is a hardcoded constant and ignores the env var)
+- Verbose logging: pass `--debug` to `main_app.py`; the stdlib logger path can be
+  overridden with the `GOLDENNUGGET_LOG_FILE` env var

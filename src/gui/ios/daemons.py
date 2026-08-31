@@ -5,6 +5,7 @@ from src.gui.ios.components import IOSSectionHeader, IOSSwitch
 from src.tweaks.tweaks import tweaks, TweakID
 from src.tweaks.tweak_loader import load_daemons
 from src.tweaks.daemons_tweak import Daemon
+from src.controllers.hotload import HotLoad, confirm_flagged
 
 
 class IOSDaemonsContent(QWidget):
@@ -43,6 +44,7 @@ class IOSDaemonsContent(QWidget):
         self.daemon_cards = []
         self.daemon_switches = []
         self._confirming = False
+        self._hotload_acked = False
         for title, daemon in [
             (QCoreApplication.translate("Nugget", "Disable thermalmonitord"), Daemon.thermalmonitord),
             (QCoreApplication.translate("Nugget", "Disable OTA"), Daemon.OTA),
@@ -164,6 +166,18 @@ class IOSDaemonsContent(QWidget):
         if self._confirming:
             return True
         settings = getattr(self.window, "settings", None) if self.window is not None else None
+        # HotLoad: if the Daemons tweak is flagged dangerous for this
+        # device/iOS, warn first. Acked once per page instance.
+        if not self._hotload_acked:
+            dm = getattr(self.window, "device_manager", None)
+            version = dm.get_current_device_version() if dm is not None else None
+            model = dm.get_current_device_model() if dm is not None else None
+            hotload = HotLoad(settings)
+            rule = hotload.rule_for(
+                "Daemons", device_version=version, device_model=model)
+            if rule is not None and not confirm_flagged(rule, self):
+                return False
+            self._hotload_acked = True
         if settings is not None and settings.value("daemon_bootloop_warned", False, type=bool):
             return True
         self._confirming = True

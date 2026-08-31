@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "comment": "GoldenNugget HotLoad safety rules. Each rule flags a tweak (by its TweakID name) as dangerous/broken, optionally scoped to an iOS version range and device models. 'disabled': false temporarily removes the flag without deleting it.",
+  "rules": [
+    {
+      "tweak": "Daemons",
+      "reason": "Example: disabling these daemons caused a bootloop on iOS 27.x.",
+      "min_version": "27.0",
+      "max_version": "27.9",
+      "only_models": [],
+      "disabled": false
+    }
+  ]
+}

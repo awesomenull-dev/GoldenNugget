@@ -13,6 +13,7 @@ from src.gui.ios.theme_manager import ThemeManager
 from src.gui.pages.main.settings import available_languages
 from src.controllers.video_handler import set_ignore_frame_limit
 from src.controllers.preset_manager import PresetManager
+from src.controllers.hotload import HotLoad, confirm_flagged
 from src.tweaks.tweaks import tweaks, TweakID
 
 
@@ -50,6 +51,17 @@ class IOSSettingsPage(QWidget):
             theme_on,
             lambda ios_on: self.window.apply_theme(
                 ThemeManager.IOS if ios_on else ThemeManager.CLASSIC),
+        )
+
+        # HotLoad safety rules
+        self.content_layout.addWidget(
+            IOSSectionHeader(QCoreApplication.translate("Nugget", "Safety (HotLoad)")))
+        self._hotload = HotLoad(self.window.settings)
+        self.hotload_switch = self._make_switch(
+            QCoreApplication.translate("Nugget",
+                "Apply automatic safety rules (warns on dangerous features)"),
+            self._hotload.is_enabled(),
+            self._make_hotload_handler(),
         )
 
         # Language
@@ -165,6 +177,11 @@ class IOSSettingsPage(QWidget):
             setattr(pref, pref_attr, checked)
             self.window.settings.setValue(pref_attr, checked)
             self.window._sync_settings()
+        return handler
+
+    def _make_hotload_handler(self):
+        def handler(checked: bool):
+            self._hotload.set_enabled(checked)
         return handler
 
     def _on_encrypted_backup_toggled(self, checked: bool, switch):
@@ -584,6 +601,15 @@ class IOSSettingsPage(QWidget):
                 compat_msg,
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
             if reply != QMessageBox.StandardButton.Yes:
+                return
+        if self.preset_manager.preset_has_daemon_changes(name):
+            dm = self.window.device_manager
+            hotload = HotLoad(getattr(self.window, "settings", None))
+            rule = hotload.rule_for(
+                "Daemons",
+                device_version=dm.get_current_device_version(),
+                device_model=dm.get_current_device_model())
+            if rule is not None and not confirm_flagged(rule, self):
                 return
         if not self.preset_manager.load_preset(name):
             QMessageBox.critical(

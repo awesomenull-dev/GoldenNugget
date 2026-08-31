@@ -27,6 +27,7 @@ import pymobiledevice3.service_connection as _sc
 
 from src.devicemanagement.session import lockdown_session
 from src.exceptions.device_errors import is_device_locked_error as _is_device_locked_error
+from src.controllers.hotload import HotLoad
 
 # Bump SSL handshake timeout from 10s to 60s for all lockdown services.
 _sc.DEFAULT_SSL_HANDSHAKE_TIMEOUT = 60
@@ -804,10 +805,22 @@ class DeviceManager:
         ]
         tmp_dirs = [] # temporary directory for unzipping pb and template files
 
+        hotload = HotLoad(self.pref_manager.settings)
+        hotload_version = self.get_current_device_version()
+        hotload_model = self.get_current_device_model()
+        hotload_skipped = []
+
         try:
             # set the plist keys
             for tweak_name in tweaks:
                 tweak = tweaks[tweak_name]
+                # HotLoad: never apply tweaks flagged as dangerous/broken for
+                # this device / iOS version (kill switch off -> no rules match).
+                if hotload.rule_for(tweak_name,
+                                    device_version=hotload_version,
+                                    device_model=hotload_model) is not None:
+                    hotload_skipped.append(tweak_name)
+                    continue
                 if isinstance(tweak, BasicPlistTweak) or isinstance(tweak, AdvancedPlistTweak):
                     basic_plists = tweak.apply_tweak(basic_plists)
                     basic_plists_ownership[tweak.file_location] = tweak.owner
@@ -832,6 +845,10 @@ class DeviceManager:
                     # feature flag — writing fails due to no write permissions.
                     # The feature is disabled on iOS 27+.
                     flag_plist = tweak.apply_tweak(flag_plist, version=self.get_current_device_version())
+
+            if hotload_skipped:
+                update_label(QCoreApplication.tr(
+                    "Skipped HotLoad-flagged tweaks: ") + ", ".join(sorted(hotload_skipped)))
 
             # Generate backup
             update_label(QCoreApplication.tr("Generating backup..."))

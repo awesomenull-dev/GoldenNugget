@@ -179,6 +179,23 @@ def main() -> int:
     widget.resize(800, 600)
     widget.show()
 
+    # HotLoad: refresh the remote safety rules in the background every launch.
+    # Local caching means applications still use whatever is on disk even if
+    # this fetch fails, and it never blocks startup.
+    try:
+        import threading
+        from src.controllers.hotload import HotLoad
+
+        def _refresh_hotload():
+            try:
+                HotLoad(settings).update()
+            except Exception as e:
+                logger.debug("HotLoad update failed: %s", e)
+
+        threading.Thread(target=_refresh_hotload, daemon=True).start()
+    except Exception as e:
+        logger.debug("HotLoad startup check skipped: %s", e)
+
     for arg in sys.argv:
         if arg.endswith('.tendies'):
             tweaks[TweakID.PosterBoard].add_tendie(arg)

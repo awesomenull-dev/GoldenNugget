@@ -149,7 +149,7 @@ class AboutProgramDialog(QDialog):
         # Credits data - from original home page
         credits = [
             ("Main Developer", "awesomenull", "https://github.com/awesomenull-dev"),
-            ("iOS 27 Support", "Wind0ws11Aero", "https://github.com/Wind0ws11Aero"),
+            ("Co-Developer", "Wind0ws11Aero", "https://github.com/Wind0ws11Aero"),
             ("Nugget Creator", "leminlemiz", "https://github.com/leminlemiz"),
             ("PosterRestore Team", "PosterRestore Discord", "https://discord.gg/gWtzTVhMvh"),
             ("PosterBoard Help", "dootskyre, Middo, dulark, forcequitOS, pingubow", "https://twitter.com/dootskyre"),

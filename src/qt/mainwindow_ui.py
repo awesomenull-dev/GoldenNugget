@@ -5899,10 +5899,10 @@ class Ui_Nugget(object):
         self.mikasaBtn.setText(QCoreApplication.translate("Nugget", u"Mikasa\n"
 "Quiet Daemon", None))
 #if QT_CONFIG(tooltip)
-        self.wind0ws11AeroBtn.setToolTip(QCoreApplication.translate("Nugget", u"iOS 27 Support", None))
+        self.wind0ws11AeroBtn.setToolTip(QCoreApplication.translate("Nugget", u"Co-Developer", None))
 #endif // QT_CONFIG(tooltip)
         self.wind0ws11AeroBtn.setText(QCoreApplication.translate("Nugget", u"Wind0ws11Aero\n"
-"iOS 27", None))
+"Co-Developer", None))
         self.toolButton_15.setText(QCoreApplication.translate("Nugget", u"Additional Thanks", None))
         self.translatorsBtn.setText(QCoreApplication.translate("Nugget", u"Translators", None))
         self.libiBtn.setText(QCoreApplication.translate("Nugget", u"pymobiledevice3", None))

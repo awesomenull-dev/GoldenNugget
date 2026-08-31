@@ -73,14 +73,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # pre-load the pages
         self.pages = {
             Page.Home: Pages.Home(window=self, ui=self.ui),
-            Page.Posterboard: Pages.Posterboard(window=self, ui=self.ui),
-            Page.StatusBar: Pages.StatusBar(ui=self.ui),
-            Page.Springboard: Pages.Springboard(ui=self.ui),
-            Page.InternalOptions: Pages.Internal(ui=self.ui),
-            Page.LiquidGlass: Pages.LiquidGlass(ui=self.ui),
-            Page.Daemons: Pages.Daemons(ui=self.ui, window=self),
-            Page.Templates: Pages.Templates(window=self, ui=self.ui),
-            Page.Settings: Pages.Settings(window=self, ui=self.ui)
+            Page.Daemons: Pages.Daemons(ui=self.ui, window=self)
         }
 
         # theme manager stores the active UI mode (classic sidebar shell vs

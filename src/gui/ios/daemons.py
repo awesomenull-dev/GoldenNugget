@@ -42,6 +42,7 @@ class IOSDaemonsContent(QWidget):
 
         self.daemon_cards = []
         self.daemon_switches = []
+        self._confirming = False
         for title, daemon in [
             (QCoreApplication.translate("Nugget", "Disable thermalmonitord"), Daemon.thermalmonitord),
             (QCoreApplication.translate("Nugget", "Disable OTA"), Daemon.OTA),
@@ -64,7 +65,6 @@ class IOSDaemonsContent(QWidget):
             (QCoreApplication.translate("Nugget", "Location Services"), Daemon.Location),
             (QCoreApplication.translate("Nugget", "Disable Apple Ads"), Daemon.AppleAds),
             (QCoreApplication.translate("Nugget", "Disable News"), Daemon.News),
-            (QCoreApplication.translate("Nugget", "Disable App Permission Prompts"), Daemon.AskPermissions),
             (QCoreApplication.translate("Nugget", "Disable Family Sharing"), Daemon.FamilySharing),
             (QCoreApplication.translate("Nugget", "Disable Video Subscriptions"), Daemon.VideoSubscriptions),
             (QCoreApplication.translate("Nugget", "Disable Web Bookmarks"), Daemon.WebBookmarks),
@@ -77,15 +77,12 @@ class IOSDaemonsContent(QWidget):
             (QCoreApplication.translate("Nugget", "Disable Safari Suggestions (Parse)"), Daemon.SafariSuggestions),
             (QCoreApplication.translate("Nugget", "Disable Shazam"), Daemon.Shazam),
             (QCoreApplication.translate("Nugget", "Disable Settings Stats"), Daemon.SettingsStats),
-            (QCoreApplication.translate("Nugget", "Disable Status Kit"), Daemon.StatusKit),
             (QCoreApplication.translate("Nugget", "Disable Reminders"), Daemon.Reminders),
             (QCoreApplication.translate("Nugget", "Disable AirPlay"), Daemon.AirPlay),
             (QCoreApplication.translate("Nugget", "Disable GameKit Service"), Daemon.GameKitService),
             (QCoreApplication.translate("Nugget", "Disable Sidecar"), Daemon.Sidecar),
             (QCoreApplication.translate("Nugget", "Disable Speech Recognition"), Daemon.SpeechRecognition),
             (QCoreApplication.translate("Nugget", "Disable Translate"), Daemon.Translate),
-            (QCoreApplication.translate("Nugget", "Disable Mock Location"), Daemon.MockLocation),
-            (QCoreApplication.translate("Nugget", "Disable Device Check"), Daemon.DeviceCheck),
         ]:
             card, switch = self._make_daemon_switch(layout, title, daemon)
             self.daemon_cards.append(card)
@@ -132,15 +129,76 @@ class IOSDaemonsContent(QWidget):
         return card, switch
 
     def _on_master_toggled(self, checked: bool):
+        if checked and not self._confirm_daemon_enable():
+            # User hit "Stop" in one of the warnings: keep the master off.
+            self.master_switch.blockSignals(True)
+            self.master_switch.setChecked(False)
+            self.master_switch.blockSignals(False)
+            return
         self.daemons_tweak.set_enabled(checked)
         self._update_daemons_enabled()
 
     def _on_daemon_toggled(self, daemon: Daemon, checked: bool):
+        if checked and not self._confirm_daemon_enable():
+            # Revert the individual toggle so nothing gets applied.
+            self._set_switch(daemon, False)
+            return
         self.daemons_tweak.set_multiple_values(daemon.value, value=checked)
         if checked:
             self.master_switch.setChecked(True)
             if daemon is Daemon.Location:
                 self._warn_location_daemon()
+
+    def _set_switch(self, daemon: Daemon, value: bool):
+        for d, switch in self.daemon_switches:
+            if d is daemon:
+                switch.blockSignals(True)
+                switch.setChecked(value)
+                switch.blockSignals(False)
+                return
+
+    def _confirm_daemon_enable(self) -> bool:
+        """Show the bootloop + backup warnings once; the acknowledgement is
+        stored in GoldenNugget settings (not in presets), so it only pops up
+        the first time daemons are enabled for this install."""
+        if self._confirming:
+            return True
+        settings = getattr(self.window, "settings", None) if self.window is not None else None
+        if settings is not None and settings.value("daemon_bootloop_warned", False, type=bool):
+            return True
+        self._confirming = True
+        try:
+            if not self._show_confirm_dialog(
+                "Hold Up before pressing countiune, this section can bootloop "
+                "your phone. Don't cry about that you have not been notified then."
+            ):
+                return False
+            if not self._show_confirm_dialog(
+                "Creating full backup is hightly recommended"
+            ):
+                return False
+            if settings is not None:
+                settings.setValue("daemon_bootloop_warned", True)
+                settings.sync()
+            return True
+        finally:
+            self._confirming = False
+
+    def _show_confirm_dialog(self, text: str) -> bool:
+        import PySide6.QtWidgets as QW
+        box = QW.QMessageBox(self)
+        box.setIcon(QW.QMessageBox.Icon.Warning)
+        box.setWindowTitle(QCoreApplication.translate("Nugget", "Hold Up"))
+        box.setText(text)
+        countiune_btn = box.addButton(
+            QCoreApplication.translate("Nugget", "Countiune Anyway"),
+            QW.QMessageBox.ButtonRole.AcceptRole)
+        stop_btn = box.addButton(
+            QCoreApplication.translate("Nugget", "Stop"),
+            QW.QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(countiune_btn)
+        box.exec()
+        return box.clickedButton() is countiune_btn
 
     def _warn_location_daemon(self):
         """Location Services daemon keeps PosterBoard alive on iPhone 14."""

@@ -57,6 +57,25 @@ class PresetManager:
         except Exception:
             return None
 
+    def preset_has_daemon_changes(self, name: str) -> bool:
+        """True if the preset enables the daemon modifications or turns on any
+        individual daemon (i.e. it carries daemon tweaks that would be applied)."""
+        file_path = self.get_preset_path(name)
+        if not os.path.isfile(file_path):
+            return False
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return False
+        daemon_data = data.get("tweaks", {}).get("Daemons")
+        if not isinstance(daemon_data, dict):
+            return False
+        if daemon_data.get("enabled"):
+            return True
+        values = daemon_data.get("value") or {}
+        return any(values.values())
+
     def list_presets_with_metadata(self) -> list[dict]:
         """List all presets with their metadata."""
         result = []

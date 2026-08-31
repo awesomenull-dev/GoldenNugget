@@ -4,6 +4,7 @@ from PySide6.QtWidgets import (
     QComboBox, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QInputDialog,
     QFileDialog, QDialog
 )
+from typing import Optional
 
 from src.gui.ios.components import (
     IOSSectionHeader, IOSSwitch, IOSPrimaryButton
@@ -576,6 +577,14 @@ class IOSSettingsPage(QWidget):
             ).format(name, desc, model, ios))
         if confirm != QMessageBox.StandardButton.Yes:
             return
+        compat_msg = self._daemon_compat_warning(name, meta)
+        if compat_msg:
+            reply = QMessageBox.warning(
+                self, QCoreApplication.translate("Nugget", "Daemon Compatibility"),
+                compat_msg,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
+            if reply != QMessageBox.StandardButton.Yes:
+                return
         if not self.preset_manager.load_preset(name):
             QMessageBox.critical(
                 self, QCoreApplication.translate("Nugget", "Load Preset"),
@@ -589,6 +598,54 @@ class IOSSettingsPage(QWidget):
                 "Nugget",
                 "Preset \"{0}\" loaded.\n\nGoldenNugget will now restart to apply the changes.").format(name))
         self._restart_app()
+
+    @staticmethod
+    def _major_version(ver: str):
+        """Return the iOS major version as an int, or None if not parseable."""
+        try:
+            return int(str(ver).split(".")[0])
+        except (ValueError, TypeError, IndexError):
+            return None
+
+    @staticmethod
+    def _device_type(model: str) -> str:
+        model = str(model or "")
+        if model.lower().startswith("iphone"):
+            return "iPhone"
+        if model.lower().startswith("ipad"):
+            return "iPad"
+        return ""
+
+    def _daemon_compat_warning(self, name: str, meta) -> Optional[str]:
+        """Return a warning string when the preset's daemon changes were saved
+        for a different iOS major version or device type than the one in use;
+        None when the preset has no daemon changes or we cannot tell."""
+        if not self.preset_manager.preset_has_daemon_changes(name):
+            return None
+        cur_ver = self.window.device_manager.get_current_device_version() or ""
+        cur_model = self.window.device_manager.get_current_device_model() or ""
+        pr_ver = (meta.get("ios_version") or "") if meta else ""
+        pr_model = (meta.get("device_model") or "") if meta else ""
+
+        pr_major = self._major_version(pr_ver)
+        cur_major = self._major_version(cur_ver)
+        mismatches = []
+        if pr_major is not None and cur_major is not None and pr_major != cur_major:
+            mismatches.append(f"iOS {pr_major}x vs current iOS {cur_major}x")
+        pr_type = self._device_type(pr_model)
+        cur_type = self._device_type(cur_model)
+        if pr_type and cur_type and pr_type != cur_type:
+            mismatches.append(f"{pr_type} vs current {cur_type}")
+        if not mismatches:
+            return None
+        return (
+            "This preset contains daemon modifications that were saved for a "
+            "different device:\n\n"
+            + "\n".join("• " + m for m in mismatches)
+            + "\n\nDaemons are sensitive to the iOS version and device type, and "
+              "applying incompatible ones can bootloop your device. "
+              "Proceed with caution."
+        )
 
     def _on_preset_delete(self):
         if self.preset_list.currentRow() < 0:

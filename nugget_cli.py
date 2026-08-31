@@ -64,13 +64,15 @@ def _run_subcommand(name: str, argv: list) -> int:
 
 
 def dispatch(argv: list) -> int:
-    if not argv or argv[0] in ("-h", "--help", "--usage"):
+    # Empty argv (e.g. double-clicking Nugget.exe on Windows) must fall through
+    # to the GUI below — only an explicit help flag prints the usage.
+    if argv and argv[0] in ("-h", "--help", "--usage"):
         print(USAGE)
         return 0
 
     known = {"apply-wallpaper", "restore-cache", "restore", "skip-setup"}
-    first = argv[0]
-    if first in known:
+    if argv and argv[0] in known:
+        first = argv[0]
         code = _run_subcommand(first, argv[1:])
         if code is not None:
             return code

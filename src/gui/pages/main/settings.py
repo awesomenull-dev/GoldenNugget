@@ -146,6 +146,10 @@ class SettingsPage(Page):
         self.presetExportBtn.setObjectName("presetExportBtn")
         self.presetExportBtn.setText(QCoreApplication.tr("Export"))
         btns_layout.addWidget(self.presetExportBtn)
+        self.presetPartialExportBtn = QToolButton(presets_widget)
+        self.presetPartialExportBtn.setObjectName("presetPartialExportBtn")
+        self.presetPartialExportBtn.setText(QCoreApplication.tr("Partial Export"))
+        btns_layout.addWidget(self.presetPartialExportBtn)
         self.presetImportBtn = QToolButton(presets_widget)
         self.presetImportBtn.setObjectName("presetImportBtn")
         self.presetImportBtn.setText(QCoreApplication.tr("Import"))
@@ -254,6 +258,7 @@ class SettingsPage(Page):
         self.presetDeleteBtn.clicked.connect(self.on_presetDeleteBtn_clicked)
         self.presetRefreshBtn.clicked.connect(self.on_presetRefreshBtn_clicked)
         self.presetExportBtn.clicked.connect(self.on_presetExportBtn_clicked)
+        self.presetPartialExportBtn.clicked.connect(self.on_presetPartialExportBtn_clicked)
         self.presetImportBtn.clicked.connect(self.on_presetImportBtn_clicked)
 
         self.aboutBtn.clicked.connect(self.on_aboutBtn_clicked)
@@ -482,6 +487,46 @@ class SettingsPage(Page):
         else:
             QMessageBox.critical(
                 self.window, QCoreApplication.tr("Export Preset"),
+                QCoreApplication.tr("Failed to export preset.")
+            )
+
+    def on_presetPartialExportBtn_clicked(self):
+        if self.presetList.currentRow() < 0:
+            QMessageBox.warning(
+                self.window, QCoreApplication.tr("Partial Export"),
+                QCoreApplication.tr("Select a preset to export first.")
+            )
+            return
+        item_text = self.presetList.currentItem().text()
+        name = self.presetList.currentItem().data(Qt.UserRole) or item_text.split("\n")[0].strip()
+
+        from src.gui.dialogs.preset_partial_export import PartialExportDialog
+        from PySide6.QtWidgets import QDialog
+        dialog = PartialExportDialog(parent=self.window)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        selected = dialog.selected_tweaks()
+        if not selected:
+            QMessageBox.warning(
+                self.window, QCoreApplication.tr("Partial Export"),
+                QCoreApplication.tr("Select at least one tweak to export.")
+            )
+            return
+        file_path, _ = QFileDialog.getSaveFileName(
+            self.window, QCoreApplication.tr("Partial Export"),
+            f"{name}.json",
+            QCoreApplication.tr("JSON Files (*.json)")
+        )
+        if not file_path:
+            return
+        if self.preset_manager.export_preset(name, file_path, include=selected):
+            QMessageBox.information(
+                self.window, QCoreApplication.tr("Partial Export"),
+                QCoreApplication.tr("Preset exported to:\n{0}").format(file_path)
+            )
+        else:
+            QMessageBox.critical(
+                self.window, QCoreApplication.tr("Partial Export"),
                 QCoreApplication.tr("Failed to export preset.")
             )
 

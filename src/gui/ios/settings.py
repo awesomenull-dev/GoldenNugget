@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt, QCoreApplication
+from PySide6.QtCore import Qt, QCoreApplication, QTimer
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea,
     QComboBox, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QInputDialog,
@@ -31,6 +31,7 @@ class IOSSettingsPage(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("background-color: #1e1e1e; border: none;")
+        self.scroll_area = scroll
         content = QWidget()
         scroll.setWidget(content)
         layout.addWidget(scroll)
@@ -499,6 +500,7 @@ class IOSSettingsPage(QWidget):
             (QCoreApplication.translate("Nugget", "Delete"), self._on_preset_delete),
             (QCoreApplication.translate("Nugget", "Refresh"), self.refresh_presets),
             (QCoreApplication.translate("Nugget", "Export"), self._on_preset_export),
+            (QCoreApplication.translate("Nugget", "Partial Export"), self._on_preset_partial_export),
             (QCoreApplication.translate("Nugget", "Import"), self._on_preset_import),
         ]:
             btn = self._make_mini_button(title)
@@ -507,6 +509,15 @@ class IOSSettingsPage(QWidget):
         presets_layout.addLayout(btns_row)
 
         self.content_layout.addWidget(card)
+
+    def scroll_to_presets(self):
+        """Scroll the settings page to the presets section at the bottom."""
+        if self.scroll_area is not None:
+            QTimer.singleShot(0, self._scroll_to_bottom)
+
+    def _scroll_to_bottom(self):
+        bar = self.scroll_area.verticalScrollBar()
+        bar.setValue(bar.maximum())
 
     def refresh_presets(self):
         self.preset_list.clear()
@@ -620,6 +631,41 @@ class IOSSettingsPage(QWidget):
         else:
             QMessageBox.critical(
                 self, QCoreApplication.translate("Nugget", "Export Preset"),
+                QCoreApplication.translate("Nugget", "Failed to export preset."))
+
+    def _on_preset_partial_export(self):
+        if self.preset_list.currentRow() < 0:
+            QMessageBox.warning(
+                self, QCoreApplication.translate("Nugget", "Partial Export"),
+                QCoreApplication.translate("Nugget", "Select a preset to export first."))
+            return
+        item_text = self.preset_list.currentItem().text()
+        name = self.preset_list.currentItem().data(Qt.UserRole) or item_text.split("\n")[0].strip()
+
+        from src.gui.dialogs.preset_partial_export import PartialExportDialog
+        dialog = PartialExportDialog(parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        selected = dialog.selected_tweaks()
+        if not selected:
+            QMessageBox.warning(
+                self, QCoreApplication.translate("Nugget", "Partial Export"),
+                QCoreApplication.translate("Nugget",
+                    "Select at least one tweak to export."))
+            return
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, QCoreApplication.translate("Nugget", "Partial Export"),
+            f"{name}.json",
+            QCoreApplication.translate("Nugget", "JSON Files (*.json)"))
+        if not file_path:
+            return
+        if self.preset_manager.export_preset(name, file_path, include=selected):
+            QMessageBox.information(
+                self, QCoreApplication.translate("Nugget", "Partial Export"),
+                QCoreApplication.translate("Nugget", "Preset exported to:\n{0}").format(file_path))
+        else:
+            QMessageBox.critical(
+                self, QCoreApplication.translate("Nugget", "Partial Export"),
                 QCoreApplication.translate("Nugget", "Failed to export preset."))
 
     def _on_preset_import(self):

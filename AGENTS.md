@@ -189,6 +189,19 @@ backup in `<temp>/goldennugget_protective_cache/master/<udid>`:
 - Retry logic: 3 attempts with backoff `min(2**attempt, 15)`s — actual delays are 2s and 4s
 - Used in all backup/restore operations
 
+### Global Crash Handler (src/exceptions/crash_handler.py)
+- `install_crash_handler()` sets `sys.excepthook` (plus a `sys.unraisablehook`
+  fallback) and is called once at `main_app` import, before the window is built.
+- `CrashHandlerApp` is a `QApplication` subclass whose `notify()` routes
+  exceptions raised inside Qt event handlers/slots to the same handler —
+  PySide6 would otherwise print and drop them.
+- On an uncaught exception it shows a `CrashDialog` with a **"Copy Error"**
+  button (copies the full traceback to the clipboard) and a **"Continue"**
+  button that dismisses the dialog and lets the session keep running (no
+  data-loss exit). `KeyboardInterrupt` is still allowed to exit normally.
+- Never raises: the crash handler safely falls back to stderr if no
+  `QApplication` exists yet.
+
 ### Backup Encryption Handling
 - Checks `get_will_encrypt()` before operations
 - iOS 27+ apply: prompts for password via QInputDialog if encryption is enabled and `use_encrypted_backup` is set

@@ -195,29 +195,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.updateAppVersionLabel()
         self.pages[Page.Home].load()
         
-        # Add About button next to title
-        self.aboutBtn = QtWidgets.QToolButton()
-        self.aboutBtn.setText(self.tr("About"))
-        self.aboutBtn.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
-        self.aboutBtn.setStyleSheet("""
-            QToolButton {
-                color: #8E8E93;
-                font-size: 13px;
-                background: none;
-                border: none;
-                padding: 4px 8px;
-            }
-            QToolButton:hover {
-                color: #007AFF;
-            }
-        """)
-        self.aboutBtn.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
-        self.aboutBtn.clicked.connect(self.show_about_dialog)
-        
-        # Add to the title bar layout
-        title_layout = self.ui.horizontalLayout_15
-        title_layout.addWidget(self.aboutBtn)
-        
         ## DEVICE BAR
         self.refresh_devices()
 
@@ -636,11 +613,32 @@ class MainWindow(QtWidgets.QMainWindow):
             self._update_shared_nav(0)
         else:
             self.content_stack.setCurrentIndex(0)
+        self._refresh_preset_widgets()
         self._sync_sidebar_selection()
+
+    def _refresh_preset_widgets(self):
+        """Keep the active-preset banners on both home pages in sync."""
+        try:
+            self.pages[Page.Home].refresh_preset_widget()
+        except Exception:
+            pass
+        try:
+            self.ios_home.refresh_preset_widget()
+        except Exception:
+            pass
+
 
     def show_ios_page(self, index: int):
         self.content_stack.setCurrentIndex(1)
         self.ios_pages.setCurrentIndex(index)
+
+    def open_presets_section(self):
+        """Open the settings page and scroll straight to the presets section."""
+        self.content_stack.setCurrentIndex(1)
+        self.ios_pages.setCurrentIndex(4)
+        self._update_shared_nav(4)
+        self._sync_sidebar_selection()
+        self.ios_settings.scroll_to_presets()
 
     def eventFilter(self, obj, event):
         """Handle ESC and the mouse back button as navigation-back."""

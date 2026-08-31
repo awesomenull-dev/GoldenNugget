@@ -2,6 +2,7 @@ from PySide6.QtCore import QCoreApplication
 from webbrowser import open_new_tab
 from ..page import Page
 from src.qt.mainwindow_ui import Ui_Nugget
+from src.gui.preset_widget import PresetWidget
 
 class HomePage(Page):
     def __init__(self, window, ui: Ui_Nugget):
@@ -9,11 +10,50 @@ class HomePage(Page):
         self.window = window
         self.ui = ui
         self.show_uuid = False
+        self.preset_widget = None
 
     def load_page(self):
         ## HOME PAGE ACTIONS
         self.ui.phoneVersionLbl.linkActivated.connect(self.toggle_version_label)
         self.ui.discordBtn.clicked.connect(lambda: open_new_tab("https://discord.gg/RwbtH7pW5e"))
+
+        self._trim_to_logo_header()
+        self._inject_preset_widget()
+
+    def _trim_to_logo_header(self):
+        """Match the clean new-home look: big logo + title, no button clutter.
+
+        Hides the Discord/GitHub buttons beside the title and the credits
+        button wall, so the classic home reads as just logo + text (+ the
+        presets widget below).
+        """
+        for name in ("discordBtn", "starOnGithubBtn"):
+            btn = getattr(self.ui, name, None)
+            if btn is not None:
+                btn.setVisible(False)
+        credits = getattr(self.ui, "verticalWidget_6", None)
+        if credits is not None:
+            credits.setVisible(False)
+
+    def _inject_preset_widget(self):
+        """Add the active-preset banner at the bottom of the home page."""
+        layout = self.ui.verticalLayout_2
+        self.preset_widget = PresetWidget(
+            window=self.window,
+            on_manage=self.window.open_presets_section,
+            ios_style=False)
+        # Place it above the version label at the very bottom, then keep the
+        # version label pinned below it.
+        if hasattr(self.ui, "appVersionLbl"):
+            layout.insertWidget(layout.indexOf(self.ui.appVersionLbl),
+                                self.preset_widget)
+        else:
+            layout.addWidget(self.preset_widget)
+        self.preset_widget.refresh()
+
+    def refresh_preset_widget(self):
+        if self.preset_widget is not None:
+            self.preset_widget.refresh()
 
     ## ACTIONS
     def updatePhoneInfo(self):

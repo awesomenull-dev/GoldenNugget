@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.ios.components import IOSCard, IOSPrimaryButton
+from src.gui.preset_widget import PresetWidget
 
 
 class IOSHomePage(QWidget):
@@ -238,6 +239,12 @@ class IOSHomePage(QWidget):
         reset_btn.clicked.connect(self.reset_tweaks)
         layout.addWidget(reset_btn)
 
+        # Presets widget: makes the active preset explicit and offers a quick
+        # path to the preset manager.
+        self.preset_widget = PresetWidget(
+            window=self.window, on_manage=self.open_presets_section, ios_style=True)
+        layout.addWidget(self.preset_widget)
+
         # Process status indicator (apply/reset progress + completion)
         self.process_status_lbl = QLabel("", self)
         self.process_status_lbl.setWordWrap(True)
@@ -257,6 +264,7 @@ class IOSHomePage(QWidget):
         # Initial update
         self.update_status()
         self.update_device_info()
+        self.refresh_preset_widget()
 
     def populate_device_picker(self):
         self.device_combo.blockSignals(True)
@@ -289,6 +297,10 @@ class IOSHomePage(QWidget):
     def open_settings(self):
         # Open iOS settings page within the iOS stack
         self.window.ios_pages.setCurrentIndex(4)  # IOSSettingsPage
+
+    def open_presets_section(self):
+        """Open settings and jump straight to the presets section."""
+        self.window.open_presets_section()
 
     def switch_to_ios_page(self, index: int):
         self.window.ios_pages.setCurrentIndex(index)
@@ -351,6 +363,10 @@ class IOSHomePage(QWidget):
 
     def refresh_device_combo(self):
         self.populate_device_picker()
+
+    def refresh_preset_widget(self):
+        """Update the active-preset banner (call after loading/saving a preset)."""
+        self.preset_widget.refresh()
 
     def set_statusbar_visible(self, visible: bool):
         self.statusbar_card.setVisible(visible)

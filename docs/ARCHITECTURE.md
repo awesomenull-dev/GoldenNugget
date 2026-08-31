@@ -20,10 +20,12 @@ main_app.py ──► src/gui/main_window.py ──► pages/ (classic UI)  +  i
 
 ---
 
-## Entry point — `nugget_cli.py` / `main_app.py`
+## Entry point — `src/cli` / `nugget_cli.py` / `main_app.py`
 
-`nugget_cli.py` is the unified binary entry point (required by the bundled
-executable). It dispatches subcommands then falls through to the GUI:
+The unified CLI dispatcher lives in `src/cli/main.py` (routing + usage text,
+exposed via `src.cli`). The top-level `nugget_cli.py` is a thin shim that
+delegates to `src.cli.main`, keeping the PyInstaller entry script unchanged.
+It dispatches subcommands then falls through to the GUI:
 
 ```
 Nugget                          launch the GUI
@@ -343,7 +345,7 @@ and is not the live navigator. Real navigation uses:
 | Module | Role |
 |---|---|
 | `settings.py` | QSettings: writes to org `GoldenNugget`, falls back to legacy `Nugget`; SIGBUS-avoiding `value()` |
-| `preset_manager.py` | export/import/apply of tweak presets (`PRESET_VERSION=2`; serializes all tweaks except PosterBoard; statusbar uses cffi base64) |
+| `preset_manager.py` | export/import/apply of tweak presets (`PRESET_VERSION=2`; serializes all tweaks except PosterBoard; statusbar uses cffi base64). `export_preset(..., include=)` performs a **partial export** — filters the preset's tweaks to a given subset of `TweakID`s and marks the metadata as `partial` with the `included` list |
 | `translator.py` | language switching (`os.execl` restart), RTL fixes, `.ts/.qm` pipeline via pyside6-lupdate/lrelease |
 | `plist_handler.py` / `xml_handler.py` | plist key writes; namespace-aware XML/caml value setters matching on `nuggetId`/`id` (hardened `eval` for `nuggetOffset` equations) |
 | `video_handler.py` | ffmpeg/opencv video→CAML conversion for video wallpapers (400-frame limit) |

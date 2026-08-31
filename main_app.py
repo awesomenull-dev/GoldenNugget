@@ -24,6 +24,11 @@ from src.gui.main_window import MainWindow
 from src.devicemanagement.device_manager import DeviceManager
 from src.tweaks.tweaks import tweaks, TweakID
 from src.gui.logger import setup_logging, get_logger
+from src.exceptions.crash_handler import install_crash_handler, CrashHandlerApp
+
+# Install the global crash handler as early as possible so any uncaught
+# exception during startup is also captured instead of silently killing the app.
+install_crash_handler()
 
 
 def main() -> int:
@@ -82,7 +87,7 @@ def main() -> int:
     from src.controllers.nugget_logger import init_logging
     init_logging()
 
-    app = QtWidgets.QApplication([])
+    app = CrashHandlerApp([])
     dm = DeviceManager()
 
     # Test mode: create mock device

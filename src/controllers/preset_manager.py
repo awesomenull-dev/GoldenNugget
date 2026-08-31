@@ -131,8 +131,14 @@ class PresetManager:
         return False
 
     ## EXPORT / IMPORT
-    def export_preset(self, name: str, export_path: str) -> bool:
-        """Export a preset to a shareable JSON file."""
+    def export_preset(self, name: str, export_path: str,
+                      include: Optional[list] = None) -> bool:
+        """Export a preset to a shareable JSON file.
+
+        ``include`` optionally limits the export to a subset of tweaks, given
+        as a list of ``TweakID`` members (or their ``.name`` strings). When
+        omitted, the whole preset is exported. ``None``/empty means full.
+        """
         file_path = self.get_preset_path(name)
         if not os.path.isfile(file_path):
             return False
@@ -142,12 +148,69 @@ class PresetManager:
             # Add export marker
             data["exported"] = True
             data["exported_at"] = int(time.time())
+
+            if include:
+                data = self._filter_export(data, include)
+
             with open(export_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             return True
         except Exception as e:
             print(f"Failed to export preset: {e}")
             return False
+
+    def build_export_data(self, include: Optional[list] = None) -> Optional[dict]:
+        """Serialize the *current* tweak state, optionally limited to a subset.
+
+        ``include`` is a list of ``TweakID`` members (or ``.name`` strings).
+        Returns ``None`` if nothing was serialized.
+        """
+        data = self._serialize_subset(include)
+        if data is None:
+            return None
+        data["exported"] = True
+        data["exported_at"] = int(time.time())
+        return data
+
+    @staticmethod
+    def _filter_export(data: dict, include: list) -> dict:
+        """Return a copy of *data* with ``tweaks`` reduced to ``include``
+        and metadata annotated as a partial export."""
+        include_names = set()
+        for item in include:
+            include_names.add(item.name if hasattr(item, "name") else str(item))
+        tweaks_data = data.get("tweaks", {})
+        filtered = {key: val for key, val in tweaks_data.items()
+                    if key in include_names}
+        out = dict(data)
+        out["tweaks"] = filtered
+        out["metadata"] = dict(data.get("metadata", {}))
+        out["metadata"]["partial"] = True
+        out["metadata"]["included"] = sorted(include_names)
+        return out
+
+    def _serialize_subset(self, include: Optional[list] = None) -> Optional[dict]:
+        """Serialize the current tweaks filtered to ``include`` (TweakIDs/names)."""
+        if include is None:
+            include = list(tweaks.keys())
+        include_names = set()
+        for item in include:
+            include_names.add(item.name if hasattr(item, "name") else str(item))
+
+        tweak_data = {}
+        for key, tweak in tweaks.items():
+            if key.name not in include_names:
+                continue
+            if key == TweakID.PosterBoard:
+                continue
+            try:
+                tweak_data[key.name] = self._serialize_tweak(tweak)
+            except Exception as e:
+                print(f"Failed to serialize tweak {key}: {e}")
+
+        if not tweak_data:
+            return None
+        return {"tweaks": tweak_data}
 
     def import_preset(self, import_path: str, new_name: str = None) -> tuple[bool, str]:
         """Import a preset from a JSON file. Returns (success, actual_name)."""

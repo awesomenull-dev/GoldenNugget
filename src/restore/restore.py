@@ -24,7 +24,7 @@ from pymobiledevice3.lockdown import LockdownClient, create_using_usbmux
 from pymobiledevice3.services.installation_proxy import InstallationProxyService
 from pymobiledevice3.services.lockdown_service import LockdownService
 from pymobiledevice3.services.mobilebackup2 import Mobilebackup2Service
-from pymobiledevice3.exceptions import ConnectionTerminatedError, PyMobileDevice3Exception, DeviceNotFoundError, PasswordRequiredError, NotPairedError, ConnectionFailedError
+from pymobiledevice3.exceptions import ConnectionTerminatedError, PyMobileDevice3Exception, DeviceNotFoundError, PasswordRequiredError, NotPairedError, ConnectionFailedError, InvalidServiceError
 
 from src.exceptions.nugget_exception import NuggetException
 
@@ -363,6 +363,22 @@ async def _restore_protective_backup(lc: LockdownClient, backup_root: str,
                                       f"lack payloads (e.g. {missing[:5]})")
                     except Exception:
                         pass
+                if isinstance(e, InvalidServiceError):
+                    raise NuggetException(
+                        "The iPhone would not start the restore service "
+                        "(mobilebackup2) even after several minutes of retries.",
+                        detailed_text=(
+                            "This is not about Developer Mode - that is only "
+                            "needed for the tweak restore (BookRestore), not "
+                            "for restoring your data.\n\nThe phone was likely "
+                            "still booting, locked, or had the screen off. "
+                            "Unlock the iPhone, keep the screen on, wait for "
+                            "it to reach the home screen, then apply again. "
+                            "Your data was not lost - the protective backup is "
+                            "kept on this computer and will be restored on the "
+                            "next run."
+                        ),
+                    )
                 raise
             progress_callback(
                 f"Device not ready, retrying ({attempt}/{max_retries})..."

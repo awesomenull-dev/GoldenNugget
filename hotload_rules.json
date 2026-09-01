@@ -1,10 +1,17 @@
 {
   "version": 2,
-  "comment": "GoldenNugget HotLoad safety rules. Each rule flags a tweak (by its TweakID name) as dangerous/broken, optionally scoped to an iOS version range and device models. 'disabled': false temporarily removes the flag without deleting it. Rules with the special action \"kill_app\" act as a REMOTE KILL SWITCH: on matching iOS versions/models GoldenNugget refuses to start (or, if already running, shuts itself down like a crash). Scope such rules as narrowly as possible via min_version/max_version/only_models.",
+  "comment": "GoldenNugget HotLoad safety rules. Each rule flags a tweak (by its TweakID name) as dangerous/broken, optionally scoped to an iOS version range and device models. A rule is ACTIVE when 'disabled' is not present or is true; set 'disabled': false to temporarily remove the flag without deleting the rule. Rules with the special action \"kill_app\" act as a REMOTE KILL SWITCH: on matching iOS versions/models GoldenNugget refuses to start (or, if already running, shuts itself down like a crash). Scope such rules as narrowly as possible via min_version/max_version/only_models.",
   "rules": [
     {
       "tweak": "Daemons",
-      "reason": "Example: disabling these daemons caused a bootloop on iOS 27.x.",
+      "reason": "The Voice Control daemons (assistant_service / assistantd / voiced) cause a bootloop when disabled on current iOS. GoldenNugget 9.2 still ships Voice Control in the daemons list, so enabling Daemons is dangerous. Daemons are skipped from applying until 9.2.1 ships the hard block in code.",
+      "min_version": "26.0",
+      "max_version": "27.9",
+      "disabled": true
+    },
+    {
+      "tweak": "Daemons",
+      "reason": "Example rule (inert): a version-scoped daemons flag.",
       "min_version": "27.0",
       "max_version": "27.9",
       "only_models": [],
@@ -12,7 +19,7 @@
     },
     {
       "action": "kill_app",
-      "reason": "Example: GoldenNugget fully disabled on iOS 27.x until a fix ships.",
+      "reason": "Example rule (inert): GoldenNugget fully disabled on iOS 27.x until a fix ships.",
       "min_version": "27.0",
       "max_version": "27.9",
       "only_models": [],

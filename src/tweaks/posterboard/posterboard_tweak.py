@@ -323,12 +323,24 @@ class PosterboardTweak(Tweak):
         self.config_manager.start_staging()
         self.recursive_add(files_to_restore, curr_path=output_dir)
         staged_db_path = self.config_manager.update_sqlite()
+        db_path = f"/Library/Application Support/PRBPosterExtensionDataStore/{self.structure_version}/PBFPosterExtensionDataStoreSQLiteDatabase.sqlite3"
         files_to_restore.append(FileToRestore(
             contents=None,
             contents_path=staged_db_path,
-            restore_path=f"/Library/Application Support/PRBPosterExtensionDataStore/{self.structure_version}/PBFPosterExtensionDataStoreSQLiteDatabase.sqlite3",
+            restore_path=db_path,
             domain=f"AppDomain-{self.bundle_id}"
         ))
+        # The on-device database runs in WAL mode. Replacing only the main
+        # file while a stale -wal/-shm stays behind makes the next open replay
+        # old frames over the fresh database -> "database disk image is
+        # malformed" / random PosterBoard breakage. Ship 0-byte companions so
+        # iOS starts the store clean.
+        for wal_suffix in ("-wal", "-shm"):
+            files_to_restore.append(FileToRestore(
+                contents=b"",
+                restore_path=db_path + wal_suffix,
+                domain=f"AppDomain-{self.bundle_id}"
+            ))
         # add the force refresh
         if force_pb_refresh:
             plist = {

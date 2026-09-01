@@ -12,6 +12,54 @@ from src.gui.ios.compat import is_tweak_compatible
 from src.tweaks.tweaks import tweaks, TweakID
 from src.tweaks.registry import SPECS_BY_SECTION, Kind, Section
 from src.tweaks.tweak_loader import load_plist_tweaks
+from src.controllers.hotload import HotLoad
+
+# Feature (page) name -> registry Section it maps to in the iOS tweaks UI.
+# A HotLoad-hidden feature loses its whole section here (and the Sidebar/Home
+# entries), so its tweaks are never even shown.
+_SECTION_FEATURES = {
+    Section.LIQUID_GLASS: "Liquid Glass",
+    Section.SPRINGBOARD: "Springboard",
+    Section.INTERNAL: "Internal",
+}
+
+
+def _hotload() -> HotLoad:
+    from PySide6.QtCore import QCoreApplication
+    try:
+        app = QCoreApplication.instance()
+        window = getattr(app, "main_window", None)
+        settings = getattr(window, "settings", None) if window is not None else None
+    except Exception:
+        settings = None
+    return HotLoad(settings)
+
+
+def _hidden_feature_names() -> set:
+    """Names of HotLoad-hidden features for the current setup, as a set."""
+    from src.devicemanagement.data_singleton import DataSingleton
+    current = DataSingleton().current_device
+    version = current.version if current is not None else ""
+    model = current.model if current is not None else ""
+    return _hotload().hidden_features(device_version=version,
+                                      device_model=model)
+
+
+def _hidden_tweak_names() -> set:
+    """Names of the tweaks that belong to HotLoad-hidden features for the
+    current setup. Used by the preset loader to strip them during load."""
+    from src.devicemanagement.data_singleton import DataSingleton
+    current = DataSingleton().current_device
+    version = current.version if current is not None else ""
+    model = current.model if current is not None else ""
+    return _hotload().hidden_tweak_names(device_version=version,
+                                         device_model=model)
+
+
+def _hidden_sections() -> set:
+    """Registry Sections whose feature is hidden, so we skip rendering them."""
+    hidden = _hidden_feature_names()
+    return {s for s, feat in _SECTION_FEATURES.items() if feat in hidden}
 
 
 class TextInputDialog(QDialog):
@@ -277,7 +325,10 @@ class IOSSectionContent(QWidget):
         }
 
         sections_to_render = self.sections if self.sections is not None else list(Section)
+        hidden_sections = _hidden_sections()
         for section in sections_to_render:
+            if section in hidden_sections:
+                continue
             layout.addWidget(IOSSectionHeader(
                 QCoreApplication.translate("Nugget", section.value)))
             for spec in SPECS_BY_SECTION[section]:

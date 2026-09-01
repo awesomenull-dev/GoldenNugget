@@ -735,26 +735,44 @@ def extract_posterboard_db(backup_root: str, udid: str, dest_path: str) -> Optio
 
     dest = Path(dest_path)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(main_payload, dest)
 
-    # the on-device database runs in WAL mode: recent wallpaper data may live
-    # in the -wal sibling rather than the main file. Extract the siblings and
-    # checkpoint them into one consolidated database — validating/copying the
-    # bare main file loses that data.
     wal_payload = _payload_for("-wal")
-    shm_payload = _payload_for("-shm")
-    if wal_payload is not None:
-        wal_dest = Path(str(dest) + "-wal")
-        shutil.copyfile(wal_payload, wal_dest)
-        if shm_payload is not None:
-            shutil.copyfile(shm_payload, str(dest) + "-shm")
+    if wal_payload is None:
+        # no WAL sibling — the main file already holds the whole state
+        shutil.copyfile(main_payload, dest)
+        return str(dest)
+
+    # The on-device database runs in WAL mode: recent wallpaper data may live
+    # in the -wal sibling rather than the main file. Copy main + wal into a
+    # scratch directory (NEVER the -shm: a stale shm desyncs against the wal
+    # and is a classic source of "database disk image is malformed"), then
+    # use SQLite's online-backup API to fold the wal frames into one clean
+    # database file. Plain-copying the bare main file would lose that data.
+    work_dir = Path(tempfile.mkdtemp(prefix="nugget_pbwal_"))
+    try:
+        work_main = work_dir / "posterboard.sqlite3"
+        shutil.copyfile(main_payload, work_main)
+        shutil.copyfile(wal_payload, str(work_main) + "-wal")
+        dest.unlink(missing_ok=True)
         try:
-            side = sqlite3.connect(str(dest))
-            side.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            side.close()
-        finally:
-            Path(str(dest) + "-wal").unlink(missing_ok=True)
-            Path(str(dest) + "-shm").unlink(missing_ok=True)
+            src = sqlite3.connect(str(work_main))
+            merged = sqlite3.connect(str(dest))
+            try:
+                src.backup(merged)  # snapshot of main + wal in one atomic file
+                merged.execute("PRAGMA journal_mode=DELETE")
+                merged.commit()
+            finally:
+                src.close()
+                merged.close()
+        except Exception:
+            log_warn("WAL consolidation failed — falling back to the plain database file")
+        if not _validate_sqlite_db(dest):
+            log_warn("Consolidated PosterBoard DB failed validation — "
+                     "falling back to the plain database file")
+            dest.unlink(missing_ok=True)
+            shutil.copyfile(main_payload, dest)
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
 
     return str(dest)
 

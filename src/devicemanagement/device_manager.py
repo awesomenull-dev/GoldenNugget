@@ -121,6 +121,10 @@ class DeviceManager:
         
         # Backup password (for encrypted backups)
         self._backup_password: Optional[str] = None
+
+        # Set when the user chose to continue without data protection (e.g.
+        # out of disk space) — Phase 1 must not re-run the protective backup.
+        self._protective_backup_skipped = False
         
         # Test mode
         self._test_mode = "--test-mode" in sys.argv
@@ -481,7 +485,7 @@ class DeviceManager:
                 "GoldenNugget only supports iOS 26.2 and newer. "
                 "Please use the original Nugget for iOS 26.1 and earlier."))
 
-    async def start_restore(self, files_to_restore: list[FileToRestore], update_label=lambda x: None, backup_password: str = "", prepared_backup_root: str = None):
+    async def start_restore(self, files_to_restore: list[FileToRestore], update_label=lambda x: None, backup_password: str = "", prepared_backup_root: str = None, skip_protective_backup: bool = False):
         # hard-block any restore on an unsupported (old) iOS version
         self._raise_if_unsupported()
         self.update_label = update_label
@@ -499,7 +503,8 @@ class DeviceManager:
                 lockdown_client=ld,
                 progress_callback=self.progress_callback,
                 backup_password=backup_password,
-                prepared_backup_root=prepared_backup_root
+                prepared_backup_root=prepared_backup_root,
+                skip_protective_backup=skip_protective_backup
             )
             tweaks[TweakID.PosterBoard].config_manager.save_staged_ids(self.get_current_device_udid())
             msg = QCoreApplication.tr("Your device will now restart.\n\nRemember to turn Find My back on!")
@@ -543,6 +548,7 @@ class DeviceManager:
         try:
             self._raise_if_unsupported()
             update_label(QCoreApplication.tr("Applying changes to files..."))
+            self._protective_backup_skipped = False
 
             # iOS 26.2+ (iOS 27 era) uses the heavy three-phase protective restore
             pb.tendies = original_tendies[:MAX_TENDIES_PER_RESTORE]
@@ -583,6 +589,7 @@ class DeviceManager:
                             log_warn("User chose to continue without protective backup")
                             prepared_root = None
                             pb_from_cache = False
+                            self._protective_backup_skipped = True
                         else:
                             return
                     else:
@@ -603,6 +610,7 @@ class DeviceManager:
                 templates=tweaks[TweakID.Templates].templates,
                 prepared_backup_root=prepared_root,
                 prompt_password=prompt_password,
+                skip_protective_backup=self._protective_backup_skipped,
             )
             update_label(QCoreApplication.tr("Success!"))
         except Exception as e:
@@ -611,82 +619,54 @@ class DeviceManager:
             pb.tendies = original_tendies
             show_alert(final_alert)
 
-    async def _prepare_protective_backup(self, update_label=lambda x: None,
-                                         needs_posterboard: bool = False,
-                                         prompt_password=None) -> tuple:
-        """Refresh the cached protective backup; return (PreparedBackup, posterboard_db_ok).
+async def _prepare_protective_backup(self, update_label=lambda x: None,
+                                     needs_posterboard: bool = False,
+                                     prompt_password=None) -> tuple:
+    """Phase 0: build the protective backup that Phase 3 will restore.
 
-        The master is incrementally refreshed FIRST, so with
-        ``needs_posterboard`` the extracted PosterBoard database mirrors the
-        live on-device state — never a stale copy. Encrypted backups are
-        supported when the user provides the backup password (the manifest is
-        decrypted only locally, on the pruned working copy); without a
-        password the cache is bypassed entirely. Returns (None, False) when
-        the cache path is skipped.
+    Two modes:
+
+    * LIVE (default): runs a fresh ``perform_protective_backup`` right now,
+      always including the PosterBoard container when wallpapers are being
+      applied — so ``extract_posterboard_db`` yields the fresh sqlite and the
+      config manager builds new wallpapers on top of the current on-device
+      state. No caching involved.
+
+    * CACHE (EXPERIMENTAL, off by default): reuses/refreshes the persistent
+      per-device master ("Use Fast Backup Cache (Experimental)" in Settings).
+      When wallpapers are applied the master ALWAYS refreshes first — the
+      "reuse as-is" fast path only applies when nothing is pending — so the
+      extracted DB is never a stale copy.
+
+    Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
+    container cannot be read out of the backup the caller falls back to the
+    legacy separate ``_backup_posterboard_database``. Returns (None, False)
+    only when there is no UDID at all.
+    """
+    udid = self.get_current_device_udid()
+    if not udid:
+        return None, False
+
+    from src.restore.protective import (
+        PreparedBackup, extract_posterboard_db, is_backup_encrypted,
+        perform_protective_backup)
+
+    def _register_pb_db(backup_root: str) -> bool:
+        """Extract the fresh PosterBoard sqlite and register it for editing.
+
+        Returns False (so the legacy separate backup still runs) when the
+        container is missing from the backup or the DB is unusable.
         """
-        udid = self.get_current_device_udid()
-        if not udid:
-            return None, False
-        if os.environ.get("GOLDENNUGGET_NO_BACKUP_CACHE"):
-            log_info("Backup cache disabled via GOLDENNUGGET_NO_BACKUP_CACHE")
-            return None, False
-
-        from src.restore.protective import (
-            PreparedBackup,
-            ProtectiveBackupCache,
-            extract_posterboard_db,
-            is_backup_encrypted,
-        )
-
-        async with lockdown_session(udid) as check_ld:
-            encrypted = await is_backup_encrypted(check_ld)
-            manifest_password = ""
-            if encrypted:
-                if prompt_password is None:
-                    log_info("No password prompt available — bypassing the protective backup cache")
-                    return None, False
-                update_label(QCoreApplication.tr("Backup encryption is enabled. Enter your backup password to use the fast cached backup:"))
-                password = prompt_password(
-                    QCoreApplication.tr("Backup Encryption Password"),
-                    QCoreApplication.tr("Enter your iTunes/Finder backup password (used locally to prepare the cached backup):"))
-                if not password:
-                    log_info("No backup password provided — bypassing the protective backup cache")
-                    return None, False
-                manifest_password = password
-                self._backup_password = password  # reuse it for the Phase 3 restore prompt
-            from src.restore.protective import CACHE_REFRESH_SECS
-            cache = ProtectiveBackupCache(udid, product_version=self.get_current_device_version(),
-                                          encrypted=encrypted)
-            found = cache.locate()
-            # fast path: a fresh cache (no wallpapers pending) is reused as-is —
-            # no device session at all; past the TTL it gets an incremental refresh
-            if found and not needs_posterboard and found["age_secs"] < CACHE_REFRESH_SECS:
-                log_info(f"Cache is {found['age_secs'] // 60} min old — reusing without a backup session")
-                master_root = str(cache.master_root)
-            else:
-                update_label(QCoreApplication.tr("Backing up device (cached)..."))
-                master_root = await cache.refresh(
-                    check_ld,
-                    progress_callback=self._backup_progress(update_label),
-                    include_photos=True, include_posterboard=needs_posterboard)
-
         if not needs_posterboard or os.environ.get("GOLDENNUGGET_SKIP_PB_BACKUP"):
-            return PreparedBackup(root=master_root, manifest_password=manifest_password), True
-
-        if encrypted:
-            # payloads are device-encrypted on disk; a decrypted single-file
-            # extract is not available, so use the legacy separate backup
-            log_warn("Encrypted cache cannot yield a readable PosterBoard DB — falling back to a separate backup")
-            return PreparedBackup(root=master_root, manifest_password=manifest_password), False
-
-        # extract the fresh database right after the refresh
-        import tempfile
-        with tempfile.TemporaryDirectory(prefix="nugget_pbdb_") as tmp_dir:
+            return True
+        import tempfile as _tempfile
+        with _tempfile.TemporaryDirectory(prefix="nugget_pbdb_") as tmp_dir:
             db_path = extract_posterboard_db(
-                master_root, udid, os.path.join(tmp_dir, "posterboard.sqlite3"))
+                backup_root, udid, os.path.join(tmp_dir, "posterboard.sqlite3"))
             if db_path is None:
-                log_warn("PosterBoard DB missing from protective backup — falling back to a separate backup")
-                return PreparedBackup(root=master_root, manifest_password=manifest_password), False
+                log_warn("PosterBoard DB missing from the protective backup — "
+                         "falling back to a separate backup")
+                return False
             pb = tweaks[TweakID.PosterBoard]
             try:
                 if not pb.config_manager.update_database_file(db_path, udid):
@@ -694,11 +674,76 @@ class DeviceManager:
                 pb.config_manager.update_for_saved_database(udid)
                 update_label(QCoreApplication.tr("PosterBoard database backed up successfully."))
             except NuggetException as e:
-                # a bad DB must not kill the whole apply — the legacy separate
-                # backup path still gets a chance
-                log_warn(f"Cached PosterBoard DB unusable ({e}) — falling back to a separate backup")
-                return PreparedBackup(root=master_root, manifest_password=manifest_password), False
-        return PreparedBackup(root=master_root, manifest_password=manifest_password), True
+                log_warn(f"PosterBoard DB unusable ({e}) — falling back to a separate backup")
+                return False
+        return True
+
+    async def _live_backup(lc, encrypted: bool) -> tuple:
+        """Fresh protective backup (no cache) with the PosterBoard container
+        riding along whenever wallpapers are about to be applied."""
+        import tempfile as _tempfile
+        root_dir = _tempfile.mkdtemp(prefix="nugget_protective_")
+        backup_root = os.path.join(root_dir, "device_backup")
+        os.makedirs(backup_root, exist_ok=True)
+        update_label(QCoreApplication.tr("Backing up device..."))
+        await perform_protective_backup(
+            lc, backup_root, progress_callback=self._backup_progress(update_label),
+            include_photos=True, include_posterboard=needs_posterboard)
+        log_info(f"Phase 0: live protective backup ready (always fresh; "
+                 f"PosterBoard container {'included' if needs_posterboard else 'not needed'})")
+        prepared = PreparedBackup(root=backup_root, manifest_password="")
+        if needs_posterboard and encrypted:
+            log_warn("Encrypted backup cannot yield a readable PosterBoard DB — "
+                     "falling back to a separate backup")
+            return prepared, False
+        return prepared, _register_pb_db(backup_root)
+
+    cache_enabled = (self.pref_manager.use_backup_cache
+                     and not os.environ.get("GOLDENNUGGET_NO_BACKUP_CACHE"))
+
+    async with lockdown_session(udid) as lc:
+        if not cache_enabled:
+            log_info("Protective backup cache is an experimental feature and is "
+                     "off — running a fresh live protective backup instead")
+            return await _live_backup(lc, await is_backup_encrypted(lc))
+
+        # --- EXPERIMENTAL cache path ---
+        encrypted = await is_backup_encrypted(lc)
+        manifest_password = ""
+        if encrypted:
+            if prompt_password is None:
+                log_info("No password prompt available — bypassing the protective backup cache")
+                return await _live_backup(lc, encrypted)
+            update_label(QCoreApplication.tr("Backup encryption is enabled. Enter your backup password to use the fast cached backup:"))
+            password = prompt_password(
+                QCoreApplication.tr("Backup Encryption Password"),
+                QCoreApplication.tr("Enter your iTunes/Finder backup password (used locally to prepare the cached backup):"))
+            if not password:
+                log_info("No backup password provided — bypassing the protective backup cache")
+                return await _live_backup(lc, encrypted)
+            manifest_password = password
+            self._backup_password = password  # reuse it for the Phase 3 restore prompt
+        from src.restore.protective import CACHE_REFRESH_SECS, ProtectiveBackupCache
+        cache = ProtectiveBackupCache(udid, product_version=self.get_current_device_version(),
+                                      encrypted=encrypted)
+        found = cache.locate()
+        # fast path: a fresh cache (no wallpapers pending) is reused as-is —
+        # no device session at all; past the TTL it gets an incremental refresh
+        if found and not needs_posterboard and found["age_secs"] < CACHE_REFRESH_SECS:
+            log_info(f"Cache is {found['age_secs'] // 60} min old — reusing without a backup session")
+            master_root = str(cache.master_root)
+        else:
+            update_label(QCoreApplication.tr("Backing up device (cached)..."))
+            master_root = await cache.refresh(
+                lc, progress_callback=self._backup_progress(update_label),
+                include_photos=True, include_posterboard=needs_posterboard)
+
+        prepared = PreparedBackup(root=master_root, manifest_password=manifest_password)
+        if needs_posterboard and encrypted:
+            log_warn("Encrypted cache cannot yield a readable PosterBoard DB — "
+                     "falling back to a separate backup")
+            return prepared, False
+        return prepared, _register_pb_db(master_root)
 
     async def _backup_posterboard_database(self, update_label=lambda x: None, force: bool = False):
         """Fetch the device's PosterBoard sqlite database before applying wallpapers.
@@ -786,7 +831,7 @@ class DeviceManager:
                 originals[path] = data
         return originals
 
-    async def _apply_tweak_pass(self, update_label=lambda x: None, templates: list = None, prepared_backup_root=None, prompt_password=None):
+    async def _apply_tweak_pass(self, update_label=lambda x: None, templates: list = None, prepared_backup_root=None, prompt_password=None, skip_protective_backup: bool = False):
         """Generate all tweak files and restore them to the device in one pass.
 
         Returns (alert, files_to_restore) so the caller can surface the result
@@ -809,16 +854,21 @@ class DeviceManager:
         hotload_version = self.get_current_device_version()
         hotload_model = self.get_current_device_model()
         hotload_skipped = []
+        # stale/blocked tweaks are skipped; whole hidden features are never applied
+        hotload_hidden_names = hotload.hidden_tweak_names(
+            device_version=hotload_version, device_model=hotload_model)
 
         try:
             # set the plist keys
             for tweak_name in tweaks:
                 tweak = tweaks[tweak_name]
                 # HotLoad: never apply tweaks flagged as dangerous/broken for
-                # this device / iOS version (kill switch off -> no rules match).
-                if hotload.rule_for(tweak_name,
-                                    device_version=hotload_version,
-                                    device_model=hotload_model) is not None:
+                # this device / iOS version (kill switch off -> no rules match),
+                # and never apply tweaks of a hidden feature.
+                if (tweak_name in hotload_hidden_names
+                        or hotload.rule_for(tweak_name,
+                                            device_version=hotload_version,
+                                            device_model=hotload_model) is not None):
                     hotload_skipped.append(tweak_name)
                     continue
                 if isinstance(tweak, BasicPlistTweak) or isinstance(tweak, AdvancedPlistTweak):
@@ -941,7 +991,8 @@ class DeviceManager:
             # restore to the device
             final_alert = await self.start_restore(
                 files_to_restore, update_label, backup_password=backup_password,
-                prepared_backup_root=prepared_backup_root)
+                prepared_backup_root=prepared_backup_root,
+                skip_protective_backup=skip_protective_backup)
             return final_alert, files_to_restore
         finally:
             if len(tmp_dirs) > 0:

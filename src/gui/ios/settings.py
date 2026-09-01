@@ -112,6 +112,12 @@ class IOSSettingsPage(QWidget):
         # Backup
         self.content_layout.addWidget(IOSSectionHeader(QCoreApplication.translate("Nugget", "Backup")))
 
+        cache_switch = self._make_switch(
+            QCoreApplication.translate("Nugget", "Use Fast Backup Cache (Experimental)"),
+            pref.use_backup_cache,
+            lambda checked: self._on_backup_cache_toggled(checked, cache_switch),
+        )
+
         encrypted_switch = self._make_switch(
             QCoreApplication.translate("Nugget", "Use Encrypted Backups (Experimental)"),
             pref.use_encrypted_backup,
@@ -183,6 +189,26 @@ class IOSSettingsPage(QWidget):
         def handler(checked: bool):
             self._hotload.set_enabled(checked)
         return handler
+
+    def _on_backup_cache_toggled(self, checked: bool, switch):
+        pref = self.window.device_manager.pref_manager
+        if checked:
+            reply = QMessageBox.question(
+                self.window,
+                "Enable Fast Backup Cache?",
+                "WARNING: The cached backup feature is experimental and, when it "
+                "fails, can leave your device without wallpaper data or on the "
+                "Setup screen. It is off by default for a reason.\n\n"
+                "Enable the fast backup cache anyway?",
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                switch.blockSignals(True)
+                switch.setChecked(False)
+                switch.blockSignals(False)
+                return
+        pref.use_backup_cache = checked
+        self.window.settings.setValue("use_backup_cache", checked)
+        self.window._sync_settings()
 
     def _on_encrypted_backup_toggled(self, checked: bool, switch):
         pref = self.window.device_manager.pref_manager
@@ -594,6 +620,23 @@ class IOSSettingsPage(QWidget):
             ).format(name, desc, model, ios))
         if confirm != QMessageBox.StandardButton.Yes:
             return
+        # HotLoad: never let a preset resurrect a feature that is hidden on this
+        # device — those tweaks are stripped during load, so warn what's skipped.
+        dm = self.window.device_manager
+        hotload = HotLoad(getattr(self.window, "settings", None))
+        hidden_feats = self.preset_manager.preset_hidden_feature_names(
+            name, hotload,
+            device_version=dm.get_current_device_version(),
+            device_model=dm.get_current_device_model())
+        if hidden_feats:
+            QMessageBox.warning(
+                self, QCoreApplication.translate("Nugget", "Hidden Features Skipped"),
+                QCoreApplication.translate(
+                    "Nugget",
+                    "This preset contains features that are currently hidden by "
+                    "the safety rules for this device:\n\n• {0}\n\n"
+                    "They will NOT be loaded, so applying may not match the "
+                    "preset's intended state.").format("\n• ".join(hidden_feats)))
         compat_msg = self._daemon_compat_warning(name, meta)
         if compat_msg:
             reply = QMessageBox.warning(
@@ -603,8 +646,6 @@ class IOSSettingsPage(QWidget):
             if reply != QMessageBox.StandardButton.Yes:
                 return
         if self.preset_manager.preset_has_daemon_changes(name):
-            dm = self.window.device_manager
-            hotload = HotLoad(getattr(self.window, "settings", None))
             rule = hotload.rule_for(
                 "Daemons",
                 device_version=dm.get_current_device_version(),

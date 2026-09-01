@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "comment": "GoldenNugget HotLoad safety rules. Each rule flags a tweak (by its TweakID name) as dangerous/broken. A rule is ACTIVE when 'disabled' is not present or is true; set 'disabled': false to temporarily remove the flag without deleting the rule. Scoping fields: 'app_versions' (exact set, e.g. [\"9.2\"]), 'min_app_version'/'max_app_version' (range) — which GoldenNugget builds the rule applies to; 'min_version'/'max_version' — iOS version range; 'only_models' — device prefixes. Rules with the special action \"kill_app\" act as a REMOTE KILL SWITCH: on matching versions/models GoldenNugget refuses to start (or, if already running, shuts itself down like a crash). Scope such rules as narrowly as possible.",
+  "comment": "GoldenNugget HotLoad safety rules. Each rule flags a tweak (by its TweakID name) as dangerous/broken, or a whole feature with action \"hide_feature\". A rule is ACTIVE when 'disabled' is not present or is true; set 'disabled': false to temporarily remove the flag without deleting the rule. Scoping fields: 'app_versions' (exact set, e.g. [\"9.2\"]), 'min_app_version'/'max_app_version' (range) — which GoldenNugget builds the rule applies to; 'min_version'/'max_version' — iOS version range; 'only_models' — device prefixes. Rules with the special action \"kill_app\" act as a REMOTE KILL SWITCH: on matching versions/models GoldenNugget refuses to start (or, if already running, shuts itself down like a crash). Scope such rules as narrowly as possible. Rules with action \"hide_feature\" (field 'feature': one of \"Liquid Glass\", \"Springboard\", \"Internal\", \"PosterBoard\", \"Daemons\", \"Status Bar\", \"Templates\") hide the whole feature on matching setups: its tweaks disappear from the UI, the Sidebar button and iOS home card are hidden, it is never applied, and presets refuse to load it.",
   "rules": [
     {
       "tweak": "Daemons",
@@ -24,6 +24,15 @@
       "min_version": "27.0",
       "max_version": "27.9",
       "only_models": [],
+      "disabled": false
+    },
+    {
+      "action": "hide_feature",
+      "feature": "Liquid Glass",
+      "reason": "Example rule (inert): the whole Liquid Glass feature is hidden on iPhone 15 until a fix ships.",
+      "min_version": "27.0",
+      "max_version": "27.9",
+      "only_models": ["iPhone16"],
       "disabled": false
     }
   ]

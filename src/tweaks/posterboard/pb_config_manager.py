@@ -1,6 +1,7 @@
 from os import path, makedirs, remove, listdir
 import shutil
 import sqlite3
+import json
 import time
 from PySide6.QtCore import QStandardPaths
 from typing import Optional
@@ -222,9 +223,12 @@ class PBConfigManager:
         return True
 
     def update_sqlite(self) -> str:
-        # use "sqlite_sequence" table "seq" entry for # of posters (add 1 to it for each wallpaper)
+        # Append a new wallpaper row for every staged tendie. posterId starts
+        # ABOVE the current MAX(posterId) so deleted rows can never leave a
+        # colliding id behind (the old "sqlite_sequence seq + 1" scheme could
+        # clash and corrupt the on-device database).
         # in "poster" table, add new entry:
-        #   posterId = seq+1
+        #   posterId = max(existing posterId) + position
         #   UUID = uuid of wallpaper
         #   providerId = extension string
         # in "posterAttributes" table, add new entry:
@@ -258,51 +262,61 @@ class PBConfigManager:
                 "The source database may be corrupted. Please fetch a fresh database and try again."
             )
 
-        conn = sqlite3.connect(self.staged_database)
-        cursor = conn.cursor()
-        # read number sequence
-        cursor.execute("SELECT seq FROM sqlite_sequence WHERE name = ?", ("poster",))
-        seq = cursor.fetchone()
-        if seq is None:
-            conn.close()
-            raise NuggetException("Could not find \"seq\" in PosterBoard database!")
-        seq = int(seq[0])
-        # get the poster role sort key (falls back to seq)
-        cursor.execute("SELECT roleSortKey FROM posterRoleMembership WHERE roleId = ?", ("PRPosterRoleLockScreen",))
-        sort_keys = cursor.fetchall()
-        if sort_keys is None or len(sort_keys) == 0:
-            curr_role_sort_key = seq
-        else:
+        conn = sqlite3.connect(self.staged_database, timeout=10)
+        try:
+            cursor = conn.cursor()
+            # insert ABOVE the current max posterId: the old "sqlite_sequence
+            # seq + 1" scheme collides (primary-key clash -> failed apply or a
+            # corrupted on-device database) whenever rows were deleted and the
+            # stored sequence has drifted from the real max.
+            cursor.execute("SELECT MAX(posterId) FROM poster")
+            row = cursor.fetchone()
+            max_poster_id = int(row[0]) if row and row[0] is not None else 0
+            seq = max_poster_id
+            # get the poster role sort key (falls back to seq)
+            cursor.execute("SELECT roleSortKey FROM posterRoleMembership WHERE roleId = ?", ("PRPosterRoleLockScreen",))
+            sort_keys = cursor.fetchall()
             try:
-                curr_role_sort_key = max(key[0] for key in sort_keys)
+                curr_role_sort_key = max((key[0] for key in sort_keys), default=seq)
             except Exception:
                 curr_role_sort_key = seq
-        # remove the currently selected wallpaper
-        cursor.execute("DELETE FROM posterAttributes WHERE roleId = ? AND attributeIdentifier = ? AND attributePayload = ?",
-                       ("PRPosterRoleLockScreen", "SELECTED", 1))
-        # combine the saved items
-        self.staged_items = self.saved_items + self.staged_items
-        for i in range(len(self.staged_items)):
-            wallpaper = self.staged_items[i]
-            seq += 1
-            wallpaper.posterId = seq
-            cursor.execute("INSERT INTO poster (posterId, UUID, providerId) VALUES (?, ?, ?)",
-                           (wallpaper.posterId, wallpaper.uuid, wallpaper.extension))
-            # TODO: Figure out when you need to add PRPosterRoleAmbient
-            wallpaper_payload = ('{"creationDate":' + str(time.time())
-                                 + ',"extensionAvailable":true,"attributeType":"PRPosterRoleAttributeTypeUsageMetadata","lastActivatedDate":'
-                                 + str(time.time()+0.0001) + ',"lastSelectedDate":' + str(time.time()+0.00001) + '}')
-            if wallpaper.set_selected:
+            # remove the currently selected wallpaper
+            cursor.execute("DELETE FROM posterAttributes WHERE roleId = ? AND attributeIdentifier = ? AND attributePayload = ?",
+                           ("PRPosterRoleLockScreen", "SELECTED", 1))
+            # combine the saved items
+            self.staged_items = self.saved_items + self.staged_items
+            for wallpaper in self.staged_items:
+                seq += 1
+                wallpaper.posterId = seq
+                cursor.execute("INSERT INTO poster (posterId, UUID, providerId) VALUES (?, ?, ?)",
+                               (wallpaper.posterId, wallpaper.uuid, wallpaper.extension))
+                # TODO: Figure out when you need to add PRPosterRoleAmbient
+                wallpaper_payload = json.dumps(
+                    {
+                        "creationDate": time.time(),
+                        "extensionAvailable": True,
+                        "attributeType": "PRPosterRoleAttributeTypeUsageMetadata",
+                        "lastActivatedDate": time.time() + 0.0001,
+                        "lastSelectedDate": time.time() + 0.00001,
+                    },
+                    separators=(",", ":"),
+                )
+                if wallpaper.set_selected:
+                    cursor.execute("INSERT INTO posterAttributes (posterUUID, roleId, attributeIdentifier, attributePayload) VALUES (?, ?, ?, ?)",
+                                (wallpaper.uuid, "PRPosterRoleLockScreen", "SELECTED", 1))
                 cursor.execute("INSERT INTO posterAttributes (posterUUID, roleId, attributeIdentifier, attributePayload) VALUES (?, ?, ?, ?)",
-                            (wallpaper.uuid, "PRPosterRoleLockScreen", "SELECTED", 1))
-            cursor.execute("INSERT INTO posterAttributes (posterUUID, roleId, attributeIdentifier, attributePayload) VALUES (?, ?, ?, ?)",
-                           (wallpaper.uuid, "PRPosterRoleLockScreen", "PRPosterRoleAttributeTypeUsageMetadata",
-                            wallpaper_payload))
-            curr_role_sort_key += 1
-            cursor.execute("INSERT INTO posterRoleMembership (posterUUID, roleId, roleSortKey) VALUES (?, ?, ?)",
-                           (wallpaper.uuid, "PRPosterRoleLockScreen", curr_role_sort_key))
-        cursor.execute("UPDATE sqlite_sequence SET seq = ? WHERE name = ?",
-                       (seq, "poster"))
-        conn.commit()
-        conn.close()
+                               (wallpaper.uuid, "PRPosterRoleLockScreen", "PRPosterRoleAttributeTypeUsageMetadata",
+                                wallpaper_payload))
+                curr_role_sort_key += 1
+                cursor.execute("INSERT INTO posterRoleMembership (posterUUID, roleId, roleSortKey) VALUES (?, ?, ?)",
+                               (wallpaper.uuid, "PRPosterRoleLockScreen", curr_role_sort_key))
+            # keep sqlite_sequence in sync; recreate the row if it is missing
+            cursor.execute("UPDATE sqlite_sequence SET seq = ? WHERE name = ?",
+                           (seq, "poster"))
+            if cursor.rowcount == 0:
+                cursor.execute("INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)",
+                               ("poster", seq))
+            conn.commit()
+        finally:
+            conn.close()
         return self.staged_database

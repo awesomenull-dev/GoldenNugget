@@ -29,6 +29,48 @@ KILL_SWITCH_KEY = "hotload_enabled"
 # the matching iOS versions / device types ("remote kill switch").
 KILL_ACTION = "kill_app"
 
+# A rule with action == HIDE_ACTION hides a whole feature (page) — its tweaks
+# disappear from the UI, its Sidebar button and iOS home card are hidden, and
+# presets refuse to load it. Scoped to iOS versions / device types like the
+# other rules.
+HIDE_ACTION = "hide_feature"
+
+# Feature (page) name -> the tweak names that belong to it. A "hide_feature"
+# rule names one of these keys; the UI and the apply/preset paths use this map
+# to resolve which tweaks / pages to hide.
+FEATURE_TWEAKS = {
+    "Liquid Glass": [
+        "ForceSolariumFallback", "DisableSolarium", "IgnoreSolariumLinkedOnCheck",
+        "NoLiquidClock", "NoLiquidDock", "DisableSpecularMotion",
+        "DisableOuterRefraction", "DisableSolariumHDR", "DisallowGlassButtons",
+        "DisallowGlassLockScreen", "ForceEnhancedSpeculars",
+        "ForceSolariumIntelligence", "UISolariumFallback",
+        "IgnoreSolariumHardwareCheck", "IgnoreSolariumOptOut",
+        "DisableSpecularEverywhere",
+    ],
+    "Springboard": [
+        "LockScreenFootnote", "WatchOSCompatibility", "AirDropDisableTimeLimit",
+        "SBDontLockAfterCrash", "SBDontDimOrLockOnAC", "SBHideLowPowerAlerts",
+        "SBHideACPower", "SBNeverBreadcrumb", "SBShowSupervisionTextOnLockScreen",
+        "AirplaySupport", "SBMinimumLockscreenIdleTime",
+        "SBAlwaysShowSystemApertureInSnapshots", "HideDICompletely",
+        "SBShowAuthenticationEngineeringUI", "UseFloatingTabBar",
+    ],
+    "Internal": [
+        "SBBuildNumber", "RTL", "LTR", "SBIconVisibility", "MetalForceHudEnabled",
+        "iMessageDiagnosticsEnabled", "IDSDiagnosticsEnabled",
+        "VCDiagnosticsEnabled", "AccessoryDeveloperEnabled", "DisableSecondsHand",
+        "DisableSearchingWebsites", "ShowButtonHints", "AppStoreDebug",
+        "NotesDebugMode", "BKDigitizerVisualizeTouches",
+        "BKHideAppleLogoOnLaunch", "EnableWakeGestureHaptic", "PlaySoundOnPaste",
+        "AnnounceAllPastes",
+    ],
+    "PosterBoard": ["PosterBoard"],
+    "Daemons": ["Daemons", "ClearScreenTimeAgentPlist"],
+    "Status Bar": ["StatusBar"],
+    "Templates": ["Templates"],
+}
+
 
 def _settings_dir() -> str:
     base = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)
@@ -157,6 +199,45 @@ class HotLoad:
             except Exception:
                 continue
         return None
+
+    def feature_for(self, tweak_id) -> Optional[str]:
+        """Return the feature (page) name a tweak belongs to, or None."""
+        name = getattr(tweak_id, "name", str(tweak_id))
+        for feature, members in FEATURE_TWEAKS.items():
+            if name in members:
+                return feature
+        return None
+
+    def hidden_features(self, device_version=None, device_model=None,
+                        app_version=None) -> set:
+        """Set of feature (page) names hidden by "hide_feature" rules for this
+        setup. These features are removed from the UI entirely and their tweaks
+        never apply — the whole point is to keep broken/dangerous features out
+        of sight so nobody can enable them accidentally."""
+        if not self.is_enabled():
+            return set()
+        hidden = set()
+        for rule in self._rules.get("rules", []):
+            try:
+                if rule.get("action") != HIDE_ACTION:
+                    continue
+                if not self._rule_applicable(rule, device_version, device_model, app_version):
+                    continue
+                feature = rule.get("feature")
+                if feature and feature in FEATURE_TWEAKS:
+                    hidden.add(feature)
+            except Exception:
+                continue
+        return hidden
+
+    def hidden_tweak_names(self, device_version=None, device_model=None,
+                           app_version=None) -> set:
+        """Set of every tweak name that belongs to a currently-hidden feature."""
+        names = set()
+        hidden = self.hidden_features(device_version, device_model, app_version)
+        for feature in hidden:
+            names.update(FEATURE_TWEAKS[feature])
+        return names
 
     # --- helpers ---------------------------------------------------------
     @staticmethod

@@ -30,6 +30,7 @@ from src.gui.ios.daemons import IOSDaemonsPage
 from src.gui.ios.apply import IOSApplyPage
 from src.gui.ios.settings import IOSSettingsPage
 from src.gui.ios.statusbar import IOSStatusBarPage
+from src.gui.ios.tweaks import _hidden_feature_names
 from src.tweaks.registry import Section
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -219,6 +220,33 @@ class MainWindow(QtWidgets.QMainWindow):
         # update the home page
         self.pages[Page.Home].updatePhoneInfo()
     
+    def _apply_hidden_feature_gating(self):
+        """Hide the Sidebar buttons and iOS home cards for HotLoad-hidden
+        features on this device. Kept central so the gating survives every
+        re-apply point (device refresh / selection)."""
+        hidden = _hidden_feature_names()
+        if hidden:
+            print(f"[HotLoad] Hiding feature pages: {', '.join(sorted(hidden))}")
+        # Sidebar (classic shell) buttons
+        btn_map = {
+            "Liquid Glass": self.ui.liquidGlassPageBtn,
+            "Springboard": self.ui.springboardOptionsPageBtn,
+            "Internal": self.ui.internalOptionsPageBtn,
+            "PosterBoard": self.ui.posterboardPageBtn,
+            "Daemons": self.ui.daemonsPageBtn,
+            "Status Bar": self.ui.statusBarPageBtn,
+        }
+        for feat, btn in btn_map.items():
+            btn.setVisible(feat not in hidden)
+        # iOS home cards
+        card_map = {
+            "PosterBoard": self.ios_home.posterboard_card,
+            "Daemons": self.ios_home.daemons_card,
+            "Status Bar": self.ios_home.statusbar_card,
+        }
+        for feat, card in card_map.items():
+            card.setVisible(feat not in hidden)
+    
     def updateAppVersionLabel(self):
         new_text: str = self.ui.appVersionLbl.text()
         new_text = new_text.replace("%VERSION", App_Version)
@@ -322,9 +350,14 @@ class MainWindow(QtWidgets.QMainWindow):
             self.ui.pbPages.setDisabled(False)
 
             self.ui.resetPairBtn.show()
+
+            # HotLoad-hidden features are carved out of the Sidebar and iOS home
+            self._apply_hidden_feature_gating()
         
         # update the selected device
         self.ui.devicePicker.setCurrentIndex(0)
+        # HotLoad-hidden features are carved out of the Sidebar and iOS home
+        self._apply_hidden_feature_gating()
         # keep the iOS home in sync
         self.ios_home.refresh_device_combo()
         self.ios_home.update_device_info()
@@ -441,6 +474,7 @@ class MainWindow(QtWidgets.QMainWindow):
             ignore_frame_limit = self.settings.value("ignore_pb_frame_limit", False, type=bool)
             disable_tendies_limit = self.settings.value("disable_tendies_limit", False, type=bool)
             auto_refresh_posterboard = self.settings.value("auto_refresh_posterboard", True, type=bool)
+            use_backup_cache = self.settings.value("use_backup_cache", False, type=bool)
 
             skip_setup = self.settings.value("skip_setup", True, type=bool)
             supervised = self.settings.value("supervised", False, type=bool)
@@ -469,6 +503,7 @@ class MainWindow(QtWidgets.QMainWindow):
             video_handler.set_ignore_frame_limit(ignore_frame_limit)
             self.device_manager.pref_manager.disable_tendies_limit = disable_tendies_limit
             self.device_manager.pref_manager.auto_refresh_posterboard = auto_refresh_posterboard
+            self.device_manager.pref_manager.use_backup_cache = use_backup_cache
             self.device_manager.pref_manager.use_encrypted_backup = use_encrypted_backup
             self.device_manager.pref_manager.skip_setup = skip_setup
             self.device_manager.pref_manager.supervised = supervised

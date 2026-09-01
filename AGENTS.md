@@ -4,7 +4,34 @@
 
 This document describes the background threads, async backup/restore operations, and error handling used in GoldenNugget.
 
+## HotLoad Safety Rules (src/controllers/hotload.py)
+
+Remote safety rules (cached from
+`hotload_rules.json`) that warn on / block dangerous or broken tweaks, and can
+hide whole broken features. Behaviours per rule `action`:
+- (default) — **block**: a flagged tweak is never applied (`rule_for` matched
+  in `device_manager._apply_tweak_pass`) and enabling it shows a warning
+  (`confirm_flagged` in the iOS tweaks/daemons/preset pages).
+- `"kill_app"` — **kill switch**: the app refuses to start (or shuts itself
+  down) on matching setups (`main_app._hotload_kill_or_none`).
+- `"hide_feature"` (`feature` field) — **hide a whole feature page**: the
+  feature's tweaks are never applied, removed from the iOS UI
+  (`_hidden_sections` in `src/gui/ios/tweaks.py`), its Sidebar button and iOS
+  home card are hidden (`_apply_hidden_feature_gating` in
+  `src/gui/main_window.py`), and presets refuse to load it
+  (`_hidden_tweak_names` stripping in `preset_manager._apply`, plus the
+  "Hidden Features Skipped" warning in `src/gui/ios/settings.py`).
+
+Feature → tweak membership lives in `FEATURE_TWEAKS` (Liquid Glass, Springboard,
+Internal, PosterBoard, Daemons, Status Bar, Templates). `hidden_features()` /
+`hidden_tweak_names()` / `feature_for()` resolve what is hidden for a given
+device/model/app. All gating honours the kill switch (`hotload_enabled` pref);
+when off, nothing is hidden or blocked.
+
 ## Tweak Registry (src/tweaks/registry.py)
+
+Single source of truth for every plist-based tweak: id, section, title,
+plist location, key, default value, UI kind (switch/text/number).
 
 Single source of truth for every plist-based tweak: id, section, title,
 plist location, key, default value, UI kind (switch/text/number).
@@ -42,13 +69,19 @@ result). Do not call `create_using_usbmux` directly in new code.
 ### `_apply_changes()`
 Main entry point for applying tweaks. Order:
 1. `_raise_if_unsupported()` — hard-block iOS < 26.2
-2. `_prepare_protective_backup()` — Phase 0: incremental refresh of the cached protective backup (see "Protective Backup Cache"). When wallpapers are being applied, the PosterBoard container rides the backup and its DB is extracted right AFTER the refresh — so it always mirrors the live on-device state without a second backup. Returns (None, False) → no cache (encrypted / `GOLDENNUGGET_NO_BACKUP_CACHE=1`)
-3. Fallback: if the PB DB was needed but missing from the cache backup (device rejected container inclusion), the legacy separate `_backup_posterboard_database(force=True)` runs (skipped if `GOLDENNUGGET_SKIP_PB_BACKUP=1`)
+2. `_prepare_protective_backup()` — Phase 0: builds the protective backup that Phase 3 will restore. Default (cache OFF): a **live** `perform_protective_backup()` fresh every apply, **always carrying the PosterBoard container when wallpapers are pending** (`include_posterboard`) so the extracted DB is never stale. With the experimental cache ON: incremental refresh of the cached master; the "reuse as-is" fast path never applies when wallpapers are pending, so the extracted DB is still always fresh. Returns (PreparedBackup, posterboard_db_ok); (None, False) only when there is no UDID
+3. Fallback: if the PB DB was needed but missing from the protective backup (device rejected container inclusion / encrypted), the legacy separate `_backup_posterboard_database(force=True)` runs (skipped if `GOLDENNUGGET_SKIP_PB_BACKUP=1`)
 4. `_apply_tweak_pass()` — generate all tweak files, handle backup encryption, then `start_restore(prepared_backup_root=...)`
 
 ### Protective Backup Cache (src/restore/protective.py)
 `ProtectiveBackupCache` keeps a per-device master copy of the protective
 backup in `<temp>/goldennugget_protective_cache/master/<udid>`:
+- **EXPERIMENTAL, OFF BY DEFAULT** — the cache only engages when the user
+  enables "Use Fast Backup Cache (Experimental)" in Settings
+  (`pref.use_backup_cache`). Cache off → the classic live
+  `perform_protective_backup()` / `_backup_posterboard_database()` path runs,
+  which is the stable default. Kill switch still hard-disables it:
+  `GOLDENNUGGET_NO_BACKUP_CACHE=1`.
 - The master's Manifest.db stays FULL (rows for mid-stream-drained payloads
   remain), so `perform_protective_backup(incremental_ok=True)` runs a true
   incremental refresh — repeat applies upload only what changed on the device.
@@ -62,10 +95,20 @@ backup in `<temp>/goldennugget_protective_cache/master/<udid>`:
   (`extract_posterboard_db`); pruned from the restore copy so Phase 3 never
   clobbers the tweaked DB from Phase 2. The DB is resolved by FILE NAME —
   the store dir's structure version (61, 62, ...) varies between iOS
-  releases. The on-device DB runs in WAL mode: `-wal`/`-shm` siblings are
-  extracted too and checkpointed into one consolidated database. If
-  anything in this chain fails, the apply degrades to the legacy separate
-  `_backup_posterboard_database` instead of aborting.
+  releases. The on-device DB runs in WAL mode: `-wal` is extracted and folded
+  into one consolidated database via the SQLite online-backup API (the `-shm`
+  is NEVER copied — a stale shm desyncs against the wal and is a classic
+  source of "database disk image is malformed"); on failure it degrades to
+  the plain main file. If anything in this chain fails, the apply degrades
+  to the legacy separate `_backup_posterboard_database` instead of aborting.
+- Stale-journal protection: every `PBFPosterExtensionDataStoreSQLiteDatabase.sqlite3`
+  injection (sparse OR Phase 3) ships 0-byte `-wal`/`-shm` companions
+  (`posterboard_tweak.py`), so the device never replays old WAL frames over
+  the freshly restored database — a top cause of "PosterBoard breaks after
+  loading wallpapers".
+- New-wallpaper inserts in `pb_config_manager.update_sqlite` allocate
+  `posterId` ABOVE `MAX(posterId)` (not `sqlite_sequence.seq + 1`, which can
+  collide after row deletions and corrupt the on-device database).
 - Prune self-heal: kept rows must have payloads when flags=1 (a missing one
   aborts Phase 3 with MBErrorDomain/205); directory rows (flags=2) are kept
   unconditionally — dropping them causes renameatx ENOENT during restore.
@@ -113,7 +156,7 @@ backup in `<temp>/goldennugget_protective_cache/master/<udid>`:
 > Phase 3 ends at 90% and the last 10% belongs to skip-setup and reboot.
 
 **Phase 1 (0-40%)**: Protective Backup
-- With `prepared_backup_root` (cache hit): builds a hardlink working copy of the cached master — no device backup runs here
+- With `prepared_backup_root` (cached master OR the fresh Phase-0 live backup): builds a hardlink working copy — no device backup runs here. Without it: `perform_protective_backup()` runs live. With `skip_protective_backup`: the phase is skipped entirely (user opted out on low disk space)
 - Otherwise: `perform_protective_backup()` — selective backup of photos, Apple ID, settings
 - `clean_backup_for_restore()` — prunes manifest to protective files only
 - Injects PosterBoard files (`pb_inject_files`, AppDomain) — the only injected tweak payload today
@@ -245,20 +288,23 @@ User clicks "Apply Tweaks"
     |
 _apply_changes()
     |_ _raise_if_unsupported()
-    |_ _prepare_protective_backup()          [Phase 0: cached master refresh]
-    |     |_ encrypted / GOLDENNUGGET_NO_BACKUP_CACHE=1 -> None (no cache)
-    |     |_ wallpapers applied? -> include PosterBoard container + extract DB after refresh
-    |_ PB DB missing from cache? -> legacy _backup_posterboard_database(force=True)
+    |_ _prepare_protective_backup()          [Phase 0: live backup (default) or cached master refresh]
+    |     |_ cache OFF (default) -> fresh live perform_protective_backup()
+    |     |_ cache ON (experimental) -> incremental master refresh; "reuse as-is" fast path only when NOT needs_posterboard
+    |     |_ wallpapers applied? -> include PosterBoard container in the backup + extract fresh DB after
+    |_ PB DB missing from the protective backup / encrypted? -> legacy _backup_posterboard_database(force=True)
     |_ _apply_tweak_pass(prepared_backup_root)
          |_ generate tweak files
          |_ backup encryption handling (iOS 27+ password prompt)
          |_ start_restore(prepared_backup_root)
               |_ restore_files()
                    |_ _restore_ios27()
-                        Phase 1 (0-40%):  hardlink working copy of cache master (or perform_protective_backup())
+                        Phase 1 (0-40%):  hardlink working copy of prepared backup (cache master OR fresh Phase-0 live)
                                          + clean_backup_for_restore() + inject PosterBoard (AppDomain)
+                                         (skipped entirely if the user opted out on low disk space)
                         Phase 2 (40-60%): perform_restore() (sparse) -> reboot (25s+retry if drop at 0%)
                         Phase 3 (60-90%): _wait_for_device() -> _restore_protective_backup(password) [18x3s]
+                                         (skipped when data protection was opted out)
                         Phase 4 (90-95%): skip_all_setup27()      (only if skip-setup)
                         Phase 5 (95-100%): reboot_device()        (only if auto_reboot)
 ```

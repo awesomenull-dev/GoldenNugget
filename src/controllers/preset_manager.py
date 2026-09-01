@@ -15,6 +15,7 @@ from src.tweaks.tweak_classes import (
 from src.tweaks.posterboard.template_options.templates_tweak import TemplatesTweak
 from src.tweaks.status_bar.status_bar_tweak import StatusBarTweak
 from src.tweaks.status_bar.status_bar_c.status_setter import ffi as status_ffi
+from src.controllers.hotload import HotLoad
 
 PRESETS_DIR_NAME = "Presets"
 PRESET_VERSION = 2
@@ -75,6 +76,35 @@ class PresetManager:
             return True
         values = daemon_data.get("value") or {}
         return any(values.values())
+
+    def preset_hidden_feature_names(self, name: str, hotload: HotLoad,
+                                    device_version: str = "",
+                                    device_model: str = "") -> list[str]:
+        """Return the names of HotLoad-hidden features that this preset would
+        restore (i.e. it contains at least one enabled tweak of a feature that
+        is currently hidden on this device). Loading such a preset would try to
+        re-enable broken/dangerous features, so the caller should not load it."""
+        file_path = self.get_preset_path(name)
+        if not os.path.isfile(file_path):
+            return []
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return []
+        hidden = hotload.hidden_features(device_version=device_version,
+                                         device_model=device_model)
+        if not hidden:
+            return []
+        tweaks_data = data.get("tweaks", {})
+        if not isinstance(tweaks_data, dict):
+            return []
+        present_features = set()
+        for key in tweaks_data:
+            feature = hotload.feature_for(key)
+            if feature:
+                present_features.add(feature)
+        return sorted(hidden & present_features)
 
     def list_presets_with_metadata(self) -> list[dict]:
         """List all presets with their metadata."""
@@ -313,6 +343,12 @@ class PresetManager:
             # make sure every tweak exists before applying
             self._load_all_tweaks()
 
+            # never re-enable HotLoad-hidden features: loading a preset must not
+            # resurrect broken/dangerous tweaks (defense-in-depth on top of the
+            # warning shown before loading)
+            from src.gui.ios.tweaks import _hidden_tweak_names
+            hidden_names = _hidden_tweak_names()
+
             if "tweaks" in data:
                 for name, tweak_data in data["tweaks"].items():
                     key = None
@@ -325,6 +361,8 @@ class PresetManager:
                     # PosterBoard is excluded from presets (see _serialize); skip
                     # it on load too so old presets cannot restore wallpapers.
                     if key == TweakID.PosterBoard:
+                        continue
+                    if name in hidden_names:
                         continue
                     try:
                         self._apply_tweak(tweaks[key], tweak_data)

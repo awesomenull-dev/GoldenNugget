@@ -391,7 +391,8 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
                           backup_password: str = "",
                           prepared_backup_root: PreparedBackup = None,
                           pb_inject_files: list = None,
-                          skip_setup: bool = True):
+                          skip_setup: bool = True,
+                          skip_protective_backup: bool = False):
     """iOS 27+ restore: backup → tweak → wipe → restore → skip setup → reboot.
 
     Phase 1 (0-40%):  Selective backup of photos, Apple ID, and user
@@ -400,9 +401,12 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
                       (KeychainDomain is skipped — enabling backup
                       encryption is slow and not needed for tweaks.)
                       With ``prepared_backup_root`` the backup already
-                      happened earlier in the apply flow (persistent cache +
-                      incremental refresh), so this phase only builds the
-                      pruned working copy.
+                      happened earlier in the apply flow (fresh Phase-0 live
+                      backup, or the persistent cache master + incremental
+                      refresh), so this phase only builds the pruned working
+                      copy. With ``skip_protective_backup`` the whole phase
+                      (and Phase 3) is skipped — the user opted out on low
+                      disk space.
     Phase 2 (40-60%): Apply tweaks via sparse restore → reboot, which
                       triggers the iOS 27 "safe state recovery" wipe.
     Phase 3 (60-90%):  Reconnect and restore the pruned Phase 1 backup so
@@ -449,7 +453,11 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
         # === Phase 1: selective protective backup (0-40%) ===
         progress_callback(0)
         if using_cache:
-            log_info("Phase 1: Using prepared protective backup (cache hit)")
+            log_info("Phase 1: Using prepared protective backup "
+                     "(cached master or the fresh Phase-0 live backup)")
+        elif skip_protective_backup:
+            log_warn("Phase 1: protective backup SKIPPED at the user's request "
+                     "(no data protection for this apply)")
         else:
             log_info("Phase 1: Starting protective backup (photos, Apple ID, settings, home screen)")
             await perform_protective_backup(
@@ -457,13 +465,17 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
                 progress_callback=_scaled_callback(progress_callback, 0, _PHASE_BACKUP_END),
                 include_photos=True,
             )
-        backup_complete = True
+        backup_complete = not skip_protective_backup
 
         # Prune Manifest.db + orphan payloads in a worker thread
-        removed_rows, removed_files = await asyncio.to_thread(
-            clean_backup_for_restore, backup_root, udid,
-            manifest_password=manifest_password
-        )
+        removed_rows = removed_files = 0
+        injected = failed = 0
+        missing_payloads = []
+        if backup_complete:
+            removed_rows, removed_files = await asyncio.to_thread(
+                clean_backup_for_restore, backup_root, udid,
+                manifest_password=manifest_password
+            )
         log_info(f"Phase 1: Pruned backup: -{removed_rows} manifest rows, -{removed_files} payload files "
                  f"({time.monotonic() - started:.1f}s into the run)")
 
@@ -471,36 +483,36 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
         # PosterBoard files (staged DB + configuration plists) ride the
         # protective restore on beta 6+, since AppDomain sparse restores are
         # rejected there — see the pb_via_protective note in restore_files.
-        injected = failed = 0
-        for f in (pb_inject_files or []):
-            rel = f.restore_path.lstrip("/")
-            data = f.contents
-            if data is None and f.contents_path:
-                with open(f.contents_path, "rb") as fh:
-                    data = fh.read()
-            if isinstance(data, str):
-                data = data.encode("utf-8")
-            if inject_file_into_backup(
-                    backup_root, udid, f.domain, rel, data,
-                    mode=_FileMode.S_IFREG | 0o644,
-                    owner=f.owner, group=f.group,
-                    manifest_password=manifest_password):
-                injected += 1
-            else:
-                failed += 1
-        if pb_inject_files:
-            level = log_error if failed else log_info
-            level(f"PosterBoard files delivered via protective restore: "
-                  f"{injected} ok, {failed} failed")
+        if backup_complete:
+            for f in (pb_inject_files or []):
+                rel = f.restore_path.lstrip("/")
+                data = f.contents
+                if data is None and f.contents_path:
+                    with open(f.contents_path, "rb") as fh:
+                        data = fh.read()
+                if isinstance(data, str):
+                    data = data.encode("utf-8")
+                if inject_file_into_backup(
+                        backup_root, udid, f.domain, rel, data,
+                        mode=_FileMode.S_IFREG | 0o644,
+                        owner=f.owner, group=f.group,
+                        manifest_password=manifest_password):
+                    injected += 1
+                else:
+                    failed += 1
+            if pb_inject_files:
+                level = log_error if failed else log_info
+                level(f"PosterBoard files delivered via protective restore: "
+                      f"{injected} ok, {failed} failed")
 
-        # Last line of defence against MBErrorDomain/205: the device requests
-        # every regular-file row's payload — a single missing one aborts the
-        # whole Phase 3 restore.
-        missing_payloads = await asyncio.to_thread(
-            verify_backup_payloads, backup_root, udid, manifest_password)
-        if missing_payloads:
-            log_error(f"{len(missing_payloads)} manifest rows lack payloads "
-                      f"(e.g. {missing_payloads[:5]}) — Phase 3 will likely fail with MBErrorDomain/205")
+            # Last line of defence against MBErrorDomain/205: the device requests
+            # every regular-file row's payload — a single missing one aborts the
+            # whole Phase 3 restore.
+            missing_payloads = await asyncio.to_thread(
+                verify_backup_payloads, backup_root, udid, manifest_password)
+            if missing_payloads:
+                log_error(f"{len(missing_payloads)} manifest rows lack payloads "
+                          f"(e.g. {missing_payloads[:5]}) — Phase 3 will likely fail with MBErrorDomain/205")
 
         progress_callback(_PHASE_BACKUP_END)
 
@@ -562,12 +574,16 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
             # brief settle time after reconnect — _restore_protective_backup
             # retries handle any remaining startup delay
             await asyncio.sleep(3)
-            await _restore_protective_backup(
-                lc, backup_root, udid, False,
-                _scaled_callback(progress_callback, _PHASE_TWEAK_END, 90),
-                backup_password=backup_password,
-                skip_apps=not bool(pb_inject_files))
-            log_info("Phase 3: Protective backup restored successfully")
+            if skip_protective_backup or not backup_complete:
+                log_warn("Phase 3: skipping protective restore (user opted out "
+                         "of data protection)")
+            else:
+                await _restore_protective_backup(
+                    lc, backup_root, udid, False,
+                    _scaled_callback(progress_callback, _PHASE_TWEAK_END, 90),
+                    backup_password=backup_password,
+                    skip_apps=not bool(pb_inject_files))
+                log_info("Phase 3: Protective backup restored successfully")
 
             # === Phase 4: skip setup panes (90-95%) ===
             if skip_setup:
@@ -608,6 +624,9 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
     if using_cache:
         # working copy was fully restored; the master cache stays for next apply
         shutil.rmtree(protective_dir, ignore_errors=True)
+    elif skip_protective_backup:
+        # user opted out of data protection — nothing was kept
+        shutil.rmtree(protective_dir, ignore_errors=True)
     else:
         log_info(f"Protective backup kept at: {backup_root}")
     log_info(f"iOS 27 restore completed successfully in {time.monotonic() - started:.1f}s")
@@ -615,7 +634,7 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
 
 
 # files is a list of FileToRestore objects
-async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdown_client: LockdownClient = None, progress_callback = lambda x: None, backup_password: str = "", prepared_backup_root: PreparedBackup = None, skip_setup: bool = True):
+async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdown_client: LockdownClient = None, progress_callback = lambda x: None, backup_password: str = "", prepared_backup_root: PreparedBackup = None, skip_setup: bool = True, skip_protective_backup: bool = False):
     # create the files to be backed up
     files_list = [
     ]
@@ -707,7 +726,8 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
                              backup_password=backup_password,
                              prepared_backup_root=prepared_backup_root,
                              pb_inject_files=pb_inject_files,
-                             skip_setup=skip_setup)
+                             skip_setup=skip_setup,
+                             skip_protective_backup=skip_protective_backup)
     else:
         # iOS 26.x: plain sparse restore — no security recovery wipe,
         # no protective backup needed

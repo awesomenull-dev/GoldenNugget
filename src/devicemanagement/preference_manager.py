@@ -13,6 +13,7 @@ class PreferenceManager:
         self.auto_reboot = True
         self.disable_tendies_limit = False
         self.auto_refresh_posterboard = True
+        self.use_backup_cache = False
         self.use_encrypted_backup = False
         self.skip_setup = True
         self.supervised = False

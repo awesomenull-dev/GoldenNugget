@@ -1,10 +1,18 @@
 {
-  "version": 1,
-  "comment": "GoldenNugget HotLoad safety rules. Each rule flags a tweak (by its TweakID name) as dangerous/broken, optionally scoped to an iOS version range and device models. 'disabled': false temporarily removes the flag without deleting it.",
+  "version": 2,
+  "comment": "GoldenNugget HotLoad safety rules. Each rule flags a tweak (by its TweakID name) as dangerous/broken, optionally scoped to an iOS version range and device models. 'disabled': false temporarily removes the flag without deleting it. Rules with the special action \"kill_app\" act as a REMOTE KILL SWITCH: on matching iOS versions/models GoldenNugget refuses to start (or, if already running, shuts itself down like a crash). Scope such rules as narrowly as possible via min_version/max_version/only_models.",
   "rules": [
     {
       "tweak": "Daemons",
       "reason": "Example: disabling these daemons caused a bootloop on iOS 27.x.",
+      "min_version": "27.0",
+      "max_version": "27.9",
+      "only_models": [],
+      "disabled": false
+    },
+    {
+      "action": "kill_app",
+      "reason": "Example: GoldenNugget fully disabled on iOS 27.x until a fix ships.",
       "min_version": "27.0",
       "max_version": "27.9",
       "only_models": [],

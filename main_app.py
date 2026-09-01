@@ -29,6 +29,42 @@ from src.exceptions.crash_handler import install_crash_handler, CrashHandlerApp
 # Install the global crash handler as early as possible so any uncaught
 # exception during startup is also captured instead of silently killing the app.
 install_crash_handler()
+print("[init] CrashHandler installed")
+
+
+def _current_ios(dm) -> tuple:
+    """(version, model) of the currently selected device, or (None, None)."""
+    try:
+        version = dm.get_current_device_version()
+        model = dm.get_current_device_model()
+        return (version or None, model or None)
+    except Exception:
+        return (None, None)
+
+
+def _show_kill_message(kill) -> None:
+    """Present the remote kill reason to the user before shutting down."""
+    tr = lambda s: QCoreApplication.translate("Nugget", s)
+    reason = str(kill.get("reason")
+                 or tr("This version of iOS is currently not supported."))
+    print(f"[init] HotLoad: BLOCKED - {reason}", flush=True)
+    from PySide6.QtWidgets import QMessageBox
+    box = QMessageBox()
+    box.setIcon(QMessageBox.Icon.Critical)
+    box.setWindowTitle(tr("GoldenNugget Disabled"))
+    box.setText(tr("GoldenNugget has been disabled by its safety rules."))
+    box.setInformativeText(reason)
+    box.setStandardButtons(QMessageBox.StandardButton.Ok)
+    box.exec()
+
+
+def _hotload_kill_or_none(dm, hotload):
+    """Return the active kill rule for the current iOS, or None."""
+    version, model = _current_ios(dm)
+    try:
+        return hotload.kill_rule(version, model)
+    except Exception:
+        return None
 
 
 def main() -> int:
@@ -152,6 +188,21 @@ def main() -> int:
     QCoreApplication.setOrganizationDomain("com.leemin")
     QCoreApplication.setApplicationName("GoldenNugget")
     settings = Settings("settings")
+
+    # Init chain: CrashHandler -> HotLoad -> GoldenNugget.
+    # HotLoad is consulted right here, using the cached local rules, BEFORE the
+    # GUI is built. If a remote rule kills the app on this iOS version, we do
+    # NOT initialize the window at all — GoldenNugget refuses to start.
+    from src.controllers.hotload import HotLoad
+    hotload = HotLoad(settings)
+    print("[init] HotLoad: checking safety rules...")
+    kill = _hotload_kill_or_none(dm, hotload)
+    if kill:
+        logger.warning("GoldenNugget disabled by HotLoad rules: %s", kill.get("reason"))
+        _show_kill_message(kill)
+        return 0
+    print("[init] HotLoad ok")
+
     translator = Translator(app, settings)
     translator.set_default_locale(translator.get_saved_locale_code())
     translator.load_translations()
@@ -179,20 +230,45 @@ def main() -> int:
     widget.resize(800, 600)
     widget.show()
 
-    # HotLoad: refresh the remote safety rules in the background every launch.
-    # Local caching means applications still use whatever is on disk even if
-    # this fetch fails, and it never blocks startup.
+    # HotLoad: refresh the remote safety rules in the background every launch,
+    # and watch for a kill rule to become active while the app is already
+    # running. Local caching means applications still use whatever is on disk
+    # even if this fetch fails, and it never blocks startup.
     try:
         import threading
-        from src.controllers.hotload import HotLoad
+
+        def _watchdog_kill(quiet=True):
+            """If a kill rule now applies to the current iOS, terminate the
+            running app like a crash (force shutdown, no graceful exit).
+            """
+            kill = _hotload_kill_or_none(dm, hotload)
+            if kill:
+                reason = kill.get("reason")
+                logger.critical("GoldenNugget killed by HotLoad rules while running: %s", reason)
+                print(f"[watchdog] HotLoad: KILLED - {reason}", flush=True)
+                if not quiet:
+                    _show_kill_message(kill)
+                # aborts the GTK/Qt main loop externally — mimics a crash exit.
+                os._exit(1)
 
         def _refresh_hotload():
             try:
-                HotLoad(settings).update()
+                changed = hotload.update()
+                if changed:
+                    _watchdog_kill(quiet=False)
             except Exception as e:
                 logger.debug("HotLoad update failed: %s", e)
 
         threading.Thread(target=_refresh_hotload, daemon=True).start()
+
+        # Periodic re-check so a kill published after launch still takes the
+        # app down even if the refresh thread was skipped or failed.
+        from PySide6.QtCore import QTimer
+        _kill_timer = QTimer()
+        _kill_timer.setInterval(5000)
+        _kill_timer.timeout.connect(_watchdog_kill)
+        _kill_timer.start()
+        app._hotload_kill_timer = _kill_timer  # keep a strong reference
     except Exception as e:
         logger.debug("HotLoad startup check skipped: %s", e)
 

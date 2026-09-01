@@ -23,6 +23,10 @@ RULES_URL = ("https://raw.githubusercontent.com/awesomenull-dev/"
 RULES_FILENAME = "hotload_rules.json"
 KILL_SWITCH_KEY = "hotload_enabled"
 
+# A rule with action == KILL_ACTION tells GoldenNugget to fully shut down on
+# the matching iOS versions / device types ("remote kill switch").
+KILL_ACTION = "kill_app"
+
 
 def _settings_dir() -> str:
     base = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)
@@ -108,11 +112,7 @@ class HotLoad:
             try:
                 if rule.get("tweak") != tweak_name:
                     continue
-                if rule.get("disabled", True) is False:
-                    continue
-                if not self._version_applicable(rule, device_version):
-                    continue
-                if not self._model_applicable(rule, device_model):
+                if not self._rule_applicable(rule, device_version, device_model):
                     continue
                 return rule
             except Exception:
@@ -124,16 +124,34 @@ class HotLoad:
         names = set()
         for rule in self._rules.get("rules", []):
             try:
-                if rule.get("disabled", True) is False:
+                if not self._rule_applicable(rule, device_version, device_model):
                     continue
-                if not self._version_applicable(rule, device_version):
-                    continue
-                if not self._model_applicable(rule, device_model):
-                    continue
-                names.add(rule.get("tweak"))
+                tweak = rule.get("tweak")
+                if tweak:
+                    names.add(tweak)
             except Exception:
                 continue
         return names
+
+    def kill_rule(self, device_version=None, device_model=None) -> Optional[dict]:
+        """Return the first applicable rule that fully disables GoldenNugget
+        on this device/iOS (action == "kill_app"), or None.
+
+        This is the remote "kill switch": a matching rule means the app should
+        not initialize (or, if already running, should shut down like a crash).
+        """
+        if not self.is_enabled():
+            return None
+        for rule in self._rules.get("rules", []):
+            try:
+                if rule.get("action") != KILL_ACTION:
+                    continue
+                if not self._rule_applicable(rule, device_version, device_model):
+                    continue
+                return rule
+            except Exception:
+                continue
+        return None
 
     # --- helpers ---------------------------------------------------------
     @staticmethod
@@ -143,6 +161,14 @@ class HotLoad:
         a += [0] * (len(b) - len(a))
         b += [0] * (len(a) - len(b))
         return (a > b) - (a < b)
+
+    def _rule_applicable(self, rule: dict, device_version, device_model) -> bool:
+        """Whether a rule applies to this device/iOS setup: it is enabled and
+        its version / model bounds match."""
+        if rule.get("disabled", True) is False:
+            return False
+        return (self._version_applicable(rule, device_version)
+                and self._model_applicable(rule, device_model))
 
     def _version_applicable(self, rule: dict, device_version) -> bool:
         lo = rule.get("min_version")

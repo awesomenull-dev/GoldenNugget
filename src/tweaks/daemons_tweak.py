@@ -94,6 +94,7 @@ class Daemon(Enum):
         "com.apple.voiced"
     ]
     NanoTimeKit = ["com.apple.nanotimekitcompaniond"]
+    FollowUp = ["com.apple.followupd"]
     # --- Safe additions (from MiniVoidyy/GoldenNugget-) grouped by function.
     # Only daemons whose disable is safe and not already removed/disabled by iOS.
     AppleAds = [

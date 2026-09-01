@@ -81,12 +81,16 @@ class AdvancedPlistTweak(BasicPlistTweak):
         self,
         file_location: FileLocation,
         keyValues: dict,
-        owner: int = 501, group: int = 501
+        owner: int = 501, group: int = 501,
+        never_enable: Optional[set] = None
     ):
         super().__init__(file_location=file_location, key=None, value=keyValues, owner=owner, group=group)
+        self.never_enable = set(never_enable or ())
 
     def set_multiple_values(self, keys: list[str], value: any):
         for key in keys:
+            if value and value is not False and value is not None and key in self.never_enable:
+                continue  # hard-protected: this key must never be enabled
             self.value[key] = value
         _notify_tweak_change()
 
@@ -95,6 +99,8 @@ class AdvancedPlistTweak(BasicPlistTweak):
             return other_tweaks
         plist = {}
         for key in self.value:
+            if key in self.never_enable:
+                continue  # never write protected keys, even from a stored preset
             plist[key] = self.value[key]
         other_tweaks[self.file_location] = plist
         return other_tweaks

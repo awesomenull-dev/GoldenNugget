@@ -44,6 +44,7 @@ class TweakSpec:
     ipad_only: bool = False
     factory: Optional[Callable[[], object]] = None  # overrides BasicPlistTweak
     description: Optional[str] = None  # detailed "what it does" tooltip
+    disabled: bool = False  # True = tweak is cut off: never loaded, never applied, never rendered
 
 
 def _t(id_: TweakID, section: Section, title: str, location: FileLocation,
@@ -209,5 +210,5 @@ SPECS: tuple[TweakSpec, ...] = (
        description=QT_TRANSLATE_NOOP("Nugget", "Shows a system notification whenever an app reads the pasteboard, acting as a privacy indicator for system-level pastes.")),
 )
 
-SPECS_BY_SECTION = {section: [s for s in SPECS if s.section == section] for section in Section}
-SPECS_BY_ID = {spec.id: spec for spec in SPECS}
+SPECS_BY_SECTION = {section: [s for s in SPECS if s.section == section and not s.disabled] for section in Section}
+SPECS_BY_ID = {spec.id: spec for spec in SPECS if not spec.disabled}

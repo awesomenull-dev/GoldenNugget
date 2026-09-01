@@ -61,7 +61,6 @@ class IOSDaemonsContent(QWidget):
             (QCoreApplication.translate("Nugget", "Disable Internet Tethering (Hotspot)"), Daemon.InternetTethering),
             (QCoreApplication.translate("Nugget", "Disable Passbook"), Daemon.PassBook),
             (QCoreApplication.translate("Nugget", "Disable Spotlight"), Daemon.Spotlight),
-            (QCoreApplication.translate("Nugget", "Voice Control Icon"), Daemon.VoiceControl),
             (QCoreApplication.translate("Nugget", "Disable NanoTimeKit (Apple Watch Face Sync)"), Daemon.NanoTimeKit),
             (QCoreApplication.translate("Nugget", "Follow Up"), Daemon.FollowUp),
             (QCoreApplication.translate("Nugget", "Location Services"), Daemon.Location),

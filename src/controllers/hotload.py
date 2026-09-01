@@ -195,7 +195,7 @@ class HotLoad:
 
 
 def confirm_flagged(rule: dict, parent=None) -> bool:
-    """Show the warning for a flagged tweak. Returns True (Countiune Anyway)
+    """Show the warning for a flagged tweak. Returns True (Continue Anyway)
     to allow, or False (Cancel) to block."""
     from PySide6.QtWidgets import QMessageBox
 
@@ -212,7 +212,7 @@ def confirm_flagged(rule: dict, parent=None) -> bool:
     box.setIcon(QMessageBox.Icon.Warning)
     box.setWindowTitle("Disabled Feature Warning")
     box.setText(text)
-    continue_btn = box.addButton("Countiune Anyway", QMessageBox.ButtonRole.AcceptRole)
+    continue_btn = box.addButton("Continue Anyway", QMessageBox.ButtonRole.AcceptRole)
     cancel_btn = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
     box.setDefaultButton(cancel_btn)
     box.exec()

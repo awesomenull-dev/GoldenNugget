@@ -162,7 +162,7 @@ class IOSDaemonsContent(QWidget):
         self._confirming = True
         try:
             if not self._show_confirm_dialog(
-                "Hold Up before pressing countiune, this section can bootloop "
+                "Hold Up before pressing continue, this section can bootloop "
                 "your phone. Don't cry about that you have not been notified then."
             ):
                 return False
@@ -183,15 +183,15 @@ class IOSDaemonsContent(QWidget):
         box.setIcon(QW.QMessageBox.Icon.Warning)
         box.setWindowTitle(QCoreApplication.translate("Nugget", "Hold Up"))
         box.setText(text)
-        countiune_btn = box.addButton(
-            QCoreApplication.translate("Nugget", "Countiune Anyway"),
+        continue_btn = box.addButton(
+            QCoreApplication.translate("Nugget", "Continue Anyway"),
             QW.QMessageBox.ButtonRole.AcceptRole)
         stop_btn = box.addButton(
             QCoreApplication.translate("Nugget", "Stop"),
             QW.QMessageBox.ButtonRole.RejectRole)
-        box.setDefaultButton(countiune_btn)
+        box.setDefaultButton(continue_btn)
         box.exec()
-        return box.clickedButton() is countiune_btn
+        return box.clickedButton() is continue_btn
 
     def _warn_location_daemon(self):
         """Location Services daemon keeps PosterBoard alive on iPhone 14."""

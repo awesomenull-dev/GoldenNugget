@@ -185,7 +185,7 @@ class IOSSectionContent(QWidget):
         self.force_solarium_fallback_card = None
 
         # Helper to create a switch row for boolean tweaks
-        def make_switch(tweak_id: TweakID, title: str):
+        def make_switch(tweak_id: TweakID, title: str, description: str = ""):
             if tweak_id not in tweaks:
                 return
             tweak = tweaks[tweak_id]
@@ -206,10 +206,15 @@ class IOSSectionContent(QWidget):
             switch.toggled.connect(lambda checked: tweak.set_enabled(checked))
             row_layout.addWidget(switch)
 
+            if description:
+                label.setToolTip(description)
+                switch.setToolTip(description)
+                card.setToolTip(description)
+
             layout.addWidget(card)
 
         # Helper for text input tweaks
-        def make_text_input(tweak_id: TweakID, title: str):
+        def make_text_input(tweak_id: TweakID, title: str, description: str = ""):
             if tweak_id not in tweaks:
                 return
             if not is_compatible(tweak_id):
@@ -219,6 +224,8 @@ class IOSSectionContent(QWidget):
             card_layout = QVBoxLayout(card)
             card_layout.setContentsMargins(0, 0, 0, 0)
             row = IOSSettingsRow(title)
+            if description:
+                row.setToolTip(description)
             current = ""
             if hasattr(tweak, 'value') and tweak.value:
                 current = str(tweak.value)
@@ -228,7 +235,8 @@ class IOSSectionContent(QWidget):
             layout.addWidget(card)
 
         # Helper for number input tweaks
-        def make_number_input(tweak_id: TweakID, title: str, min_val: int = 0, max_val: int = 999):
+        def make_number_input(tweak_id: TweakID, title: str, min_val: int = 0, max_val: int = 999,
+                              description: str = ""):
             if tweak_id not in tweaks:
                 return
             if not is_compatible(tweak_id):
@@ -238,6 +246,10 @@ class IOSSectionContent(QWidget):
             card_layout = QVBoxLayout(card)
             card_layout.setContentsMargins(0, 0, 0, 0)
             row = IOSSettingsRow(title)
+            if description:
+                row.setToolTip(f"{description}\n\n"
+                               + QCoreApplication.translate("Nugget", "Range: {0} – {1}")
+                               .format(min_val, max_val))
             current = 0
             if hasattr(tweak, 'value') and tweak.value:
                 current = int(tweak.value) if tweak.value else 0
@@ -246,16 +258,22 @@ class IOSSectionContent(QWidget):
             card_layout.addWidget(row)
             layout.addWidget(card)
 
-        # Render sections straight from the registry. Titles are stored
-        # as QT_TRANSLATE_NOOP markers and translated here, at render time.
+        # Render sections straight from the registry. Titles (and descriptions)
+        # are stored as QT_TRANSLATE_NOOP markers and translated here, at
+        # render time.
         def tr_title(spec) -> str:
             return QCoreApplication.translate("Nugget", spec.title)
 
+        def tr_description(spec) -> str:
+            if not spec.description:
+                return ""
+            return QCoreApplication.translate("Nugget", spec.description)
+
         renderers = {
-            Kind.SWITCH: lambda spec: make_switch(spec.id, tr_title(spec)),
-            Kind.TEXT: lambda spec: make_text_input(spec.id, tr_title(spec)),
+            Kind.SWITCH: lambda spec: make_switch(spec.id, tr_title(spec), tr_description(spec)),
+            Kind.TEXT: lambda spec: make_text_input(spec.id, tr_title(spec), tr_description(spec)),
             Kind.NUMBER: lambda spec: make_number_input(
-                spec.id, tr_title(spec), spec.min_value, spec.max_value),
+                spec.id, tr_title(spec), spec.min_value, spec.max_value, tr_description(spec)),
         }
 
         sections_to_render = self.sections if self.sections is not None else list(Section)

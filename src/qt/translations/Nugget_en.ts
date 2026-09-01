@@ -2594,6 +2594,251 @@ GoldenNugget will now restart to apply the changes.</source>
         <source>iPhone (iOS {0} {1})</source>
         <translation type="unfinished"></translation>
     </message>
+    <message>
+        <location filename="../../gui/ios/tweaks.py" line="251"/>
+        <source>Range: {0} – {1}</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="80"/>
+        <source>Forces the older Solarium rendering path instead of the newer one. Useful for troubleshooting or for devices where the current Solarium engine misbehaves on iOS 26.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="83"/>
+        <source>Ignores the compile-time (linked-on) SDK version check for Solarium, allowing Liquid Glass features to run that would otherwise be gated by the SDK an app was built with.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="86"/>
+        <source>Forces the experimental Solarium &apos;Intelligence&apos; rendering features (adaptive, machine-driven effects) on iOS 27 where they are not enabled by default.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="89"/>
+        <source>Enables the enhanced specular (highlight and reflection) rendering pass that is normally only used on the most capable devices.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="92"/>
+        <source>Forces UIKit to use the fallback Solarium path when rendering UI. Can fix broken or glitchy system UI on some iOS 27 devices.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="95"/>
+        <source>Disables the hardware capability check for Solarium, enabling Liquid Glass effects on devices officially considered too weak.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="98"/>
+        <source>Ignores the system opt-out flag for Solarium, re-enabling Liquid Glass on devices or firmware that have it switched off.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="101"/>
+        <source>Prevents the Liquid Glass material from being applied to system buttons, keeping the old solid button style.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="104"/>
+        <source>Prevents the Liquid Glass material from being applied to the Lock Screen, keeping the old lock screen look.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="107"/>
+        <source>Disables the specular (glossy reflection) rendering everywhere, removing the shiny glass highlight from Liquid Glass surfaces.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="110"/>
+        <source>Renders the Lock Screen clock in the old solid style instead of with the Liquid Glass / dew effect.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="113"/>
+        <source>Renders the Home Screen dock in the old solid style instead of with the Liquid Glass material.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="116"/>
+        <source>Disables the motion-based specular effect on the Lock Screen, so the moving light reflection no longer shifts as you tilt your device.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="119"/>
+        <source>Disables the outer refraction (the liquid bending of content at the glass edge) for a cleaner, less distorted look.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="122"/>
+        <source>Disables HDR tone-mapping in the Solarium renderer. Can fix washed-out or over-bright Liquid Glass areas. Enabled when the switch is OFF.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="128"/>
+        <source>Sets custom text shown at the bottom of the Lock Screen below the time. Long text is cut off — keep it short. Leave empty to remove.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="131"/>
+        <source>Removes the minimum watchOS pairing check in NanoRegistry so you can pair an Apple Watch running any watchOS version with your iPhone.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="134"/>
+        <source>Unlocks the hidden &apos;Everyone&apos; AirDrop receiving option that would normally be limited to a 10-minute time window.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="137"/>
+        <source>Prevents the screen from locking right after a respring — the phone won&apos;t ask for a passcode immediately after the UI reloads.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="140"/>
+        <source>Stops the display from auto-dimming while the device is connected to a charger.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="143"/>
+        <source>Suppresses the &apos;Low Battery — 20% / 10%&apos; system alerts.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="146"/>
+        <source>Hides the charging status from the Lock Screen while the device is plugged into AC power.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="149"/>
+        <source>Disables the &apos;Return to &lt;App&gt;&apos; breadcrumb button that appears in the status bar after opening a link from another app.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="152"/>
+        <source>Shows the device-supervision text on the Lock Screen, like the &apos;&lt;Device&gt; is supervised by &lt;org&gt;&apos; label seen on MDM-managed devices.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="155"/>
+        <source>Adds extended-display AirPlay support for Stage Manager so apps and external displays can use the feature more broadly.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="159"/>
+        <source>Sets how many minutes of inactivity before the Lock Screen turns the display off. 0 = never auto-lock.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="162"/>
+        <source>Forces the Dynamic Island to appear in screenshots instead of being hidden or shrunk while the screenshot is taken.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="165"/>
+        <source>Suppresses the Dynamic Island cutout completely so it is never drawn. Can make the screen look odd on devices with a pill cutout.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="168"/>
+        <source>Shows a red/green authentication progress indicator on the Lock Screen while Face ID or passcode checks are running (engineering debug UI).</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="171"/>
+        <source>Uses the old fixed tab bar style instead of the floating tab bar on iPad. Enabled when the switch is OFF.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="175"/>
+        <source>Displays the iOS build number (e.g. 21A5284a) in the status bar next to the iOS version.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="177"/>
+        <source>Forces a right-to-left layout for the entire system, mirroring the UI as if your primary language were RTL.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="179"/>
+        <source>Forces a left-to-right layout across the whole system regardless of the RTL language setting.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="181"/>
+        <source>Reveals hidden or disabled Home Screen icons, including internal placeholder icons that are normally not drawn.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="183"/>
+        <source>Enables the iMessage engineering debug menu / diagnostics inside the Messages app.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="185"/>
+        <source>Enables the Continuity engineering debug diagnostics in Settings (Apple ID and related sections).</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="187"/>
+        <source>Enables FaceTime / VoIP engineering debug diagnostics.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="189"/>
+        <source>Adds a hidden Accessory Developer settings page to the Settings app for testing accessories.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="191"/>
+        <source>Stops the animated second hand on the Clock app&apos;s Home Screen icon.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="193"/>
+        <source>Removes website / web search results from Spotlight search suggestions.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="195"/>
+        <source>Shows the side button / action button hint labels in screenshots (engineering debug UI).</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="197"/>
+        <source>Enables the hidden debug gesture in the App Store app, used to dump store data and inspect the store backend.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="199"/>
+        <source>Turns on the Notes app debug menu for engineering debugging.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="201"/>
+        <source>Visually marks every touch point on the screen with debugging information as you touch. Great for diagnosing touch issues.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="203"/>
+        <source>Hides the Apple logo animation during respring, showing a black screen instead until the UI comes back.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="205"/>
+        <source>Plays a Taptic Engine vibration when the device wakes via the raise-to-wake gesture.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="207"/>
+        <source>Plays a sound every time content is pasted anywhere on the device.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../tweaks/registry.py" line="209"/>
+        <source>Shows a system notification whenever an app reads the pasteboard, acting as a privacy indicator for system-level pastes.</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>PBHelpDialog</name>

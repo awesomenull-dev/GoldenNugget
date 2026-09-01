@@ -38,10 +38,14 @@ jobs:
         run: |
           git submodule update --remote --merge i18n
 
-      - name: Sync translations
-        id: sync
+      # The .ts/.qm files are NOT kept in this repository — gNugget-i18n is the
+      # single source of truth. Each run copies the fresh sources, compiles them
+      # and bakes the result into resources_rc.py (embedded Qt resources), which
+      # is the only translation artifact that gets committed.
+      - name: Refresh translation sources from submodule
         run: |
-          python scripts/sync_translations.py i18n src/qt/translations
+          mkdir -p src/qt/translations
+          cp -f i18n/Nugget_*.ts src/qt/translations/
 
       - name: Compile translations
         run: |
@@ -59,14 +63,22 @@ jobs:
       - name: Check for changes
         id: changes
         run: |
-          if ! git diff --quiet; then
+          if ! git diff --quiet src/qt/resources_rc.py; then
             echo "changed=true" >> $GITHUB_OUTPUT
-            # Commit and push directly
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add src/qt/translations/*.ts src/qt/translations/*.qm src/qt/resources_rc.py
-            git commit -m "chore(i18n): sync translations from gNugget-i18n submodule"
-            git push origin HEAD:main
           else
             echo "changed=false" >> $GITHUB_OUTPUT
           fi
+
+      - name: Commit and push resources_rc.py
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/qt/resources_rc.py
+          for i in 1 2 3; do
+            git fetch origin main
+            git rebase origin/main
+            git push origin HEAD:main && exit 0
+            sleep 5
+          done
+          exit 1

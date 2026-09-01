@@ -847,8 +847,9 @@ class DeviceManager:
                     flag_plist = tweak.apply_tweak(flag_plist, version=self.get_current_device_version())
 
             if hotload_skipped:
+                names = sorted(t.name if hasattr(t, "name") else str(t) for t in hotload_skipped)
                 update_label(QCoreApplication.tr(
-                    "Skipped HotLoad-flagged tweaks: ") + ", ".join(sorted(hotload_skipped)))
+                    "Skipped HotLoad-flagged tweaks: ") + ", ".join(names))
 
             # Generate backup
             update_label(QCoreApplication.tr("Generating backup..."))

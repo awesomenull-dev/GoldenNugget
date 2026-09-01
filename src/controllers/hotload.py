@@ -18,6 +18,8 @@ import urllib.request
 
 from PySide6.QtCore import QStandardPaths
 
+from src.gui.version import App_Version as _APP_VERSION
+
 RULES_URL = ("https://raw.githubusercontent.com/awesomenull-dev/"
              "GoldenNugget/main/hotload_rules.json")
 RULES_FILENAME = "hotload_rules.json"
@@ -101,9 +103,10 @@ class HotLoad:
             return False
 
     # --- matching --------------------------------------------------------
-    def rule_for(self, tweak_id, device_version=None, device_model=None) -> Optional[dict]:
+    def rule_for(self, tweak_id, device_version=None, device_model=None,
+                 app_version=None) -> Optional[dict]:
         """Return the first applicable rule for a tweak (by its TweakID name),
-        or None when it is not flagged for this device/iOS. The kill switch
+        or None when it is not flagged for this device/iOS/app. The kill switch
         being off returns None for everything."""
         if not self.is_enabled():
             return None
@@ -112,19 +115,20 @@ class HotLoad:
             try:
                 if rule.get("tweak") != tweak_name:
                     continue
-                if not self._rule_applicable(rule, device_version, device_model):
+                if not self._rule_applicable(rule, device_version, device_model, app_version):
                     continue
                 return rule
             except Exception:
                 continue
         return None
 
-    def blocked_names(self, device_version=None, device_model=None) -> set:
+    def blocked_names(self, device_version=None, device_model=None,
+                      app_version=None) -> set:
         """Set of TweakID names currently flagged as blocked for this setup."""
         names = set()
         for rule in self._rules.get("rules", []):
             try:
-                if not self._rule_applicable(rule, device_version, device_model):
+                if not self._rule_applicable(rule, device_version, device_model, app_version):
                     continue
                 tweak = rule.get("tweak")
                 if tweak:
@@ -133,9 +137,10 @@ class HotLoad:
                 continue
         return names
 
-    def kill_rule(self, device_version=None, device_model=None) -> Optional[dict]:
+    def kill_rule(self, device_version=None, device_model=None,
+                  app_version=None) -> Optional[dict]:
         """Return the first applicable rule that fully disables GoldenNugget
-        on this device/iOS (action == "kill_app"), or None.
+        on this device/iOS/app (action == "kill_app"), or None.
 
         This is the remote "kill switch": a matching rule means the app should
         not initialize (or, if already running, should shut down like a crash).
@@ -146,7 +151,7 @@ class HotLoad:
             try:
                 if rule.get("action") != KILL_ACTION:
                     continue
-                if not self._rule_applicable(rule, device_version, device_model):
+                if not self._rule_applicable(rule, device_version, device_model, app_version):
                     continue
                 return rule
             except Exception:
@@ -162,13 +167,41 @@ class HotLoad:
         b += [0] * (len(a) - len(b))
         return (a > b) - (a < b)
 
-    def _rule_applicable(self, rule: dict, device_version, device_model) -> bool:
-        """Whether a rule applies to this device/iOS setup: it is enabled and
-        its version / model bounds match."""
+    def _rule_applicable(self, rule: dict, device_version, device_model,
+                         app_version: Optional[str] = None) -> bool:
+        """Whether a rule applies to this setup: it is enabled and its version
+        (app and/or iOS) / model bounds match. When no app_version is given,
+        the running app's own version is used (so existing callers are scoped
+        automatically)."""
         if rule.get("disabled", True) is False:
             return False
-        return (self._version_applicable(rule, device_version)
+        if app_version is None:
+            app_version = _APP_VERSION
+        return (self._app_version_applicable(rule, app_version)
+                and self._version_applicable(rule, device_version)
                 and self._model_applicable(rule, device_model))
+
+    def _app_version_applicable(self, rule: dict, app_version) -> bool:
+        """App-version scoping of a rule (the version the rule "propagates"
+        to): exact set via ``app_versions`` or a range via
+        ``min_app_version`` / ``max_app_version``."""
+        exact = rule.get("app_versions")
+        if exact:
+            if app_version is None:
+                return False
+            return any(self._compare(app_version, v) == 0 for v in exact)
+        lo = rule.get("min_app_version")
+        hi = rule.get("max_app_version")
+        if lo is None and hi is None:
+            return True
+        if app_version is None:
+            return False
+        v = str(app_version)
+        if lo is not None and self._compare(v, str(lo)) < 0:
+            return False
+        if hi is not None and self._compare(v, str(hi)) > 0:
+            return False
+        return True
 
     def _version_applicable(self, rule: dict, device_version) -> bool:
         lo = rule.get("min_version")

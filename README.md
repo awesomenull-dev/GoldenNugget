@@ -7,14 +7,11 @@ Customize your device with animated wallpapers, disable pesky daemons, and more!
 
 Make sure you have installed the [requirements](#requirements) if you are on Windows or Linux.
 
-> [!WARNING]
+> [!NOTE]
 > Please back up your data before using this Project! GoldenNugget may cause unforeseen problems, so it is better to be safe than sorry. We are not responsible for any damage done to your device.
 
-> [!NOTE]
-> Make sure that you have enough free space on disk before applying tweaks.
-
 > [!WARNING]
-> This fork implements a three-phase backup→tweak→restore workflow to prevent data loss on iOS 27. Apple has patched the partial restore method that Nugget uses, so applying tweaks directly now triggers a security response that wipes AppleID, Keychain, Photos and settings. This fork preserves your data by backing it up first, then restoring it after the tweak is applied. **this fork is stable, but still do backup and I AM NOT RESPONSIBLE FOR ANY DATA LOSS/BOOTLOOP CAUSED BY GOLDENNUGGET.**
+> This fork implements a three-phase backup→tweak→restore workflow to prevent data loss on iOS 27. Apple has patched the partial restore method that Nugget uses. This fork preserves your data by backing it up first, then restoring it after the tweak is applied. **this fork is stable, but still do backup and I AM NOT RESPONSIBLE FOR ANY DATA LOSS/BOOTLOOP CAUSED BY GOLDENNUGGET.**
 
 ## Features
 <details>
@@ -53,7 +50,6 @@ Make sure you have installed the [requirements](#requirements) if you are on Win
   - Show Red/Green Authentication Line on Lock Screen (See [this issue](https://github.com/leminlimez/Nugget/issues/656) for what it looks like)
   - Disable Floating Tab Bar on iPads
 - Internal Options
-  - ~~Enabling Key Flick (iPad-style keyboard) on iPhones~~ (removed — unsupported on iOS 26.2+)
   - Build Version in Status Bar
   - Force Right to Left
   - Show Hidden Icons on Home Screen
@@ -87,7 +83,6 @@ Make sure you have installed the [requirements](#requirements) if you are on Win
   - Internet Tethering (aka Personal Hotspot)
   - PassBook
   - Spotlight
-  - Voice Control
 </details>
 
 ## Contributors 
@@ -206,9 +201,9 @@ See [CONTRIBUTING.md](https://github.com/awesomenull-dev/GoldenNugget/blob/main/
 
 ## Credits
 - Translations crowdsourced using [gNugget-i18n repository][i18n]
-- [LEGACY] Translations crowdsourced using [POEditor][POEditorJoin]. Thank you everyone who assisted in the translation effort!
+- [LEGACY] Old translations was crowdsourced using [Nugget POEditor][POEditorJoin]. Thank you everyone who assisted in the translation effort!
 - [LeminLimez] for creating Nugget.
-- [Wind0ws11Aero] for IOS 27 Support
+- [Wind0ws11Aero] for helping with development a lot.
 - [PosterRestore][PosterRestoreDiscord] for their help with PosterBoard
   - Special thanks to [dootskyre][dootskyreX], [Middo][MiddoX], [dulark][dularkGitHub], forcequitOS, and pingubow for their work on this. It would not have been possible without them!
   - Thanks to [Snoolie for aar handling][python-aar-stuffGitHub]!

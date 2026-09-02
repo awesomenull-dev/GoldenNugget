@@ -619,131 +619,131 @@ class DeviceManager:
             pb.tendies = original_tendies
             show_alert(final_alert)
 
-async def _prepare_protective_backup(self, update_label=lambda x: None,
-                                     needs_posterboard: bool = False,
-                                     prompt_password=None) -> tuple:
-    """Phase 0: build the protective backup that Phase 3 will restore.
-
-    Two modes:
-
-    * LIVE (default): runs a fresh ``perform_protective_backup`` right now,
-      always including the PosterBoard container when wallpapers are being
-      applied — so ``extract_posterboard_db`` yields the fresh sqlite and the
-      config manager builds new wallpapers on top of the current on-device
-      state. No caching involved.
-
-    * CACHE (EXPERIMENTAL, off by default): reuses/refreshes the persistent
-      per-device master ("Use Fast Backup Cache (Experimental)" in Settings).
-      When wallpapers are applied the master ALWAYS refreshes first — the
-      "reuse as-is" fast path only applies when nothing is pending — so the
-      extracted DB is never a stale copy.
-
-    Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
-    container cannot be read out of the backup the caller falls back to the
-    legacy separate ``_backup_posterboard_database``. Returns (None, False)
-    only when there is no UDID at all.
-    """
-    udid = self.get_current_device_udid()
-    if not udid:
-        return None, False
-
-    from src.restore.protective import (
-        PreparedBackup, extract_posterboard_db, is_backup_encrypted,
-        perform_protective_backup)
-
-    def _register_pb_db(backup_root: str) -> bool:
-        """Extract the fresh PosterBoard sqlite and register it for editing.
-
-        Returns False (so the legacy separate backup still runs) when the
-        container is missing from the backup or the DB is unusable.
+    async def _prepare_protective_backup(self, update_label=lambda x: None,
+                                         needs_posterboard: bool = False,
+                                         prompt_password=None) -> tuple:
+        """Phase 0: build the protective backup that Phase 3 will restore.
+    
+        Two modes:
+    
+        * LIVE (default): runs a fresh ``perform_protective_backup`` right now,
+          always including the PosterBoard container when wallpapers are being
+          applied — so ``extract_posterboard_db`` yields the fresh sqlite and the
+          config manager builds new wallpapers on top of the current on-device
+          state. No caching involved.
+    
+        * CACHE (EXPERIMENTAL, off by default): reuses/refreshes the persistent
+          per-device master ("Use Fast Backup Cache (Experimental)" in Settings).
+          When wallpapers are applied the master ALWAYS refreshes first — the
+          "reuse as-is" fast path only applies when nothing is pending — so the
+          extracted DB is never a stale copy.
+    
+        Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
+        container cannot be read out of the backup the caller falls back to the
+        legacy separate ``_backup_posterboard_database``. Returns (None, False)
+        only when there is no UDID at all.
         """
-        if not needs_posterboard or os.environ.get("GOLDENNUGGET_SKIP_PB_BACKUP"):
+        udid = self.get_current_device_udid()
+        if not udid:
+            return None, False
+    
+        from src.restore.protective import (
+            PreparedBackup, extract_posterboard_db, is_backup_encrypted,
+            perform_protective_backup)
+    
+        def _register_pb_db(backup_root: str) -> bool:
+            """Extract the fresh PosterBoard sqlite and register it for editing.
+    
+            Returns False (so the legacy separate backup still runs) when the
+            container is missing from the backup or the DB is unusable.
+            """
+            if not needs_posterboard or os.environ.get("GOLDENNUGGET_SKIP_PB_BACKUP"):
+                return True
+            import tempfile as _tempfile
+            with _tempfile.TemporaryDirectory(prefix="nugget_pbdb_") as tmp_dir:
+                db_path = extract_posterboard_db(
+                    backup_root, udid, os.path.join(tmp_dir, "posterboard.sqlite3"))
+                if db_path is None:
+                    log_warn("PosterBoard DB missing from the protective backup — "
+                             "falling back to a separate backup")
+                    return False
+                pb = tweaks[TweakID.PosterBoard]
+                try:
+                    if not pb.config_manager.update_database_file(db_path, udid):
+                        raise NuggetException("The PosterBoard database is not of the correct format!")
+                    pb.config_manager.update_for_saved_database(udid)
+                    update_label(QCoreApplication.tr("PosterBoard database backed up successfully."))
+                except NuggetException as e:
+                    log_warn(f"PosterBoard DB unusable ({e}) — falling back to a separate backup")
+                    return False
             return True
-        import tempfile as _tempfile
-        with _tempfile.TemporaryDirectory(prefix="nugget_pbdb_") as tmp_dir:
-            db_path = extract_posterboard_db(
-                backup_root, udid, os.path.join(tmp_dir, "posterboard.sqlite3"))
-            if db_path is None:
-                log_warn("PosterBoard DB missing from the protective backup — "
-                         "falling back to a separate backup")
-                return False
-            pb = tweaks[TweakID.PosterBoard]
-            try:
-                if not pb.config_manager.update_database_file(db_path, udid):
-                    raise NuggetException("The PosterBoard database is not of the correct format!")
-                pb.config_manager.update_for_saved_database(udid)
-                update_label(QCoreApplication.tr("PosterBoard database backed up successfully."))
-            except NuggetException as e:
-                log_warn(f"PosterBoard DB unusable ({e}) — falling back to a separate backup")
-                return False
-        return True
-
-    async def _live_backup(lc, encrypted: bool) -> tuple:
-        """Fresh protective backup (no cache) with the PosterBoard container
-        riding along whenever wallpapers are about to be applied."""
-        import tempfile as _tempfile
-        root_dir = _tempfile.mkdtemp(prefix="nugget_protective_")
-        backup_root = os.path.join(root_dir, "device_backup")
-        os.makedirs(backup_root, exist_ok=True)
-        update_label(QCoreApplication.tr("Backing up device..."))
-        await perform_protective_backup(
-            lc, backup_root, progress_callback=self._backup_progress(update_label),
-            include_photos=True, include_posterboard=needs_posterboard)
-        log_info(f"Phase 0: live protective backup ready (always fresh; "
-                 f"PosterBoard container {'included' if needs_posterboard else 'not needed'})")
-        prepared = PreparedBackup(root=backup_root, manifest_password="")
-        if needs_posterboard and encrypted:
-            log_warn("Encrypted backup cannot yield a readable PosterBoard DB — "
-                     "falling back to a separate backup")
-            return prepared, False
-        return prepared, _register_pb_db(backup_root)
-
-    cache_enabled = (self.pref_manager.use_backup_cache
-                     and not os.environ.get("GOLDENNUGGET_NO_BACKUP_CACHE"))
-
-    async with lockdown_session(udid) as lc:
-        if not cache_enabled:
-            log_info("Protective backup cache is an experimental feature and is "
-                     "off — running a fresh live protective backup instead")
-            return await _live_backup(lc, await is_backup_encrypted(lc))
-
-        # --- EXPERIMENTAL cache path ---
-        encrypted = await is_backup_encrypted(lc)
-        manifest_password = ""
-        if encrypted:
-            if prompt_password is None:
-                log_info("No password prompt available — bypassing the protective backup cache")
-                return await _live_backup(lc, encrypted)
-            update_label(QCoreApplication.tr("Backup encryption is enabled. Enter your backup password to use the fast cached backup:"))
-            password = prompt_password(
-                QCoreApplication.tr("Backup Encryption Password"),
-                QCoreApplication.tr("Enter your iTunes/Finder backup password (used locally to prepare the cached backup):"))
-            if not password:
-                log_info("No backup password provided — bypassing the protective backup cache")
-                return await _live_backup(lc, encrypted)
-            manifest_password = password
-            self._backup_password = password  # reuse it for the Phase 3 restore prompt
-        from src.restore.protective import CACHE_REFRESH_SECS, ProtectiveBackupCache
-        cache = ProtectiveBackupCache(udid, product_version=self.get_current_device_version(),
-                                      encrypted=encrypted)
-        found = cache.locate()
-        # fast path: a fresh cache (no wallpapers pending) is reused as-is —
-        # no device session at all; past the TTL it gets an incremental refresh
-        if found and not needs_posterboard and found["age_secs"] < CACHE_REFRESH_SECS:
-            log_info(f"Cache is {found['age_secs'] // 60} min old — reusing without a backup session")
-            master_root = str(cache.master_root)
-        else:
-            update_label(QCoreApplication.tr("Backing up device (cached)..."))
-            master_root = await cache.refresh(
-                lc, progress_callback=self._backup_progress(update_label),
+    
+        async def _live_backup(lc, encrypted: bool) -> tuple:
+            """Fresh protective backup (no cache) with the PosterBoard container
+            riding along whenever wallpapers are about to be applied."""
+            import tempfile as _tempfile
+            root_dir = _tempfile.mkdtemp(prefix="nugget_protective_")
+            backup_root = os.path.join(root_dir, "device_backup")
+            os.makedirs(backup_root, exist_ok=True)
+            update_label(QCoreApplication.tr("Backing up device..."))
+            await perform_protective_backup(
+                lc, backup_root, progress_callback=self._backup_progress(update_label),
                 include_photos=True, include_posterboard=needs_posterboard)
-
-        prepared = PreparedBackup(root=master_root, manifest_password=manifest_password)
-        if needs_posterboard and encrypted:
-            log_warn("Encrypted cache cannot yield a readable PosterBoard DB — "
-                     "falling back to a separate backup")
-            return prepared, False
-        return prepared, _register_pb_db(master_root)
+            log_info(f"Phase 0: live protective backup ready (always fresh; "
+                     f"PosterBoard container {'included' if needs_posterboard else 'not needed'})")
+            prepared = PreparedBackup(root=backup_root, manifest_password="")
+            if needs_posterboard and encrypted:
+                log_warn("Encrypted backup cannot yield a readable PosterBoard DB — "
+                         "falling back to a separate backup")
+                return prepared, False
+            return prepared, _register_pb_db(backup_root)
+    
+        cache_enabled = (self.pref_manager.use_backup_cache
+                         and not os.environ.get("GOLDENNUGGET_NO_BACKUP_CACHE"))
+    
+        async with lockdown_session(udid) as lc:
+            if not cache_enabled:
+                log_info("Protective backup cache is an experimental feature and is "
+                         "off — running a fresh live protective backup instead")
+                return await _live_backup(lc, await is_backup_encrypted(lc))
+    
+            # --- EXPERIMENTAL cache path ---
+            encrypted = await is_backup_encrypted(lc)
+            manifest_password = ""
+            if encrypted:
+                if prompt_password is None:
+                    log_info("No password prompt available — bypassing the protective backup cache")
+                    return await _live_backup(lc, encrypted)
+                update_label(QCoreApplication.tr("Backup encryption is enabled. Enter your backup password to use the fast cached backup:"))
+                password = prompt_password(
+                    QCoreApplication.tr("Backup Encryption Password"),
+                    QCoreApplication.tr("Enter your iTunes/Finder backup password (used locally to prepare the cached backup):"))
+                if not password:
+                    log_info("No backup password provided — bypassing the protective backup cache")
+                    return await _live_backup(lc, encrypted)
+                manifest_password = password
+                self._backup_password = password  # reuse it for the Phase 3 restore prompt
+            from src.restore.protective import CACHE_REFRESH_SECS, ProtectiveBackupCache
+            cache = ProtectiveBackupCache(udid, product_version=self.get_current_device_version(),
+                                          encrypted=encrypted)
+            found = cache.locate()
+            # fast path: a fresh cache (no wallpapers pending) is reused as-is —
+            # no device session at all; past the TTL it gets an incremental refresh
+            if found and not needs_posterboard and found["age_secs"] < CACHE_REFRESH_SECS:
+                log_info(f"Cache is {found['age_secs'] // 60} min old — reusing without a backup session")
+                master_root = str(cache.master_root)
+            else:
+                update_label(QCoreApplication.tr("Backing up device (cached)..."))
+                master_root = await cache.refresh(
+                    lc, progress_callback=self._backup_progress(update_label),
+                    include_photos=True, include_posterboard=needs_posterboard)
+    
+            prepared = PreparedBackup(root=master_root, manifest_password=manifest_password)
+            if needs_posterboard and encrypted:
+                log_warn("Encrypted cache cannot yield a readable PosterBoard DB — "
+                         "falling back to a separate backup")
+                return prepared, False
+            return prepared, _register_pb_db(master_root)
 
     async def _backup_posterboard_database(self, update_label=lambda x: None, force: bool = False):
         """Fetch the device's PosterBoard sqlite database before applying wallpapers.

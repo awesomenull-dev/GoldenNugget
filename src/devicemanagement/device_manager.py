@@ -558,20 +558,26 @@ class DeviceManager:
                 and len(tweaks[TweakID.Templates].templates) == 0)
             log_info(f'needs_posterboard={needs_posterboard}, tendies={len(pb.tendies)}, videoFile={pb.videoFile is not None}')
 
-            # Phase 0: protective backup. On iOS 26.x the apply uses a plain
-            # sparse restore (no security-recovery wipe), so there is nothing
-            # for the protective cache to protect and the heavy backup is
-            # skipped entirely. Only iOS 27+ builds+restores it.
+            # Phase 0: protective backup.
+            #  - iOS 27+ (partial support): the heavy backup is built and later
+            #    restored (Phase 1/3) to survive the security-recovery wipe.
+            #  - iOS 26.x: the apply is a plain sparse restore (no wipe), so the
+            #    backup is only run as a PosterBoard delivery vehicle — it ships
+            #    the WAL-merged sqlite to GoldenNugget, then is discarded; the
+            #    restore stays the usual raw sparse pass.
             prepared_root = None
             pb_from_cache = False
-            if self.get_current_device_partially_supported():
+            partially_supported = self.get_current_device_partially_supported()
+            should_prepare = partially_supported or needs_posterboard
+            if should_prepare:
                 # On NotEnoughDiskSpaceError the user can choose to continue
                 # without it — tweaks still apply, but there is no data
                 # protection (photos/settings get wiped).
                 try:
                     prepared_root, pb_from_cache = await self._prepare_protective_backup(
                         update_label, needs_posterboard=needs_posterboard,
-                        prompt_password=prompt_password)
+                        prompt_password=prompt_password,
+                        force_live=not partially_supported)
                 except Exception as e:
                     if "disk space" in str(e).lower() or "NotEnoughDiskSpace" in type(e).__name__:
                         from PySide6.QtWidgets import QMessageBox
@@ -594,8 +600,15 @@ class DeviceManager:
                             return
                     else:
                         raise
+                if not partially_supported:
+                    # iOS 26: the backup is only used to pull the PosterBoard
+                    # sqlite; the restore itself is a plain sparse pass, so the
+                    # prepared root must not reach Phase 1/3.
+                    log_info("iOS 26.x apply: Phase 0 used only for PosterBoard sqlite "
+                             "delivery — proceeding with raw sparse restore")
+                    prepared_root = None
             else:
-                log_info("iOS 26.x apply: plain sparse restore — skipping protective backup cache")
+                log_info("Phase 0 skipped: nothing to prepare (no iOS 27 restore, no PosterBoard)")
 
             # fallback: PosterBoard DB missing from the cache backup (e.g. the
             # device rejected container inclusion) -> legacy separate backup
@@ -621,7 +634,8 @@ class DeviceManager:
 
     async def _prepare_protective_backup(self, update_label=lambda x: None,
                                          needs_posterboard: bool = False,
-                                         prompt_password=None) -> tuple:
+                                         prompt_password=None,
+                                         force_live: bool = False) -> tuple:
         """Phase 0: build the protective backup that Phase 3 will restore.
     
         Two modes:
@@ -638,14 +652,21 @@ class DeviceManager:
           "reuse as-is" fast path only applies when nothing is pending — so the
           extracted DB is never a stale copy.
     
-        Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
+Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
         container cannot be read out of the backup the caller falls back to the
         legacy separate ``_backup_posterboard_database``. Returns (None, False)
         only when there is no UDID at all.
+
+        ``force_live`` bypasses the experimental cache and always runs a fresh
+        live backup. Used on iOS 26, where the restore is a plain sparse pass —
+        the backup is never restored, it only exists to ship a WAL-merged
+        PosterBoard sqlite to GoldenNugget.
         """
         udid = self.get_current_device_udid()
         if not udid:
             return None, False
+        if force_live:
+            log_info("Phase 0: forced live (iOS 26 PosterBoard delivery) — cache bypassed")
     
         from src.restore.protective import (
             PreparedBackup, extract_posterboard_db, is_backup_encrypted,
@@ -698,7 +719,8 @@ class DeviceManager:
                 return prepared, False
             return prepared, _register_pb_db(backup_root)
     
-        cache_enabled = (self.pref_manager.use_backup_cache
+        cache_enabled = (not force_live
+                         and self.pref_manager.use_backup_cache
                          and not os.environ.get("GOLDENNUGGET_NO_BACKUP_CACHE"))
     
         async with lockdown_session(udid) as lc:

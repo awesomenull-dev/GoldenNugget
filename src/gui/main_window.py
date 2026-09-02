@@ -223,10 +223,25 @@ class MainWindow(QtWidgets.QMainWindow):
     def _apply_hidden_feature_gating(self):
         """Hide the Sidebar buttons and iOS home cards for HotLoad-hidden
         features on this device. Kept central so the gating survives every
-        re-apply point (device refresh / selection)."""
+        re-apply point (device refresh / selection).
+
+        Only ever HIDES — it never re-shows a button that the device-version
+        rules hid (e.g. Status Bar is disabled on iOS 27 because the Speakeasy
+        override file is dropped by the wipe). The Status Bar stays hidden if
+        either HotLoad OR iOS >= 27 says so.
+        """
         hidden = _hidden_feature_names()
         if hidden:
             print(f"[HotLoad] Hiding feature pages: {', '.join(sorted(hidden))}")
+        # Status Bar is also feature-broken on iOS 27 (Speakeasy override file
+        # dropped by the safe-state-recovery wipe) even when HotLoad allows it.
+        is_ios27 = False
+        try:
+            ver = self.device_manager.get_current_device_version()
+            is_ios27 = ver != "" and Version(ver) >= Version("27.0")
+        except Exception:
+            is_ios27 = False
+        statusbar_hidden = "Status Bar" in hidden or is_ios27
         # Sidebar (classic shell) buttons
         btn_map = {
             "Liquid Glass": self.ui.liquidGlassPageBtn,
@@ -234,18 +249,18 @@ class MainWindow(QtWidgets.QMainWindow):
             "Internal": self.ui.internalOptionsPageBtn,
             "PosterBoard": self.ui.posterboardPageBtn,
             "Daemons": self.ui.daemonsPageBtn,
-            "Status Bar": self.ui.statusBarPageBtn,
         }
         for feat, btn in btn_map.items():
             btn.setVisible(feat not in hidden)
+        self.ui.statusBarPageBtn.setVisible(not statusbar_hidden)
         # iOS home cards
         card_map = {
             "PosterBoard": self.ios_home.posterboard_card,
             "Daemons": self.ios_home.daemons_card,
-            "Status Bar": self.ios_home.statusbar_card,
         }
         for feat, card in card_map.items():
             card.setVisible(feat not in hidden)
+        self.ios_home.set_statusbar_visible(not statusbar_hidden)
     
     def updateAppVersionLabel(self):
         new_text: str = self.ui.appVersionLbl.text()

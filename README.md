@@ -18,7 +18,7 @@ Make sure you have installed the [requirements](#requirements) if you are on Win
 <summary>iOS 26.2 - 27.0+</summary>
 
 - PosterBoard: Animated wallpapers and descriptors. (Does not support Apple's system descriptor, such as iOS 16 wallpaper)
-  - Community wallpapers can be found [here][WallpapersWebsite]
+  - Community wallpapers can be found [here][WallpapersWebsite] or [here][caplayground]
   - Customizing community-made wallpapers via batter files
   - See documentation on the structure of tendies and batter files in [documentation.md](documentation.md)
 - Templates: Custom Operations and file editing
@@ -217,6 +217,7 @@ See [CONTRIBUTING.md](https://github.com/awesomenull-dev/GoldenNugget/blob/main/
 ## Discord server
 Wanted support? join our [Discord Server][server].
 
+[caplayground]: https://caplayground.vercel.app/wallpapers
 [i18n]: https://github.com/awesomenull-dev/gNugget-i18n
 [NuggetLogo]: https://github.com/awesomenull-dev/GoldenNugget/blob/main/src/qt/credits/small_nugget.png
 [LeminLimez]: https://github.com/leminlimez

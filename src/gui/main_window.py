@@ -806,6 +806,15 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if log_to_console:
             print(alert.txt)
+        # Apply/reset failures carry a traceback: route them through the same
+        # parsed crash dialog (severity/likely cause + Copy Error + Report on
+        # GitHub + Open Log), instead of a raw QMessageBox.
+        if (alert.icon == QtWidgets.QMessageBox.Critical
+                and alert.exc_type is not None and alert.detailed_txt):
+            from src.exceptions.crash_handler import show_error_dialog, _classify
+            info = _classify(alert.exc_type, alert.exc_value)
+            self._embedded_alert_error(alert, info)
+            return
         detailsBox = QtWidgets.QMessageBox()
         detailsBox.setIcon(alert.icon)
         detailsBox.setWindowTitle(alert.title)
@@ -819,6 +828,20 @@ class MainWindow(QtWidgets.QMainWindow):
         detailsBox.exec()
         if restore_btn is not None and detailsBox.clickedButton() is restore_btn:
             self._start_cache_restore()
+
+    def _embedded_alert_error(self, alert: ApplyAlertMessage, info: dict):
+        """Show an apply failure through the crash/error dialog."""
+        # Need the restore callback to survive the dialog's exec() lifetime.
+        def _restore():
+            self._start_cache_restore()
+        from src.exceptions.crash_handler import show_error_dialog
+        show_error_dialog(
+            summary=alert.txt,
+            traceback_text=alert.detailed_txt,
+            info=info,
+            backup_path=alert.backup_path,
+            on_restore=_restore if alert.backup_path else None,
+        )
 
     def _start_cache_restore(self):
         from src.gui.thread_workers.apply_worker import RestoreCacheThread

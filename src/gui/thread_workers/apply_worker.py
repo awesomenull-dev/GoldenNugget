@@ -7,12 +7,15 @@ import threading
 
 
 class ApplyAlertMessage:
-    def __init__(self, txt: str, title: str = "Error!", icon=QMessageBox.Critical, detailed_txt: str = None, backup_path: str = None):
+    def __init__(self, txt: str, title: str = "Error!", icon=QMessageBox.Critical, detailed_txt: str = None, backup_path: str = None,
+                 exc_type: type = None, exc_value: BaseException = None):
         self.txt = txt
         self.title = title
         self.icon = icon
         self.detailed_txt = detailed_txt
         self.backup_path = backup_path
+        self.exc_type = exc_type
+        self.exc_value = exc_value
 
 
 class _SudoState:
@@ -85,22 +88,48 @@ class ApplyThread(QThread):
             return None
 
     def run(self):
+        import logging
+        from src.controllers.nugget_logger import log_context
+        self._log = logging.getLogger("GoldenNugget.apply")
+        mode = "reset" if self.reset_pages is not None else "apply"
         try:
+            log_context(f"START {mode}",
+                        name=self.manager.get_current_device_name() or "unknown",
+                        model=self.manager.get_current_device_model() or "unknown",
+                        ios=self.manager.get_current_device_version() or "unknown",
+                        build=self.manager.get_current_device_build() or "unknown",
+                        udid=self.manager.get_current_device_udid() or "unknown")
             self._do_work()
             self.success = True
             self._error_msg = ""
+            log_context(f"FINISH {mode} OK")
             self.finished_with_result.emit(True, "")
         except Exception as e:
             self.success = False
             self._error_msg = f"{type(e).__name__}: {e}"
             traceback_str = traceback.format_exc()
+            self._log.error("%s failed: %s\n%s", mode, e, traceback_str)
             self.alert.emit(ApplyAlertMessage(
                 f"Operation failed: {e}",
                 title="Error",
                 icon=QMessageBox.Critical,
-                detailed_txt=traceback_str
+                detailed_txt=traceback_str,
+                exc_type=type(e),
+                exc_value=e,
             ))
             self.finished_with_result.emit(False, self._error_msg)
+
+    def update_label(self, txt: str):
+        if txt == 'sudo_pwd':
+            self.alert.emit(None)
+        else:
+            self._log.info("progress: %s", txt)
+            self.progress.emit(txt)
+
+    def alert_window(self, msg: ApplyAlertMessage):
+        if msg is not None:
+            self._log.info("alert: %s | %s", getattr(msg, "title", ""), getattr(msg, "txt", ""))
+        self.alert.emit(msg)
 
     def _do_work(self):
         if self.reset_pages is None:
@@ -130,16 +159,25 @@ class RestoreCacheThread(QThread):
         self.progress.emit(txt)
 
     def run(self):
+        import logging
+        from src.controllers.nugget_logger import log_context
+        log = logging.getLogger("GoldenNugget.restore_cache")
         try:
+            log_context("START restore-cache",
+                        udid=self.manager.get_current_device_udid() or "unknown")
             self._do_work()
+            log_context("FINISH restore-cache OK")
             self.finished_with_result.emit(True, "")
         except Exception as e:
             traceback_str = traceback.format_exc()
+            log.error("restore-cache failed: %s\n%s", e, traceback_str)
             self.alert.emit(ApplyAlertMessage(
                 f"Failed to restore data from backup: {e}",
                 title="Restore data",
                 icon=QMessageBox.Critical,
                 detailed_txt=traceback_str,
+                exc_type=type(e),
+                exc_value=e,
             ))
             self.finished_with_result.emit(False, f"{type(e).__name__}: {e}")
 
@@ -252,12 +290,18 @@ class RefreshDevicesThread(QThread):
         self.alert.emit(msg)
 
     def run(self):
+        import logging
+        log = logging.getLogger("GoldenNugget.refresh")
         try:
             self.manager.get_devices(self.settings, self.alert_window)
         except Exception as e:
+            traceback_str = traceback.format_exc()
+            log.error("refresh devices failed: %s\n%s", e, traceback_str)
             self.alert.emit(ApplyAlertMessage(
                 f"Failed to refresh devices: {e}",
                 title="Error",
                 icon=QMessageBox.Critical,
-                detailed_txt=traceback.format_exc()
+                detailed_txt=traceback_str,
+                exc_type=type(e),
+                exc_value=e,
             ))

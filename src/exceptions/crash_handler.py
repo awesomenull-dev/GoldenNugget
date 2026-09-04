@@ -1,8 +1,9 @@
 """Global crash handler for the GoldenNugget GUI.
 
 Catches uncaught Python exceptions and surfaces them in a non-fatal dialog so
-the user can either copy the error (for a bug report) or dismiss it and keep
-working without losing the current session.
+the user can either copy the details (with the recent session log) for a bug
+report, open the log file, or dismiss it and keep working without losing the
+current session.
 
 Two entry points are hooked:
 
@@ -12,6 +13,12 @@ Two entry points are hooked:
   raised inside Qt event handlers / slots, which PySide6 otherwise lets die
   silently after a printed traceback.
 
+Apply/reset failures are routed through the same dialog: the worker threads
+report them via :class:`ApplyAlertMessage`, and the main window opens
+:func:`show_error_dialog` so the error is *parsed* exactly like a crash
+(severity + likely cause + friendly text) and the same Copy/Report buttons are
+available.
+
 Use :func:`install_crash_handler` once at startup and
 :class:`CrashHandlerApp` instead of a bare ``QApplication``.
 """
@@ -19,13 +26,15 @@ Use :func:`install_crash_handler` once at startup and
 import sys
 import traceback
 import logging
-from typing import Optional
+import os
+from typing import Callable, Optional
 from urllib.parse import quote
 
 from PySide6.QtCore import QCoreApplication, QObject, QEvent, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QApplication, QDialog, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QPlainTextEdit
 
+from src.controllers.nugget_logger import get_log_path, get_log_tail
 from src.exceptions.device_errors import is_connection_error, is_device_locked_error
 
 logger = logging.getLogger("GoldenNugget.crash")
@@ -101,7 +110,7 @@ def _classify(exc_type, exc_value) -> dict:
         severity, fault, friendly = "Serious", "The app (GoldenNugget)", \
             "GoldenNugget hit an internal problem."
     elif issubclass(exc_type, (TypeError, ValueError, KeyError, IndexError,
-                               AttributeError, ImportError, NameError)):
+                               AttributeError, ImportError, NameError, OSError)):
         severity, fault, friendly = "Serious", "The app (GoldenNugget)", \
             "GoldenNugget hit an internal problem."
 
@@ -113,14 +122,34 @@ def _classify(exc_type, exc_value) -> dict:
     }
 
 
-def _build_issue_body(info: dict, summary: str, traceback_text: str) -> str:
+def _log_tail_for_report() -> str:
+    """Recent session log tail, bounded, with a header line."""
+    try:
+        tail = get_log_tail(64 * 1024).rstrip("\n")
+        if not tail:
+            return ""
+        return f"\n\n--- Recent session log ({get_log_path()}) ---\n{tail}"
+    except Exception:
+        return ""
+
+
+def _truncate(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    head = text[: limit // 3]
+    tail = text[- (2 * limit) // 3:]
+    return f"{head}\n... [log truncated ...]\n{tail}"
+
+
+def _build_issue_body(info: dict, summary: str, traceback_text: str,
+                      include_log: bool = True) -> str:
     """Assemble the text pasted into the prefilled GitHub issue."""
     try:
         from src.gui.version import App_Version
         version = str(App_Version)
     except Exception:
         version = "unknown"
-    return (
+    body = (
         "## GoldenNugget Error Report\n\n"
         f"**App version:** {version}\n"
         f"**Severity:** {info['severity']}\n"
@@ -128,37 +157,61 @@ def _build_issue_body(info: dict, summary: str, traceback_text: str) -> str:
         f"**What went wrong:**\n{info['friendly']}\n\n"
         f"**Error:** `{summary}`\n\n"
         "<details><summary>Technical details</summary>\n\n"
-        "```\n" + traceback_text + "\n```\n\n"
+        "```\n" + _truncate(traceback_text, 16 * 1024) + "\n```\n\n"
         "</details>\n\n"
-        "<!-- Please add any steps you took before this error appeared. -->"
     )
+    if include_log:
+        log_tail = _log_tail_for_report()
+        if log_tail:
+            body += ("<details><summary>Session log</summary>\n\n"
+                     "```\n" + _truncate(log_tail, 24 * 1024) +
+                     "\n```\n\n</details>\n\n")
+    body += "<!-- Please add any steps you took before this error appeared. -->"
+    return body
 
 
 def _build_issues_url(info: dict, summary: str, traceback_text: str) -> str:
     title = f"Error: {info['severity']} - {info['friendly']}"
-    body = _build_issue_body(info, summary, traceback_text)
+    body = _build_issue_body(info, summary, traceback_text, include_log=True)
     return f"{ISSUES_URL}?title={quote(title)}&body={quote(body)}"
+
+
+def _full_report(info: dict, summary: str, traceback_text: str) -> str:
+    """The complete clipboard payload: report + traceback + session log."""
+    report = _build_issue_body(info, summary, traceback_text, include_log=True)
+    return report.replace("<!-- Please add any steps you took before this error appeared. -->",
+                          "").rstrip()
 
 
 class CrashDialog(QDialog):
     """Modal dialog showing a friendly error summary with 'Report on GitHub',
-    'Copy Error' and 'Continue' buttons."""
+    'Copy Error', 'Open Log' and 'Continue' buttons.
+
+    ``backup_path`` / ``on_restore`` make the dialog usable for apply failures
+    where a protective backup is still on disk and can be restored.
+    """
 
     def __init__(self, parent: Optional[QObject] = None,
-                 summary: str = "", traceback_text: str = "", info: Optional[dict] = None):
+                 summary: str = "", traceback_text: str = "", info: Optional[dict] = None,
+                 backup_path: Optional[str] = None,
+                 on_restore: Optional[Callable[[], None]] = None):
         super().__init__(parent)
         self.setWindowTitle(f"{_app_name()} - Detected an Error")
         self.setModal(True)
-        self.resize(580, 420)
+        self.resize(640, 480)
 
         self._traceback_text = traceback_text
+        self._backup_path = backup_path
+        self._on_restore = on_restore
         info = info or _classify(Exception, Exception())
+        self._info = info
 
         layout = QVBoxLayout(self)
 
         heading = QLabel(
             "GoldenNugget detected an error. Here's what we know — you can "
-            "report it to us, copy the details, or continue working.")
+            "report it to us, copy the details (with the session log), or "
+            "continue working.")
         heading.setWordWrap(True)
         heading.setStyleSheet("font-size: 16px; font-weight: 600;")
         layout.addWidget(heading)
@@ -188,19 +241,38 @@ class CrashDialog(QDialog):
         self._details.setPlaceholderText("No technical details available.")
         layout.addWidget(self._details, 1)
 
+        log_path_label = QLabel(f"Log: {get_log_path()}")
+        log_path_label.setWordWrap(True)
+        log_path_label.setStyleSheet("color: #888; font-size: 10px;")
+        layout.addWidget(log_path_label)
+
         buttons = QHBoxLayout()
         buttons.addStretch(1)
 
+        if self._backup_path:
+            restore_btn = QPushButton("Restore data from backup")
+            restore_btn.setToolTip(
+                "Restore the protective backup from the failed apply to avoid "
+                "data loss.")
+            restore_btn.clicked.connect(self._restore)
+            buttons.addWidget(restore_btn)
+
         report_btn = QPushButton("Report on GitHub")
         report_btn.setToolTip(
-            "Copies the error details and opens the issue tracker in your "
-            "browser with a pre-filled report.")
+            "Copies the error details + session log and opens the issue "
+            "tracker in your browser with a pre-filled report.")
         report_btn.clicked.connect(lambda: self._report(info, summary, traceback_text))
         buttons.addWidget(report_btn)
 
         copy_btn = QPushButton("Copy Error")
+        copy_btn.setToolTip("Copies the full error report + session log to the clipboard.")
         copy_btn.clicked.connect(self._copy)
         buttons.addWidget(copy_btn)
+
+        open_log_btn = QPushButton("Open Log")
+        open_log_btn.setToolTip("Opens the session log file in your preferred text editor.")
+        open_log_btn.clicked.connect(self._open_log)
+        buttons.addWidget(open_log_btn)
 
         continue_btn = QPushButton("Continue")
         continue_btn.setDefault(True)
@@ -210,15 +282,44 @@ class CrashDialog(QDialog):
         layout.addLayout(buttons)
 
     def _copy(self):
-        QApplication.clipboard().setText(self._traceback_text)
+        QApplication.clipboard().setText(_full_report(self._info, self._searchable.toPlainText(),
+                                                       self._traceback_text))
+
+    def _open_log(self):
+        path = get_log_path()
+        if path and os.path.exists(path):
+            QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     def _report(self, info: dict, summary: str, traceback_text: str):
-        QApplication.clipboard().setText(traceback_text)
+        QApplication.clipboard().setText(_full_report(info, summary, traceback_text))
         url = _build_issues_url(info, summary, traceback_text)
         QDesktopServices.openUrl(QUrl(url))
 
+    def _restore(self):
+        cb = self._on_restore
+        self.accept()
+        if cb is not None:
+            cb()
+
     def exec(self) -> int:
         return super().exec()
+
+
+def show_error_dialog(summary: str, traceback_text: str, info: Optional[dict] = None,
+                      backup_path: Optional[str] = None,
+                      on_restore: Optional[Callable[[], None]] = None):
+    """Show the crash/error dialog on the main thread, if a QApplication exists.
+
+    Also used for apply/reset failures so they get parsed and reported exactly
+    like uncaught exceptions.
+    """
+    app = QApplication.instance()
+    if app is None:
+        print(f"ERROR: {summary}\n{traceback_text}", file=sys.stderr)
+        return
+    dialog = CrashDialog(summary=summary, traceback_text=traceback_text,
+                         info=info, backup_path=backup_path, on_restore=on_restore)
+    dialog.exec()
 
 
 def _show_crash_dialog(summary: str, traceback_text: str, exc_type=None, exc_value=None):

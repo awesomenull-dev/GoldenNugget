@@ -28,10 +28,15 @@ class PBDBThread(QThread):
         try:
             self.do_work()
         except Exception as e:
+            import logging
+            logging.getLogger("GoldenNugget.pb").error(
+                "PosterBoard backup failed: %s\n%s", e, traceback.format_exc())
             self.infoLbl.emit("Backup Failed!")
             self.alert.emit(ApplyAlertMessage(
                 f"Backup failed: {e}",
                 title="Error",
                 icon=QMessageBox.Critical,
-                detailed_txt=traceback.format_exc()
+                detailed_txt=traceback.format_exc(),
+                exc_type=type(e),
+                exc_value=e,
             ))

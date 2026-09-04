@@ -120,8 +120,9 @@ def main() -> int:
     logger = get_logger(__name__)
     logger.info("Starting GoldenNugget")
 
-    from src.controllers.nugget_logger import init_logging
+    from src.controllers.nugget_logger import init_logging, log_banner
     init_logging()
+    log_banner()
 
     app = CrashHandlerApp([])
 

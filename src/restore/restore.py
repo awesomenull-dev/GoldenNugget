@@ -17,8 +17,11 @@ from .protective import (
     log_warn,
     log_info,
     make_protective_working_copy,
+    new_protective_backup_dir,
     perform_protective_backup,
+    prune_protective_backups,
     verify_backup_payloads,
+    WORKING_COPY_PREFIX,
 )
 from pymobiledevice3.lockdown import LockdownClient, create_using_usbmux
 from pymobiledevice3.services.installation_proxy import InstallationProxyService
@@ -430,23 +433,42 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
             make_protective_working_copy, prepared_backup_root.root, udid)
         protective_dir = os.path.dirname(backup_root)
     else:
-        protective_dir = tempfile.mkdtemp(prefix="nugget_protective_")
-        backup_root = os.path.join(protective_dir, "device_backup")
-        os.makedirs(backup_root, exist_ok=True)
+        # Live backup taken here rather than pre-prepared. It still has to go
+        # to persistent storage: Phase 2 is about to wipe the device, after
+        # which this directory is the sole copy of the user's data. A temp dir
+        # would be swept by the cleanup below (or lost on reboot).
+        backup_root = new_protective_backup_dir(udid)
+        prune_protective_backups(udid)
+        protective_dir = os.path.dirname(backup_root)
     backup_complete = False
     try:
         log_info(f"Starting iOS 27 restore for device {udid}")
         log_info(f"Protective backup directory: {protective_dir}")
 
-        # clean up stale working copies from crashed runs (>1h old)
+        # Clean up stale working copies from crashed runs (>1h old).
+        #
+        # ONLY working copies — those are rebuilt from the backup on every run.
+        # Live protective backups live outside the temp dir under their own
+        # tree (see protective_persistent_base); after Phase 2 has wiped the
+        # device they are the sole copy of the user's data, so sweeping them
+        # here would turn a recoverable failure into permanent loss. The
+        # prefix is the guard, and the check below makes it fail safe.
         import glob as _glob
+        from .protective import protective_persistent_base
+        _persistent_base = str(protective_persistent_base())
         for stale in sorted(_glob.glob(os.path.join(
-                tempfile.gettempdir(), "nugget_protective_*"))):
+                tempfile.gettempdir(), WORKING_COPY_PREFIX + "*"))):
             try:
+                if stale == protective_dir:
+                    continue
+                if os.path.abspath(stale).startswith(_persistent_base):
+                    log_error(f"Refusing to sweep {stale}: inside the persistent "
+                              f"protective backup store")
+                    continue
                 age_h = (time.time() - os.path.getctime(stale)) / 3600
                 if age_h > 1:
                     shutil.rmtree(stale, ignore_errors=True)
-                    log_info(f"Cleaned stale protective dir: {stale} ({age_h:.0f}h old)")
+                    log_info(f"Cleaned stale working copy: {stale} ({age_h:.0f}h old)")
             except OSError:
                 pass
 

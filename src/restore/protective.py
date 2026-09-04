@@ -56,9 +56,14 @@ class PreparedBackup:
 
 
 # Minimum free disk space required before any device backup is started.
-# Backups (protective, psysbackup, PosterBoard) are written to the system
-# temp directory and can easily reach several GB (photos, app data). Overridable
-# via the GOLDENNUGGET_MIN_FREE_GB environment variable.
+# Backups can easily reach several GB (photos, app data), so filling the disk
+# mid-backup is a real hazard. Overridable via GOLDENNUGGET_MIN_FREE_GB.
+#
+# Note the destinations differ: ``psysbackup`` and the PosterBoard backup still
+# write to the system temp directory, while live protective backups go to the
+# persistent app-data folder (see ``protective_persistent_base``). Callers that
+# pass a path must pass the one they actually write to — on a multi-volume Mac
+# the check has to measure the right disk.
 MIN_FREE_DISK_GB = 5.0
 
 
@@ -594,13 +599,139 @@ class ProtectiveBackupCache:
         self.info_path.unlink(missing_ok=True)
 
 
+# --- Live protective backups (the only copy after Phase 2 wipes the device) --
+#
+# Between Phase 2 (sparse restore, which triggers the iOS 27 wipe) and Phase 3
+# (protective restore) the backup directory on this computer is the SOLE copy
+# of the user's photos, Apple ID and settings. It therefore must not live in
+# the system temp directory — a reboot or an OS temp sweep destroys it — and
+# it must never be caught by the routine that disposes of throwaway working
+# copies. Both used to be true: every backup and working copy shared the
+# ``nugget_protective_`` prefix under ``tempfile.gettempdir()``, so a failed
+# apply had its only surviving copy deleted one hour later, with no prompt.
+PROTECTIVE_PERSIST_DIRNAME = "protective"
+
+# Disposable working copies carry a prefix of their own so the periodic sweep
+# in restore.py can never match a real backup.
+WORKING_COPY_PREFIX = "nugget_working_"
+
+# Retention for finished live backups: how many to keep per device, and how
+# long a directory must exist before it becomes eligible for deletion.
+PROTECTIVE_KEEP_RUNS = 2
+PROTECTIVE_MIN_AGE_HOURS = 24.0
+
+
+def protective_persistent_base() -> Path:
+    """Per-user folder holding live protective backups that survive reboots."""
+    return Path(QStandardPaths.writableLocation(
+        QStandardPaths.AppDataLocation)) / "GoldenNugget" / PROTECTIVE_PERSIST_DIRNAME
+
+
+def new_protective_backup_dir(udid: str) -> str:
+    """Create a fresh, persistent directory for one live protective backup.
+
+    Layout: ``<persistent base>/<udid>/<timestamp>-<pid>/device_backup``.
+
+    A new directory per run means a failed or interrupted backup can never
+    damage the previous run's copy — the one thing standing between a wiped
+    device and permanent data loss. The returned path is the directory that
+    *contains* the device folder, matching what ``clean_backup_for_restore``
+    and ``make_protective_working_copy`` expect.
+    """
+    safe_udid = udid or "unknown"
+    # The random suffix keeps two runs in the same second apart: sharing a
+    # directory would let a failing backup overwrite the previous run's copy.
+    run_dir = (protective_persistent_base() / safe_udid
+               / f"{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}-{_uuid.uuid4().hex[:8]}")
+    backup_root = run_dir / "device_backup"
+    backup_root.mkdir(parents=True, exist_ok=True)
+    return str(backup_root)
+
+
+def list_protective_backups(udid: str) -> list:
+    """Completed, usable live backup run directories for ``udid``, newest first.
+
+    A run qualifies only when its Manifest.db landed AND reads as a backup
+    that can actually be restored:
+
+    - a run still being taken has no Manifest.db yet — excluded (and thus
+      never a prune candidate);
+    - a run interrupted mid-upload can leave a truncated/corrupt Manifest.db
+      behind. Restoring from it silently skips pruning
+      (``clean_backup_for_restore`` returns (0, 0) on an unreadable manifest)
+      and ``verify_backup_payloads`` then returns no findings for a
+      non-sqlite file, so Phase 3 would ship a backup full of payload-less
+      rows and fail with MBErrorDomain/205. Such runs are excluded here, so
+      the recovery path falls through to the next newest intact run instead.
+    - encrypted manifests are not sqlite and cannot be validated as such;
+      they are recognised via ``_is_encrypted_backup`` and kept (the prune
+      and verify paths handle decryption downstream).
+    """
+    safe_udid = udid or "unknown"
+    root = protective_persistent_base() / safe_udid
+    if not root.is_dir():
+        return []
+    runs = []
+    for entry in root.iterdir():
+        device_dir = entry / "device_backup" / safe_udid
+        manifest_db = device_dir / "Manifest.db"
+        if not entry.is_dir() or not manifest_db.is_file():
+            continue
+        if (not _validate_sqlite_db(manifest_db)
+                and not _is_encrypted_backup(device_dir)):
+            log_warn(f"Skipping protective backup {entry.name}: Manifest.db is "
+                     f"corrupt or incomplete (interrupted upload?)")
+            continue
+        runs.append(entry)
+    runs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return runs
+
+
+def find_latest_protective_backup(udid: str) -> Optional[str]:
+    """``backup_root`` of the newest live protective backup for ``udid``.
+
+    Used by the post-failure "Restore data" recovery path. Returns None when
+    the device has no stored backup.
+    """
+    runs = list_protective_backups(udid)
+    return str(runs[0] / "device_backup") if runs else None
+
+
+def prune_protective_backups(udid: str, keep: int = PROTECTIVE_KEEP_RUNS,
+                             min_age_hours: float = PROTECTIVE_MIN_AGE_HOURS) -> int:
+    """Drop older live backups for ``udid``, keeping the newest ``keep``.
+
+    Refuses to delete anything younger than ``min_age_hours``: right after a
+    failed apply the newest backup is the only copy of the user's data, and
+    deleting it on a timer is precisely the failure this replaces. Returns the
+    number of run directories removed.
+    """
+    runs = list_protective_backups(udid)
+    removed = 0
+    now = time.time()
+    for old in runs[keep:]:
+        age_h = (now - old.stat().st_mtime) / 3600
+        if age_h < min_age_hours:
+            log_info(f"Protective backup {old.name} is only {age_h:.1f}h old — keeping it")
+            continue
+        shutil.rmtree(old, ignore_errors=True)
+        if not old.exists():
+            removed += 1
+            log_info(f"Pruned old protective backup: {old}")
+    return removed
+
+
 def make_protective_working_copy(backup_root: str, udid: str) -> str:
     """Build a throwaway hardlink copy of a protective backup for prune + injection.
 
     Hardlinks keep it near-instant and size-free; pruning unlinks orphans
     without touching the source's own files (the cache master stays intact).
+
+    The copy is disposable, so it uses ``WORKING_COPY_PREFIX`` — the periodic
+    sweep in restore.py cleans up leftovers from crashed runs under that
+    prefix only.
     """
-    working_root = Path(tempfile.mkdtemp(prefix="nugget_protective_")) / "device_backup"
+    working_root = Path(tempfile.mkdtemp(prefix=WORKING_COPY_PREFIX)) / "device_backup"
     src_root = Path(backup_root) / udid
     if not src_root.is_dir():
         # Tolerate a root pointing directly at the device directory.

@@ -670,7 +670,8 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
     
         from src.restore.protective import (
             PreparedBackup, extract_posterboard_db, is_backup_encrypted,
-            perform_protective_backup)
+            new_protective_backup_dir, perform_protective_backup,
+            prune_protective_backups)
     
         def _register_pb_db(backup_root: str) -> bool:
             """Extract the fresh PosterBoard sqlite and register it for editing.
@@ -702,10 +703,13 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
         async def _live_backup(lc, encrypted: bool) -> tuple:
             """Fresh protective backup (no cache) with the PosterBoard container
             riding along whenever wallpapers are about to be applied."""
-            import tempfile as _tempfile
-            root_dir = _tempfile.mkdtemp(prefix="nugget_protective_")
-            backup_root = os.path.join(root_dir, "device_backup")
-            os.makedirs(backup_root, exist_ok=True)
+            # Persistent, one directory per run. Once Phase 2 wipes the device
+            # this backup is the ONLY copy of the user's photos, Apple ID and
+            # settings, so it must survive a reboot and must never be swept as
+            # a temp leftover. A fresh directory per run also means a failed
+            # backup cannot damage the previous run's copy.
+            backup_root = new_protective_backup_dir(udid)
+            prune_protective_backups(udid)
             update_label(QCoreApplication.tr("Backing up device..."))
             await perform_protective_backup(
                 lc, backup_root, progress_callback=self._backup_progress(update_label),

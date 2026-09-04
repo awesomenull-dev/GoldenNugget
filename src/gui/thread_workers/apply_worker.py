@@ -154,6 +154,7 @@ class RestoreCacheThread(QThread):
             make_protective_working_copy,
             clean_backup_for_restore,
             verify_backup_payloads,
+            find_latest_protective_backup,
         )
         from src.restore.restore import _restore_protective_backup
         from src.devicemanagement.session import lockdown_session
@@ -161,15 +162,23 @@ class RestoreCacheThread(QThread):
         udid = self.manager.get_current_device_udid()
         if not udid:
             raise RuntimeError("No device selected.")
-        self.update_label("Locating protective backup cache...")
+        self.update_label("Locating protective backup...")
+        # Prefer the cache master. Fall back to a live protective backup left
+        # behind by an interrupted apply — after Phase 2 wiped the device that
+        # directory is the only copy of the user's data, so the recovery path
+        # has to be able to reach it.
         base = self._find_cache_base(udid)
-        if base is None:
+        source_root = str(base / "master") if base is not None else None
+        if source_root is None:
+            source_root = find_latest_protective_backup(udid)
+        if source_root is None:
             raise RuntimeError(
-                "No protective backup cache found for this device. "
-                "The cache lives in a temp folder and is lost on reboot.")
+                "No protective backup found for this device. Live backups are "
+                "kept in the app data folder; cache masters live in a temp "
+                "folder and are lost on reboot.")
         self.update_label("Building working copy of the backup...")
         working_root = await asyncio.to_thread(
-            make_protective_working_copy, str(base / "master"), udid)
+            make_protective_working_copy, source_root, udid)
         removed_rows, removed_files = await asyncio.to_thread(
             clean_backup_for_restore, working_root, udid,
             manifest_password=self._backup_password())

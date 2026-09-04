@@ -376,9 +376,7 @@ class PresetManager:
 
     def _load_all_tweaks(self):
         # idempotent: the loaders return early if the tweaks already exist
-        tweak_loader.load_internal()
-        tweak_loader.load_springboard()
-        tweak_loader.load_liquidglass()
+        tweak_loader.load_plist_tweaks()
         tweak_loader.load_daemons()
 
     def _apply_tweak(self, tweak, data: dict):

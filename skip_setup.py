@@ -8,52 +8,7 @@ from pymobiledevice3.lockdown import create_using_usbmux
 from pymobiledevice3.services.mobile_config import MobileConfigService
 
 from restore_cache import _list_connected_devices
-SKIP_ALL_PANES = [
-    'Location',
-    'Restore',
-    'SIMSetup',
-    'Android',
-    'AppleID',
-    'IntendedUser',
-    'Siri',
-    'ScreenTime',
-    'Diagnostics',
-    'SoftwareUpdate',
-    'Passcode',
-    'Biometric',
-    'Payment',
-    'Zoom',
-    'DisplayTone',
-    'MessagingActivationUsingPhoneNumber',
-    'HomeButtonSensitivity',
-    'CloudStorage',
-    'ScreenSaver',
-    'TapToSetup',
-    'Keyboard',
-    'PreferredLanguage',
-    'SpokenLanguage',
-    'WatchMigration',
-    'OnBoarding',
-    'TVProviderSignIn',
-    'TVHomeScreenSync',
-    'Privacy',
-    'TVRoom',
-    'iMessageAndFaceTime',
-    'AppStore',
-    'Safety',
-    'Multitasking',
-    'ActionButton',
-    'Intelligence',
-    'CameraButton',
-    'TermsOfAddress',
-    'AccessibilityAppearance',
-    'Welcome',
-    'Appearance',
-    'RestoreCompleted',
-    'UpdateCompleted',
-    'WebContentFiltering',
-    'SafetyAndHandling',
-]
+from src.restore.skip_setup27 import SKIP_ALL_PANES
 
 async def apply_skip_all_setup(udid: str | None = None):
     ld = await create_using_usbmux(serial=udid)

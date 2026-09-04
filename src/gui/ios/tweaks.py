@@ -25,7 +25,6 @@ _SECTION_FEATURES = {
 
 
 def _hotload() -> HotLoad:
-    from PySide6.QtCore import QCoreApplication
     try:
         app = QCoreApplication.instance()
         window = getattr(app, "main_window", None)

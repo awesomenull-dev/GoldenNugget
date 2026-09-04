@@ -36,8 +36,7 @@ plist location, key, default value, UI kind (switch/text/number).
 Single source of truth for every plist-based tweak: id, section, title,
 plist location, key, default value, UI kind (switch/text/number).
 - `tweak_loader.load_plist_tweaks()` builds the runtime instances from the
-  registry (`load_internal`/`load_liquidglass`/`load_springboard` are thin
-  aliases kept for classic pages; daemons stay hand-defined there).
+  registry (daemons stay hand-defined there).
 - The iOS tweaks page (`src/gui/ios/tweaks.py`) renders its sections straight
   from `SPECS_BY_SECTION` — adding a tweak means adding one registry entry.
 - Titles are marked with `QT_TRANSLATE_NOOP("Nugget", ...)` at

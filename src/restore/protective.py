@@ -34,7 +34,7 @@ import sqlite3
 import tempfile
 import time
 import uuid as _uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -947,8 +947,10 @@ def _is_encrypted_backup(device_dir: Path) -> bool:
         return False
 
 
-def _validate_sqlite_db(db_path: Path) -> bool:
-    """Check if a file is a valid SQLite database."""
+def _validate_sqlite_db(db_path) -> bool:
+    """Check if a file is a valid SQLite database (accepts str or Path)."""
+    if isinstance(db_path, str):
+        db_path = Path(db_path)
     if not db_path.exists() or db_path.stat().st_size < 100:
         return False
     try:

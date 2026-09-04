@@ -45,7 +45,7 @@ def apply_one_tendie(tendie: str, udid: str = None, list_devices: bool = False) 
     from src.devicemanagement.device_manager import DeviceManager
     from src.tweaks.tweaks import tweaks, TweakID
 
-    app = _qapp()
+    _qapp()
     settings = Settings("settings")
     dm = DeviceManager()
 

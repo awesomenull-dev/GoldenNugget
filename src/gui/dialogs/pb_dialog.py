@@ -1,18 +1,7 @@
 import asyncio
 import sqlite3
 
-
-def _validate_sqlite_db(db_path: str) -> bool:
-    """Check if a file is a valid SQLite database."""
-    if not path.exists(db_path) or path.getsize(db_path) < 100:
-        return False
-    try:
-        conn = sqlite3.connect(db_path)
-        conn.execute("SELECT 1 FROM sqlite_master LIMIT 1")
-        conn.close()
-        return True
-    except sqlite3.DatabaseError:
-        return False
+from src.restore.protective import _validate_sqlite_db
 
 
 from PySide6.QtWidgets import QWizard, QWizardPage, QLabel, QVBoxLayout, QProgressBar, QSizePolicy, QCheckBox, QMessageBox

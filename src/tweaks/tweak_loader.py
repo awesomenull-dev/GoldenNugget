@@ -21,15 +21,6 @@ def load_plist_tweaks():
                    if spec.id not in tweaks and not spec.disabled})
 
 
-# Kept as thin aliases — classic pages and preset_manager call the per-group names.
-def load_internal():
-    load_plist_tweaks()
-def load_liquidglass():
-    load_plist_tweaks()
-def load_springboard():
-    load_plist_tweaks()
-
-
 def load_daemons():
     if TweakID.Daemons in tweaks:
         return

@@ -164,21 +164,6 @@ class HotLoad:
                 continue
         return None
 
-    def blocked_names(self, device_version=None, device_model=None,
-                      app_version=None) -> set:
-        """Set of TweakID names currently flagged as blocked for this setup."""
-        names = set()
-        for rule in self._rules.get("rules", []):
-            try:
-                if not self._rule_applicable(rule, device_version, device_model, app_version):
-                    continue
-                tweak = rule.get("tweak")
-                if tweak:
-                    names.add(tweak)
-            except Exception:
-                continue
-        return names
-
     def kill_rule(self, device_version=None, device_model=None,
                   app_version=None) -> Optional[dict]:
         """Return the first applicable rule that fully disables GoldenNugget

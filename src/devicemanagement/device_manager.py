@@ -12,7 +12,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives.serialization import Encoding
 from uuid import uuid4
 
-from PySide6.QtWidgets import QMessageBox, QInputDialog, QLineEdit
+from PySide6.QtWidgets import QMessageBox
 from PySide6.QtCore import QSettings, QCoreApplication
 
 from packaging.version import Version
@@ -28,6 +28,7 @@ import pymobiledevice3.service_connection as _sc
 from src.devicemanagement.session import lockdown_session
 from src.exceptions.device_errors import is_device_locked_error as _is_device_locked_error
 from src.controllers.hotload import HotLoad
+from src.restore.skip_setup27 import SKIP_ALL_PANES
 
 # Bump SSL handshake timeout from 10s to 60s for all lockdown services.
 _sc.DEFAULT_SSL_HANDSHAKE_TIMEOUT = 60
@@ -323,81 +324,7 @@ class DeviceManager:
                 async with MobileConfigService(lockdown=ld) as mcs:
                     cloud_config_plist = await mcs.get_cloud_configuration()
             # add the 2 skip setup files
-            cloud_config_plist["SkipSetup"] = [
-                    'Location',
-                    'Restore',
-                    'SIMSetup',
-                    'Android',
-                    'AppleID',
-                    'IntendedUser',
-                    'TOS',
-                    'Siri',
-                    'ScreenTime',
-                    'Diagnostics',
-                    'SoftwareUpdate',
-                    'Passcode',
-                    'Biometric',
-                    'Payment',
-                    'Zoom',
-                    'DisplayTone',
-                    'MessagingActivationUsingPhoneNumber',
-                    'HomeButtonSensitivity',
-                    'CloudStorage',
-                    'ScreenSaver',
-                    'TapToSetup',
-                    'WatchMigration',
-                    'OnBoarding',
-                    'TVProviderSignIn',
-                    'TVHomeScreenSync',
-                    'Privacy',
-                    'TVRoom',
-                    'iMessageAndFaceTime',
-                    'AppStore',
-                    'Safety',
-                    'Multitasking',
-                    'ActionButton',
-                    'TermsOfAddress',
-                    'AccessibilityAppearance',
-                    'Welcome',
-                    'Appearance',
-                    'RestoreCompleted',
-                    'UpdateCompleted',
-                    'WiFi',
-                    'Display',
-                    'Tone',
-                    'TouchID',
-                    'TrueToneDisplay',
-                    'FileVault',
-                    'iCloudStorage',
-                    'iCloudDiagnostics',
-                    'Registration',
-                    'DeviceToDeviceMigration',
-                    'UnlockWithWatch',
-                    'Accessibility',
-                    'All',
-                    'N/A',
-                    'Avatar',
-                    'DeviceProtection',
-                    'Key',
-                    'LockdownMode',
-                    'Wallpaper',
-                    'PrivacySubtitle',
-                    'SecuritySubtitle',
-                    'DataSubtitle',
-                    'AppleIDSubtitle',
-                    'AppearanceSubtitle',
-                    'OnboardingSubtitle',
-                    'AppleTVSubtitle',
-                    'Intelligence',
-                    'WebContentFiltering',
-                    'CameraButton',
-                    'AdditionalPrivacySettings',
-                    'EnableLockdownMode',
-                    'OSShowcase',
-                    'SafetyAndHandling',
-                    'Tips',
-                    "AgeBasedSafetySettings",
-                ]
+            cloud_config_plist["SkipSetup"] = list(SKIP_ALL_PANES)
             cloud_config_plist["AllowPairing"] = True
             cloud_config_plist["ConfigurationWasApplied"] = True
             cloud_config_plist["CloudConfigurationUIComplete"] = True

@@ -18,6 +18,7 @@ payload files.
 import asyncio
 import plistlib
 import sqlite3
+
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -28,7 +29,7 @@ from src.devicemanagement.session import lockdown_session
 from pymobiledevice3.services.mobilebackup2 import Mobilebackup2Service
 
 from src.exceptions.nugget_exception import NuggetException
-from src.restore.protective import check_disk_space_for_backup
+from src.restore.protective import _validate_sqlite_db, check_disk_space_for_backup
 
 # Keys from lockdown ``all_values`` whose string values are device-specific
 # and should be replaced with placeholders when templating.
@@ -217,19 +218,6 @@ async def psysbackup(
                 continue
             raise
         # lockdown_session closes the connection safely on every path
-
-
-def _validate_sqlite_db(db_path: Path) -> bool:
-    """Check if a file is a valid SQLite database."""
-    if not db_path.exists() or db_path.stat().st_size < 100:
-        return False
-    try:
-        conn = sqlite3.connect(str(db_path))
-        conn.execute("SELECT 1 FROM sqlite_master LIMIT 1")
-        conn.close()
-        return True
-    except sqlite3.DatabaseError:
-        return False
 
 
 def _read_originals(device_dir: Path, paths: list[str]) -> dict[str, bytes]:

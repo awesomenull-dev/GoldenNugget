@@ -144,9 +144,8 @@ hand-built in `load_daemons()`, and the three non-plist extra tweaks
 Consumers:
 - `tweak_loader.load_plist_tweaks()` builds instances into `tweaks`
   (idempotent — already-loaded IDs keep their live instance so UI state
-  survives re-entry; the classic `load_internal/load_liquidglass/load_springboard`
-  names are literal aliases of `load_plist_tweaks`; `load_daemons()` is a
-  separate hand-built loader).
+  survives re-entry; `load_daemons()` builds the hand-defined daemon tweaks
+  separately).
 - The iOS tweaks page renders sections straight from `SPECS_BY_SECTION`
   (`SPECS_BY_ID` powers compatibility lookups).
 - `gui/ios/compat.py` evaluates `min_version` / `max_version` / device

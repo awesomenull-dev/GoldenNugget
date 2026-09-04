@@ -866,14 +866,13 @@ class MainWindow(QtWidgets.QMainWindow):
         is_reset = worker is not None and worker.reset_pages is not None
         # Show completion indicator on the iOS home page
         try:
-            if True:
-                if success:
-                    self.ios_home.show_process_status(
-                        QCoreApplication.tr("Reset complete!") if is_reset else QCoreApplication.tr("Apply complete!"),
-                        success=True)
-                else:
-                    self.ios_home.show_process_status(
-                        QCoreApplication.tr("Operation failed"), success=False)
+            if success:
+                self.ios_home.show_process_status(
+                    QCoreApplication.tr("Reset complete!") if is_reset else QCoreApplication.tr("Apply complete!"),
+                    success=True)
+            else:
+                self.ios_home.show_process_status(
+                    QCoreApplication.tr("Operation failed"), success=False)
         except Exception:
             pass
         if success:

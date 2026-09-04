@@ -667,6 +667,7 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
     # add the file paths
     last_domain = ""
     last_path = ""
+    exploit_only = True
     # extra check for system version to prevent sparserestore from restoring on iOS 18.1+
     passed_version_check = has_sparserestore_capability(lockdown_client)
     # iOS 27 dev beta 6 / public beta 4 reject sparse restores that contain
@@ -687,6 +688,7 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
                 pb_inject_files.append(file)
                 continue
             last_domain, last_path = concat_regular_file(file, files_list, last_domain, last_path)
+            exploit_only = False
             # add the app bundle to the list
             if last_domain.startswith("AppDomain"):
                 bundle_id = last_domain.removeprefix("AppDomain-")
@@ -752,7 +754,18 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
                              skip_protective_backup=skip_protective_backup)
     else:
         # iOS 26.x: plain sparse restore — no security recovery wipe,
-        # no protective backup needed
-        await perform_restore(backup=back, reboot=reboot,
-                              lockdown_client=lockdown_client,
-                              progress_callback=progress_callback)
+        # no protective backup needed.  When all files use the path-traversal
+        # exploit (no AppDomain files), crash the restore to skip setup — the
+        # device reboots without showing the setup assistant.
+        if exploit_only and skip_setup:
+            files_list.append(backup.ConcreteFile(
+                "", "SysContainerDomain-../../../../../../../.." + "/crash_on_purpose",
+                contents=b""))
+            back = backup.Backup(files=files_list, apps=apps_list)
+        try:
+            await perform_restore(backup=back, reboot=reboot,
+                                  lockdown_client=lockdown_client,
+                                  progress_callback=progress_callback)
+        except (ConnectionTerminatedError, ssl.SSLEOFError,
+                ConnectionAbortedError, ConnectionResetError):
+            log_info("Device disconnected during restore — expected on reboot")

@@ -17,10 +17,11 @@ settings). To keep user data alive, the three-phase flow in restore.py does:
 
 Protective scope: HomeDomain/{Accounts, ConfigurationProfiles, Preferences,
 Library/SpringBoard} (Apple ID + user settings + home screen layout),
-Library/ControlCenter (Control Center module layout), and, optionally,
-CameraRollDomain + MediaDomain (photos). KeychainDomain is
-intentionally excluded: enabling backup encryption is slow and keychain data
-is not needed for tweak functionality.
+Library/ControlCenter (Control Center module layout), MessagesDomain
+(iMessage/SMS/MMS), and, optionally, CameraRollDomain + MediaDomain (photos).
+KeychainDomain (Apple Watch pairing, iMessage identity, Wi-Fi passwords) is
+included only when backup encryption is enabled — keychain payloads are
+encrypted at rest and iOS rejects them in an unencrypted backup.
 """
 
 import asyncio
@@ -204,7 +205,14 @@ _BACKUP_METADATA_FILES = frozenset({
 PROTECTIVE_DOMAINS = frozenset({
     "CameraRollDomain",  # Actual photos and videos (DCIM/)
     "MediaDomain",       # Photo metadata (PhotoData/), PhotoStream, other media
+    "MessagesDomain",    # iMessage / SMS / MMS (preserved across safe-state recovery)
 })
+
+# KeychainDomain is only included when the user has backup encryption
+# enabled — keychain payloads are encrypted at rest and iOS rejects
+# unencrypted keychain entries in a backup.  This preserves Apple Watch
+# pairing, iMessage identity keys, Wi-Fi passwords, etc.
+KEYCHAIN_DOMAIN = "KeychainDomain"
 
 # Path prefixes within HomeDomain that contain Apple ID account data and
 # user settings.
@@ -265,10 +273,14 @@ POSTERBOARD_DB_DOMAIN = "AppDomain-com.apple.PosterBoard"
 POSTERBOARD_DB_NAME = "PBFPosterExtensionDataStoreSQLiteDatabase.sqlite3"
 
 
-def _is_protective_file(domain: str, relative_path: str, include_photos: bool = True) -> bool:
+def _is_protective_file(domain: str, relative_path: str, include_photos: bool = True, include_keychain: bool = False) -> bool:
     """Check if a file belongs in the protective backup."""
     filename = relative_path.rsplit("/", 1)[-1]
-    if filename in _SKIP_FILES:
+    # keychain-backup.plist carries the KeychainDomain payload. It is rejected
+    # when restored unencrypted (iOS validates protection class, flags=4), but
+    # with an encrypted backup — exactly the case where include_keychain is set —
+    # the device decrypts it on restore, so it must be kept.
+    if filename in _SKIP_FILES and not (include_keychain and filename == "keychain-backup.plist"):
         return False
     if domain == "HomeDomain":
         if relative_path.startswith(_SKIP_PATH_PREFIXES):
@@ -277,6 +289,8 @@ def _is_protective_file(domain: str, relative_path: str, include_photos: bool = 
                 or relative_path.startswith(SPRINGBOARD_PATH_PREFIXES)
                 or relative_path.startswith(CONTROL_CENTER_PATH_PREFIXES))
     if include_photos and domain in PROTECTIVE_DOMAINS:
+        return True
+    if include_keychain and domain == KEYCHAIN_DOMAIN:
         return True
     return False
 
@@ -296,7 +310,8 @@ def _path_match(device_name: str, path: str) -> bool:
 
 
 def is_protective_device_file(device_name: str, include_photos: bool = True,
-                              include_posterboard: bool = False) -> bool:
+                              include_posterboard: bool = False,
+                              include_keychain: bool = False) -> bool:
     """Mid-stream backup filter: match an upload's device-side name against the keep-set.
 
     Upload names carry the domain and path (e.g. ``HomeDomain/Library/...``),
@@ -305,9 +320,11 @@ def is_protective_device_file(device_name: str, include_photos: bool = True,
     subsequent incremental backups do not re-upload them.
     """
     for domain in (("CameraRollDomain", "MediaDomain") if include_photos else ()) + \
-            ("SystemPreferencesDomain",):
+            ("SystemPreferencesDomain", "MessagesDomain"):
         if _domain_match(device_name, domain):
             return True
+    if include_keychain and _domain_match(device_name, KEYCHAIN_DOMAIN):
+        return True
     for prefix in APPLE_ID_PATH_PREFIXES + SPRINGBOARD_PATH_PREFIXES + CONTROL_CENTER_PATH_PREFIXES:
         if _path_match(device_name, f"HomeDomain/{prefix}") or _path_match(device_name, prefix):
             return True
@@ -418,6 +435,7 @@ async def perform_protective_backup(
     progress_callback=None,
     include_photos: bool = True,
     include_posterboard: bool = False,
+    include_keychain: bool = False,
     incremental_ok: bool = False,
 ) -> bool:
     if not incremental_ok:
@@ -427,7 +445,8 @@ async def perform_protective_backup(
         return is_protective_device_file(
             backup_file.device_name or "",
             include_photos=include_photos,
-            include_posterboard=include_posterboard)
+            include_posterboard=include_posterboard,
+            include_keychain=include_keychain)
 
     is_encrypted = False
     async with ProtectiveBackupService(lockdown_client, include_posterboard=include_posterboard) as mb:
@@ -562,7 +581,8 @@ class ProtectiveBackupCache:
         return self.locate() is not None
 
     async def refresh(self, lockdown_client: LockdownClient, progress_callback=None,
-                      include_photos: bool = True, include_posterboard: bool = False) -> str:
+                      include_photos: bool = True, include_posterboard: bool = False,
+                      include_keychain: bool = False) -> str:
         """Bring the master up to the device's current state (full or incremental).
 
         With ``include_posterboard`` the PosterBoard container rides along, so
@@ -575,6 +595,7 @@ class ProtectiveBackupCache:
         is_encrypted = await perform_protective_backup(
             lockdown_client, str(self.master_root), progress_callback,
             include_photos=include_photos, include_posterboard=include_posterboard,
+            include_keychain=include_keychain,
             incremental_ok=valid)
 
         # placement by size: big masters move to the persistent app-data
@@ -939,18 +960,24 @@ def _validate_sqlite_db(db_path: Path) -> bool:
         return False
 
 
-def _keep_protective_entry(domain: str, relative_path: str, include_photos: bool = True) -> bool:
+def _keep_protective_entry(domain: str, relative_path: str, include_photos: bool = True,
+                           include_keychain: bool = False) -> bool:
     """Keep-set predicate shared by the plain and encrypted prune paths."""
-    if domain and relative_path and (_is_protective_file(domain, relative_path, include_photos)
+    if domain and relative_path and (_is_protective_file(domain, relative_path, include_photos, include_keychain)
                                      or domain == "SystemPreferencesDomain"):
         return True
     # the domain root directory row — without it the restore agent may skip
     # the whole domain
-    return domain == "SystemPreferencesDomain" and relative_path == ""
+    if relative_path == "" and domain in ("SystemPreferencesDomain", "MessagesDomain"):
+        return True
+    if include_keychain and relative_path == "" and domain == KEYCHAIN_DOMAIN:
+        return True
+    return False
 
 
 def clean_backup_for_restore(backup_dir: "str | Path", udid: str,
                              include_photos: bool = True,
+                             include_keychain: bool = False,
                              manifest_password: str = "") -> tuple:
     """Prune a backup directory down to its protective payload.
 
@@ -986,7 +1013,7 @@ def clean_backup_for_restore(backup_dir: "str | Path", udid: str,
         def _keep(bf) -> bool:
             if bf.domain is None or bf.relative_path is None:
                 return False
-            return _keep_protective_entry(bf.domain, bf.relative_path, include_photos)
+            return _keep_protective_entry(bf.domain, bf.relative_path, include_photos, include_keychain)
         allowed_ids = Mobilebackup2Service.prune_backup_manifest(
             device_dir, _keep, password=manifest_password)
         removed_files = 0
@@ -1013,7 +1040,7 @@ def clean_backup_for_restore(backup_dir: "str | Path", udid: str,
         cur = conn.cursor()
         cur.execute("SELECT fileID, domain, relativePath, flags FROM Files")
         for file_id, domain, rel_path, flags in cur:
-            if _keep_protective_entry(domain, rel_path, include_photos):
+            if _keep_protective_entry(domain, rel_path, include_photos, include_keychain):
                 # only regular files carry a <aa>/<fileID> payload; directory
                 # rows (flags=2) MUST survive without one — dropping them
                 # makes the restore agent fail with renameatx ENOENT

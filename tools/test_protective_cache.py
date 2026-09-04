@@ -9,6 +9,7 @@ import plistlib
 import sqlite3
 import sys
 import tempfile
+from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -117,6 +118,32 @@ def main():
     check("posterboard db pruned from working copy",
           "Library/Application Support/PRBPosterExtensionDataStore/61/PBFPosterExtensionDataStoreSQLiteDatabase.sqlite3"
           not in rels)
+
+    # --- MessagesDomain is preserved across the wipe (issue #25) ---
+    make_manifest(cache.device_dir, [
+        ("MessagesDomain", "5B/00", None, 2),  # directory row
+        ("MessagesDomain", "5B/00/Avatar", None, 2),
+        ("MessagesDomain", "5B/00/2/0-09-48-02.sqlitedb", b"msgs"),
+        ("KeychainDomain", "keychain-backup.plist", b"keychain" * 10),
+    ])
+    wc2 = make_protective_working_copy(str(cache.master_root), UDID)
+    wc2_device = Path(wc2) / UDID
+    # default (unencrypted) prune: keychain NOT kept, MessagesDomain kept
+    removed_rows, _ = clean_backup_for_restore(wc2, UDID, include_photos=True)
+    conn = sqlite3.connect(str(wc2_device / "Manifest.db"))
+    rels2 = {r[0] for r in conn.execute("SELECT relativePath FROM Files")}
+    conn.close()
+    check("MessagesDomain db kept", any("0-09-48-02.sqlitedb" in r for r in rels2))
+    check("keychain pruned when unencrypted", "keychain-backup.plist" not in rels2)
+    # encrypted prune: keychain kept too
+    wc3 = make_protective_working_copy(str(cache.master_root), UDID)
+    wc3_device = Path(wc3) / UDID
+    removed_rows, _ = clean_backup_for_restore(wc3, UDID, include_photos=True, include_keychain=True)
+    conn = sqlite3.connect(str(wc3_device / "Manifest.db"))
+    rels3 = {r[0] for r in conn.execute("SELECT relativePath FROM Files")}
+    conn.close()
+    check("keychain kept when encrypted", "keychain-backup.plist" in rels3)
+    check("messages kept when encrypted", any("0-09-48-02.sqlitedb" in r for r in rels3))
 
     # --- master untouched by pruning of the copy; PB row survives there ---
     conn = sqlite3.connect(str(cache.device_dir / "Manifest.db"))

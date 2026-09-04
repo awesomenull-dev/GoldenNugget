@@ -485,7 +485,7 @@ class DeviceManager:
                 "GoldenNugget only supports iOS 26.2 and newer. "
                 "Please use the original Nugget for iOS 26.1 and earlier."))
 
-    async def start_restore(self, files_to_restore: list[FileToRestore], update_label=lambda x: None, backup_password: str = "", prepared_backup_root: str = None, skip_protective_backup: bool = False):
+    async def start_restore(self, files_to_restore: list[FileToRestore], update_label=lambda x: None, backup_password: str = "", prepared_backup_root: str = None, skip_protective_backup: bool = False, include_keychain: bool = False):
         # hard-block any restore on an unsupported (old) iOS version
         self._raise_if_unsupported()
         self.update_label = update_label
@@ -504,7 +504,8 @@ class DeviceManager:
                 progress_callback=self.progress_callback,
                 backup_password=backup_password,
                 prepared_backup_root=prepared_backup_root,
-                skip_protective_backup=skip_protective_backup
+                skip_protective_backup=skip_protective_backup,
+                include_keychain=include_keychain
             )
             tweaks[TweakID.PosterBoard].config_manager.save_staged_ids(self.get_current_device_udid())
             msg = QCoreApplication.tr("Your device will now restart.\n\nRemember to turn Find My back on!")
@@ -713,9 +714,11 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
             update_label(QCoreApplication.tr("Backing up device..."))
             await perform_protective_backup(
                 lc, backup_root, progress_callback=self._backup_progress(update_label),
-                include_photos=True, include_posterboard=needs_posterboard)
+                include_photos=True, include_posterboard=needs_posterboard,
+                include_keychain=encrypted)
             log_info(f"Phase 0: live protective backup ready (always fresh; "
-                     f"PosterBoard container {'included' if needs_posterboard else 'not needed'})")
+                     f"PosterBoard container {'included' if needs_posterboard else 'not needed'}; "
+                     f"keychain {'included' if encrypted else 'excluded (backup not encrypted)'})")
             prepared = PreparedBackup(root=backup_root, manifest_password="")
             if needs_posterboard and encrypted:
                 log_warn("Encrypted backup cannot yield a readable PosterBoard DB — "
@@ -762,7 +765,8 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
                 update_label(QCoreApplication.tr("Backing up device (cached)..."))
                 master_root = await cache.refresh(
                     lc, progress_callback=self._backup_progress(update_label),
-                    include_photos=True, include_posterboard=needs_posterboard)
+                    include_photos=True, include_posterboard=needs_posterboard,
+                    include_keychain=encrypted)
     
             prepared = PreparedBackup(root=master_root, manifest_password=manifest_password)
             if needs_posterboard and encrypted:
@@ -1015,10 +1019,14 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
                         log_warn(f"Failed to check backup encryption status: {e}")
 
             # restore to the device
+            # include_keychain only when backup encryption is active — iOS rejects
+            # keychain entries in an unencrypted backup, and the keychain is what
+            # preserves Apple Watch pairing / iMessage identity across the wipe.
             final_alert = await self.start_restore(
                 files_to_restore, update_label, backup_password=backup_password,
                 prepared_backup_root=prepared_backup_root,
-                skip_protective_backup=skip_protective_backup)
+                skip_protective_backup=skip_protective_backup,
+                include_keychain=bool(backup_password))
             return final_alert, files_to_restore
         finally:
             if len(tmp_dirs) > 0:

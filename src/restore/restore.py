@@ -395,16 +395,17 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
                           prepared_backup_root: PreparedBackup = None,
                           pb_inject_files: list = None,
                           skip_setup: bool = True,
-                          skip_protective_backup: bool = False):
+                          skip_protective_backup: bool = False,
+                          include_keychain: bool = False):
     """iOS 27+ restore: backup → tweak → wipe → restore → skip setup → reboot.
 
-    Phase 1 (0-40%):  Selective backup of photos, Apple ID, and user
-                      settings. Non-protective data is drained mid-stream,
-                      so no multi-GB full backup ever hits the disk.
-                      (KeychainDomain is skipped — enabling backup
-                      encryption is slow and not needed for tweaks.)
-                      With ``prepared_backup_root`` the backup already
-                      happened earlier in the apply flow (fresh Phase-0 live
+    Phase 1 (0-40%):  Selective backup of photos, Apple ID, user
+                      settings, and Messages. Non-protective data is drained
+                      mid-stream, so no multi-GB full backup ever hits the
+                      disk. KeychainDomain rides along only when the backup
+                      is encrypted (see include_keychain). With
+                      ``prepared_backup_root`` the backup already happened
+                      earlier in the apply flow (fresh Phase-0 live
                       backup, or the persistent cache master + incremental
                       refresh), so this phase only builds the pruned working
                       copy. With ``skip_protective_backup`` the whole phase
@@ -486,6 +487,7 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
                 lockdown_client, backup_root,
                 progress_callback=_scaled_callback(progress_callback, 0, _PHASE_BACKUP_END),
                 include_photos=True,
+                include_keychain=include_keychain,
             )
         backup_complete = not skip_protective_backup
 
@@ -496,6 +498,7 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
         if backup_complete:
             removed_rows, removed_files = await asyncio.to_thread(
                 clean_backup_for_restore, backup_root, udid,
+                include_keychain=include_keychain,
                 manifest_password=manifest_password
             )
         log_info(f"Phase 1: Pruned backup: -{removed_rows} manifest rows, -{removed_files} payload files "
@@ -656,7 +659,7 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
 
 
 # files is a list of FileToRestore objects
-async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdown_client: LockdownClient = None, progress_callback = lambda x: None, backup_password: str = "", prepared_backup_root: PreparedBackup = None, skip_setup: bool = True, skip_protective_backup: bool = False):
+async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdown_client: LockdownClient = None, progress_callback = lambda x: None, backup_password: str = "", prepared_backup_root: PreparedBackup = None, skip_setup: bool = True, skip_protective_backup: bool = False, include_keychain: bool = False):
     # create the files to be backed up
     files_list = [
     ]
@@ -751,7 +754,8 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
                              prepared_backup_root=prepared_backup_root,
                              pb_inject_files=pb_inject_files,
                              skip_setup=skip_setup,
-                             skip_protective_backup=skip_protective_backup)
+                             skip_protective_backup=skip_protective_backup,
+                             include_keychain=include_keychain)
     else:
         # iOS 26.x: plain sparse restore — no security recovery wipe,
         # no protective backup needed.  When all files use the path-traversal

@@ -181,6 +181,7 @@ class RestoreCacheThread(QThread):
             make_protective_working_copy, source_root, udid)
         removed_rows, removed_files = await asyncio.to_thread(
             clean_backup_for_restore, working_root, udid,
+            include_keychain=bool(self._backup_password()),
             manifest_password=self._backup_password())
         self.update_label(
             f"Prepared backup (-{removed_rows} pruned rows). Connecting to device...")

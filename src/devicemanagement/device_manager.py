@@ -860,10 +860,17 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
                     if tweak.uses_domains():
                         uses_domains = True
                 elif isinstance(tweak, StatusBarTweak):
-                    # iOS 27: the status bar is Speakeasy, a SpringBoard
-                    # feature flag — writing fails due to no write permissions.
-                    # The feature is disabled on iOS 27+.
-                    flag_plist = tweak.apply_tweak(flag_plist, version=self.get_current_device_version())
+                    if Version(self.get_current_device_version()) >= Version("27.0"):
+                        # iOS 27: the status bar is Speakeasy, a SpringBoard
+                        # feature flag — the classic statusBarOverrides file
+                        # is no longer read, so write the FeatureFlags plist.
+                        flag_plist = tweak.apply_tweak(flag_plist, version=self.get_current_device_version())
+                    else:
+                        # iOS 26 and below: classic binary statusBarOverrides
+                        # in HomeDomain.
+                        tweak.apply_classic_tweak(files_to_restore)
+                        if tweak.enabled:
+                            uses_domains = True
 
             if hotload_skipped:
                 names = sorted(t.name if hasattr(t, "name") else str(t) for t in hotload_skipped)

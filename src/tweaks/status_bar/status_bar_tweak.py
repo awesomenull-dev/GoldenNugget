@@ -1,6 +1,7 @@
 from .status_setter import Setter, StatusBarItem
 from ..tweak_classes import Tweak
 from src.devicemanagement.constants import Version
+from src.restore.restore import FileToRestore
 
 from cffi import FFI
 ffi = FFI()
@@ -21,6 +22,17 @@ class StatusBarTweak(Tweak):
         category = flag_plist.setdefault("SpringBoard", {})
         category["SpeakeasyNewStatusBar"] = self.get_speakeasy_payload()
         return flag_plist
+
+    # iOS 26 and below: classic binary statusBarOverrides in HomeDomain.
+    def apply_classic_tweak(self, files_to_restore: list) -> None:
+        """Stage the classic binary status bar override file (iOS < 27)."""
+        if not self.enabled:
+            return
+        files_to_restore.append(FileToRestore(
+            contents=self.setter.get_data(),
+            restore_path="/Library/SpringBoard/statusBarOverrides",
+            domain="HomeDomain"
+        ))
 
     def get_speakeasy_payload(self) -> dict:
         """Translate the StatusBarOverrideData struct into the Speakeasy flag value.

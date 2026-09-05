@@ -792,24 +792,47 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
     device_ver = _V(lockdown_client.product_version)
 
     if os.environ.get("GOLDENNUGGET_NO_PROTECTIVE_BACKUP") == "1":
-        # Kill switch: skip Phase 1 (protective backup) and Phase 3 (protective
-        # restore) entirely — a raw sparse pass (tweaks only, no data
-        # protection). Handy for fast iteration (e.g. daemon bootloop testing)
-        # where a protective backup is wasted time. Overrides the flag below.
+        # Kill switch: force the iOS 26-style apply — a single-pass sparse
+        # restore with NO three-phase restore at all (no Phase 0/1/3 backup,
+        # no security-recovery wipe). Handy for fast iteration (e.g. daemon
+        # bootloop testing). skip_setup then rides on reconnect + cloud config
+        # instead of the legacy crash_on_purpose trick.
         skip_protective_backup = True
-        log_warn("GOLDENNUGGET_NO_PROTECTIVE_BACKUP=1 — skipping protective backup/restore "
-                 "(raw sparse, no data protection)")
+        log_warn("GOLDENNUGGET_NO_PROTECTIVE_BACKUP=1 — forcing iOS 26-style "
+                 "single-pass sparse restore (no protective backups, no "
+                 "security-recovery wipe)")
 
     if device_ver >= _V("27.0"):
-        # iOS 27 era: three-phase protective backup + restore
-        await _restore_ios27(back, reboot, lockdown_client, progress_callback,
-                             backup_password=backup_password,
-                             prepared_backup_root=prepared_backup_root,
-                             pb_inject_files=pb_inject_files,
-                             skip_setup=skip_setup,
-                             skip_protective_backup=skip_protective_backup,
-                             include_keychain=include_keychain,
-                             prompt_choice=prompt_choice)
+        if skip_protective_backup:
+            # Raw sparse mode (GOLDENNUGGET_NO_PROTECTIVE_BACKUP=1): the iOS 27
+            # three-phase restore would trigger Apple's security-recovery erasure
+            # and restore an empty backup — exactly what bootloop-testing must
+            # avoid. Run the plain sparse pass instead; the reboot to apply the
+            # tweaks happens inside perform_restore (reboot=True).
+            try:
+                await perform_restore(backup=back, reboot=reboot,
+                                      lockdown_client=lockdown_client,
+                                      progress_callback=progress_callback)
+            except (ConnectionTerminatedError, ssl.SSLEOFError,
+                    ConnectionAbortedError, ConnectionResetError):
+                log_info("Device disconnected during restore — expected on reboot")
+            if reboot and skip_setup:
+                lc = await _wait_for_device(lockdown_client.udid,
+                                            progress_callback,
+                                            prompt_choice=prompt_choice)
+                log_info("Raw sparse: skipping setup panes via MobileConfigService")
+                await skip_all_setup27(lc, lockdown_client.udid)
+                progress_callback(95)
+        else:
+            # iOS 27 era: three-phase protective backup + restore
+            await _restore_ios27(back, reboot, lockdown_client, progress_callback,
+                                 backup_password=backup_password,
+                                 prepared_backup_root=prepared_backup_root,
+                                 pb_inject_files=pb_inject_files,
+                                 skip_setup=skip_setup,
+                                 skip_protective_backup=skip_protective_backup,
+                                 include_keychain=include_keychain,
+                                 prompt_choice=prompt_choice)
     else:
         # iOS 26.x: plain sparse restore — no security recovery wipe,
         # no protective backup needed.  When all files use the path-traversal

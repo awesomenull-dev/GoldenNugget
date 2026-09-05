@@ -1,12 +1,19 @@
 # Shortcut Companion (concept)
 
-Guards against Home Screen shortcuts being wiped when applying tweaks.
+> **Update (verified):** Home Screen shortcut **icons** are no longer lost.
+> The Phase 2 sparse-restore wipes them, but Phase 3 (protective restore)
+> brings them back: the protective backup now carries
+> `HomeDomain/Library/SpringBoard/IconState.plist` (icon layout) together
+> with `HomeDomain/Library/Shortcuts/Shortcuts.sqlite` (the Shortcuts
+> library). Real-world verified — restored successfully from a full device
+> backup. This companion is now only an optional fallback for edge cases
+> (protective restore skipped / patches lost), not the primary mechanism.
 
-## Problem
+## Problem (historical)
 
-The Phase 2 sparse restore wipes Home Screen icons. Phase 3 (protective
-restore) cannot bring them back — an Apple limitation: the SpringBoard icon
-layout / Home Screen shortcuts are not part of the protective backup.
+The Phase 2 sparse restore wipes Home Screen icons. Phase 3, in its original
+narrow scope (photos/Apple ID/settings without SpringBoard + Shortcuts), could
+not bring them back.
 
 ## Concept
 
@@ -38,7 +45,8 @@ Output: one `Nugget-Backup.zip`.
 3. Quick Look each `.shortcut` → iOS offers "Add Shortcut"
    (optionally Choose from List first)
 4. Re-add Home Screen icons manually in the Shortcuts app
-   (⋯ → "Add to Home Screen") — Apple limitation, no automation.
+   (⋯ → "Add to Home Screen") — only needed if the protective restore was
+   skipped and icons were lost.
 
 ## Implementation notes for contributors
 
@@ -56,4 +64,5 @@ Output: one `Nugget-Backup.zip`.
 - [ ] Share multiple shortcuts into "Nugget Save" → one `.zip` comes out
 - [ ] "Nugget Restore" unzips and shows "Add Shortcut" per file
 - [ ] Icon returns to Home Screen after re-adding
-- [ ] Full cycle: apply tweaks → restore → Home Screen intact
+- [x] Full cycle verified: apply tweaks → protective restore → Home Screen
+      intact (via `Library/SpringBoard/IconState.plist` + `Library/Shortcuts`)

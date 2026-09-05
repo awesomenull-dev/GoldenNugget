@@ -17,7 +17,9 @@ settings). To keep user data alive, the three-phase flow in restore.py does:
 
 Protective scope: HomeDomain/{Accounts, ConfigurationProfiles, Preferences,
 Library/SpringBoard} (Apple ID + user settings + home screen layout),
-Library/ControlCenter (Control Center module layout), MessagesDomain
+Library/ControlCenter (Control Center module layout), Library/Shortcuts
+(iOS Shortcuts automations and commands), Library/WebClips (Safari
+"Add to Home Screen" web clips), MessagesDomain
 (iMessage/SMS/MMS), and, optionally, CameraRollDomain + MediaDomain (photos).
 KeychainDomain (Apple Watch pairing, iMessage identity, Wi-Fi passwords) is
 included only when backup encryption is enabled — keychain payloads are
@@ -247,6 +249,22 @@ CONTROL_CENTER_PATH_PREFIXES = (
     "Library/ControlCenter",
 )
 
+# Path prefixes within HomeDomain holding iOS Shortcuts (the Shortcuts app:
+# Library/Shortcuts/Shortcuts.sqlite, ShortcutIcons/, VoiceShortcuts/...).
+# Automations and custom shortcuts are pure user data and would be lost to
+# the iOS 27 "safe state recovery" wipe without an explicit entry.
+SHORTCUTS_PATH_PREFIXES = (
+    "Library/Shortcuts",
+)
+
+# Path prefixes within HomeDomain holding Safari "Add to Home Screen" web
+# clips (Library/WebClips/<UUID>.webclip/Info.plist + icon.png). Pure user
+# data that the iOS 27 "safe state recovery" wipe would discard; the icon
+# layout (IconState.plist) references them by bundle id.
+WEB_CLIPS_PATH_PREFIXES = (
+    "Library/WebClips",
+)
+
 # Files/dirs inside the protective HomeDomain scope that tweaks write
 # themselves — restoring the stale copies would undo the applied tweaks.
 _SKIP_PATH_PREFIXES = (
@@ -287,7 +305,9 @@ def _is_protective_file(domain: str, relative_path: str, include_photos: bool = 
             return False
         return (relative_path.startswith(APPLE_ID_PATH_PREFIXES)
                 or relative_path.startswith(SPRINGBOARD_PATH_PREFIXES)
-                or relative_path.startswith(CONTROL_CENTER_PATH_PREFIXES))
+                or relative_path.startswith(CONTROL_CENTER_PATH_PREFIXES)
+                or relative_path.startswith(SHORTCUTS_PATH_PREFIXES)
+                or relative_path.startswith(WEB_CLIPS_PATH_PREFIXES))
     if include_photos and domain in PROTECTIVE_DOMAINS:
         return True
     if include_keychain and domain == KEYCHAIN_DOMAIN:
@@ -325,7 +345,9 @@ def is_protective_device_file(device_name: str, include_photos: bool = True,
             return True
     if include_keychain and _domain_match(device_name, KEYCHAIN_DOMAIN):
         return True
-    for prefix in APPLE_ID_PATH_PREFIXES + SPRINGBOARD_PATH_PREFIXES + CONTROL_CENTER_PATH_PREFIXES:
+    for prefix in (APPLE_ID_PATH_PREFIXES + SPRINGBOARD_PATH_PREFIXES
+               + CONTROL_CENTER_PATH_PREFIXES + SHORTCUTS_PATH_PREFIXES
+               + WEB_CLIPS_PATH_PREFIXES):
         if _path_match(device_name, f"HomeDomain/{prefix}") or _path_match(device_name, prefix):
             return True
     if include_posterboard:
@@ -726,7 +748,16 @@ def prune_protective_backups(udid: str, keep: int = PROTECTIVE_KEEP_RUNS,
     failed apply the newest backup is the only copy of the user's data, and
     deleting it on a timer is precisely the failure this replaces. Returns the
     number of run directories removed.
+
+    Before the age-based deletion the kept-but-old runs are deduplicated
+    against the newest one (``dedupe_protective_payloads``): stale copies get
+    freed immediately even when they are too young to delete outright, but
+    they stay readable for rollback.
     """
+    try:
+        dedupe_protective_payloads(udid)
+    except Exception as e:
+        log_warn(f"Protective payload dedupe failed: {e}")
     runs = list_protective_backups(udid)
     removed = 0
     now = time.time()
@@ -937,6 +968,90 @@ def _iter_payload_files(device_dir: Path):
                 yield entry
         elif entry.is_dir():
             yield from _iter_payload_files(entry)
+
+
+def _payload_digests_by_fileid(device_dir: Path) -> dict:
+    """Map fileID -> content digest (SHA-1) for a backup's regular-file rows.
+
+    Read from the MBFile blobs the device itself wrote into ``Manifest.db`` —
+    exact (digest == payload SHA-1, no payload I/O needed) and independent of
+    the on-disk payload. Returns ``{}`` when the manifest cannot be read
+    (e.g. an encrypted backup without a password).
+    """
+    manifest_db = device_dir / "Manifest.db"
+    if not _validate_sqlite_db(manifest_db):
+        return {}
+    out = {}
+    try:
+        conn = sqlite3.connect(str(manifest_db))
+        try:
+            for file_id, blob in conn.execute(
+                    "SELECT fileID, file FROM Files WHERE flags = 1 AND file IS NOT NULL"):
+                try:
+                    # MBFile archive layout: $objects[3] is the SHA-1 Digest.
+                    obj = plistlib.loads(blob)
+                    digest = obj["$objects"][3]
+                except Exception:
+                    continue
+                if isinstance(digest, (bytes, bytearray)):
+                    out[file_id] = bytes(digest)
+        finally:
+            conn.close()
+    except sqlite3.DatabaseError:
+        return {}
+    return out
+
+
+def dedupe_protective_payloads(udid: str) -> tuple:
+    """Free disk by hardlinking payloads older runs share with the newest.
+
+    A fresh protective run mostly repeats the previous one — only the files
+    that actually changed on-device differ — so kept older runs waste space
+    holding byte-identical copies. For every payload an older run carries in
+    common with the newest run (same fileID AND same content digest), the
+    older payload is replaced by a hardlink to the newest one: the older
+    backup still resolves every path (so rollback keeps working) while the
+    duplicate stops costing disk space.
+
+    Matching uses the SHA-1 digests each run's Manifest.db records, so a file
+    that legitimately changed between runs (same fileID, new content) keeps
+    its own payload and is never clobbered. Encrypted runs without a password
+    are skipped (their manifests cannot be read).
+
+    Returns (files_deduped, bytes_freed).
+    """
+    runs = list_protective_backups(udid)
+    if len(runs) < 2:
+        return 0, 0
+    safe_udid = udid or "unknown"
+    newest_dir = runs[0] / "device_backup" / safe_udid
+    newest_digests = _payload_digests_by_fileid(newest_dir)
+    if not newest_digests:
+        return 0, 0
+    files = bytes_freed = 0
+    for run in runs[1:]:
+        old_dir = run / "device_backup" / safe_udid
+        old_digests = _payload_digests_by_fileid(old_dir)
+        for file_id, digest in old_digests.items():
+            if newest_digests.get(file_id) != digest:
+                continue
+            new_payload = newest_dir / file_id[:2] / file_id
+            old_payload = old_dir / file_id[:2] / file_id
+            if not new_payload.is_file() or not old_payload.is_file():
+                continue
+            try:
+                if os.path.samefile(old_payload, new_payload):
+                    continue
+                os.unlink(old_payload)
+                os.link(new_payload, old_payload)
+                files += 1
+                bytes_freed += new_payload.stat().st_size
+            except OSError:
+                continue
+    if files:
+        log_info(f"Deduplicated {files} payload files across protective backups "
+                 f"(freed {bytes_freed / 1024 / 1024:.1f} MiB on disk)")
+    return files, bytes_freed
 
 
 def _is_encrypted_backup(device_dir: Path) -> bool:

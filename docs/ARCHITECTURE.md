@@ -272,7 +272,8 @@ re-pair carries no EscrowBag.
   mid-stream while their manifest rows survive (that is what makes the next
   incremental cheap). Keep-set: CameraRoll/Media (photos),
   SystemPreferencesDomain, HomeDomain Accounts / ConfigurationProfiles /
-  Preferences / SpringBoard / ControlCenter, optionally the PosterBoard DB.
+  Preferences / SpringBoard / ControlCenter / Shortcuts / WebClips, optionally the
+  PosterBoard DB.
   (Note: the module's own doc-comment at `protective.py:212-220` claims
   ConfigurationProfiles was reverted, but the code still keeps it.)
 - `make_protective_working_copy()` — hardlink clone (metadata real-copied);
@@ -292,6 +293,12 @@ re-pair carries no EscrowBag.
   (structure version varies), pulls `-wal`/`-shm` siblings and checkpoints
   them into one consolidated database.
 - `verify_backup_payloads()` — last-line diagnostic before Phase 3.
+- `prune_protective_backups()` → `dedupe_protective_payloads()`: keeps
+  `PROTECTIVE_KEEP_RUNS=2` newest runs (never deleting anything younger than
+  `PROTECTIVE_MIN_AGE_HOURS=24`) and hardlinks each older run's payloads the
+  newest also carries (same fileID + content SHA-1 from the run's own
+  Manifest.db blobs) onto the newest run — stale-but-kept runs stop eating
+  disk immediately while still resolving for rollback.
 - `check_disk_space_for_backup()` — sizes the requirement from the device's
   real used storage; `GOLDENNUGGET_MIN_FREE_GB` overrides the floor and
   `GOLDENNUGGET_CACHE_PERSIST_MIN_GB`/`GOLDENNUGGET_CACHE_REFRESH_SECS`

@@ -7,6 +7,9 @@ Customize your device with animated wallpapers, disable pesky daemons, and more!
 
 Make sure you have installed the [requirements](#requirements) if you are on Windows or Linux.
 
+## Discord server
+Wanted support? join our [Discord Server][server].
+
 > [!NOTE]
 > Please back up your data before using this Project! GoldenNugget may cause unforeseen problems, so it is better to be safe than sorry. We are not responsible for any damage done to your device.
 
@@ -213,9 +216,6 @@ See [CONTRIBUTING.md](https://github.com/awesomenull-dev/GoldenNugget/blob/main/
 - [Mikasa-san][Mikasa-sanGitHub] for [Quiet Daemon][QuietDaemonGitHub]
 - [pymobiledevice3][pymobiledevice3GitHub] for restoring and device algorithms.
 - [PySide6][PySide6Doc] for the GUI library.
-
-## Discord server
-Wanted support? join our [Discord Server][server].
 
 [caplayground]: https://caplayground.vercel.app/wallpapers
 [i18n]: https://github.com/awesomenull-dev/gNugget-i18n

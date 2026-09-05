@@ -74,7 +74,6 @@ class Daemon(Enum):
         "com.apple.wapic",
         "com.apple.wifi.wapic"
     ]
-    HealthKit = ["com.apple.healthd"]
     AirPrint = ["com.apple.printd"]
     AssistiveTouch = ["com.apple.assistivetouchd"]
     iCloud = ["com.apple.itunescloudd"]

@@ -53,7 +53,6 @@ class IOSDaemonsContent(QWidget):
             (QCoreApplication.translate("Nugget", "Disable Tips Services"), Daemon.Tips),
             (QCoreApplication.translate("Nugget", "VPN Icon"), Daemon.VPN),
             (QCoreApplication.translate("Nugget", "Disable Chinese WLAN Service"), Daemon.ChineseLAN),
-            (QCoreApplication.translate("Nugget", "Disable HealthKit"), Daemon.HealthKit),
             (QCoreApplication.translate("Nugget", "Disable AirPrint"), Daemon.AirPrint),
             (QCoreApplication.translate("Nugget", "Disable Assistive Touch"), Daemon.AssistiveTouch),
             (QCoreApplication.translate("Nugget", "Disable iCloud"), Daemon.iCloud),

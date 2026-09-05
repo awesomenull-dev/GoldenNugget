@@ -496,8 +496,18 @@ class DeviceManager:
             #    restore stays the usual raw sparse pass.
             prepared_root = None
             pb_from_cache = False
+            raw_sparse = os.environ.get("GOLDENNUGGET_NO_PROTECTIVE_BACKUP") == "1"
+            if raw_sparse:
+                # Kill switch: straight raw sparse pass, no protective backup at
+                # any phase. The whole Phase 0 is skipped — no live backup, no
+                # cache, no PosterBoard delivery. Flip everything below to the
+                # no-protection path.
+                log_warn("GOLDENNUGGET_NO_PROTECTIVE_BACKUP=1 — raw sparse: "
+                         "skipping Phase 0 protective backup entirely "
+                         "(no data protection)")
+                self._protective_backup_skipped = True
             partially_supported = self.get_current_device_partially_supported()
-            should_prepare = partially_supported or needs_posterboard
+            should_prepare = (partially_supported or needs_posterboard) and not raw_sparse
             if should_prepare:
                 # On NotEnoughDiskSpaceError the user can choose to continue
                 # without it — tweaks still apply, but there is no data
@@ -541,7 +551,7 @@ class DeviceManager:
 
             # fallback: PosterBoard DB missing from the cache backup (e.g. the
             # device rejected container inclusion) -> legacy separate backup
-            if needs_posterboard and not pb_from_cache:
+            if needs_posterboard and not pb_from_cache and not raw_sparse:
                 if os.environ.get("GOLDENNUGGET_SKIP_PB_BACKUP"):
                     log_warn("GOLDENNUGGET_SKIP_PB_BACKUP=1 set; skipping PosterBoard DB fetch")
                 else:

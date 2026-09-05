@@ -647,11 +647,46 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
                 log_warn("Phase 3: skipping protective restore (user opted out "
                          "of data protection)")
             else:
-                await _restore_protective_backup(
-                    lc, backup_root, udid, False,
-                    _scaled_callback(progress_callback, _PHASE_TWEAK_END, 90),
-                    backup_password=backup_password,
-                    skip_apps=not bool(pb_inject_files))
+                # A bootlooping daemon keeps the device stuck on the passcode
+                # screen — mobilebackup2 refuses to start with
+                # PasswordRequiredError before a single retry. Offer the same
+                # Abort/Resume choice as the reconnect wait instead of crashing.
+                while True:
+                    try:
+                        await _restore_protective_backup(
+                            lc, backup_root, udid, False,
+                            _scaled_callback(progress_callback, _PHASE_TWEAK_END, 90),
+                            backup_password=backup_password,
+                            skip_apps=not bool(pb_inject_files))
+                        break
+                    except PasswordRequiredError:
+                        if prompt_choice is None:
+                            raise
+                        log_info("Phase 3: protective restore blocked — device "
+                                 "locked (bootloop signature); asking user to "
+                                 "resume or abort")
+                        title = QCoreApplication.tr("Device locked — cannot restore backup")
+                        text = QCoreApplication.tr(
+                            "The phone is asking for a passcode to start the "
+                            "restore service. This usually means the applied "
+                            "tweaks are preventing it from booting properly.\n\n"
+                            "  \u2022 Resume \u2014 unlock the device, then keep "
+                            "trying to restore the backup.\n"
+                            "  \u2022 Abort \u2014 stop now. The protective backup "
+                            "is kept on this computer for a later restore.")
+                        try:
+                            decision = prompt_choice(title, text)
+                        except Exception:
+                            raise
+                        if decision != "resume":
+                            raise
+                        log_info("Phase 3: user chose resume — reconnecting and retrying")
+                        try:
+                            await lc.close()
+                        except Exception:
+                            pass
+                        lc = await _wait_for_device(udid, progress_callback,
+                                                    prompt_choice=prompt_choice)
                 log_info("Phase 3: Protective backup restored successfully")
 
             # === Phase 4: skip setup panes (90-95%) ===

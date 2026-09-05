@@ -366,6 +366,56 @@ class CrashHandlerApp(QApplication):
             return False
 
 
+def _detect_desktop() -> str:
+    """Detect the current desktop environment."""
+    if sys.platform == "linux":
+        de = (os.environ.get("XDG_CURRENT_DESKTOP")
+              or os.environ.get("XDG_SESSION_DESKTOP")
+              or os.environ.get("DESKTOP_SESSION")
+              or "unknown")
+        session_type = os.environ.get("XDG_SESSION_TYPE") or "unknown"
+        return f"{de} ({session_type})"
+    elif sys.platform == "darwin":
+        return "AppKit"
+    elif sys.platform == "win32":
+        return "Win32"
+    else:
+        return sys.platform
+
+
+def print_startup_banner() -> None:
+    """Print a startup info banner to the terminal."""
+    try:
+        from src.gui.version import App_Version, App_Build
+        version_str = str(App_Version)
+        beta_build = int(App_Build)
+    except Exception:
+        version_str = "unknown"
+        beta_build = 0
+
+    if beta_build > 0:
+        version_str += f" (beta {beta_build})"
+
+    frozen = getattr(sys, "frozen", False)
+    run_env = "PyInstaller" if frozen else "generic"
+
+    desktop = _detect_desktop()
+
+    is_release = "yes" if (frozen and beta_build == 0) else "no"
+    is_beta = "yes" if beta_build > 0 else "no"
+
+    # Only reliable in the official GitHub Actions workspace;
+    # always "yes" locally or on other repos.
+    off_build = "no" if os.environ.get("GITHUB_ACTIONS") else "yes"
+
+    print(f"GoldenNugget {version_str}")
+    print(f"Running on: {sys.platform} ({run_env})")
+    print(f"Desktop: {desktop}")
+    print(f"IsRelease?: {is_release}")
+    print(f"IsBeta?: {is_beta}")
+    print(f"Off-Build?: {off_build}")
+
+
 def install_crash_handler():
     """Install the global uncaught-exception handler.
 
@@ -373,6 +423,7 @@ def install_crash_handler():
     an application instance exists; exceptions raised before then are logged
     and printed.
     """
+    print_startup_banner()
     sys.excepthook = _excepthook
     # Sys.unraisablehook catches errors in __del__ / finalizers, which would
     # otherwise be reported to stderr and might quietly abort cleanup.

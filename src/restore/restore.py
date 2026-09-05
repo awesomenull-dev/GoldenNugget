@@ -791,6 +791,15 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
     from src.devicemanagement.constants import Version as _V
     device_ver = _V(lockdown_client.product_version)
 
+    if os.environ.get("GOLDENNUGGET_NO_PROTECTIVE_BACKUP") == "1":
+        # Kill switch: skip Phase 1 (protective backup) and Phase 3 (protective
+        # restore) entirely — a raw sparse pass (tweaks only, no data
+        # protection). Handy for fast iteration (e.g. daemon bootloop testing)
+        # where a protective backup is wasted time. Overrides the flag below.
+        skip_protective_backup = True
+        log_warn("GOLDENNUGGET_NO_PROTECTIVE_BACKUP=1 — skipping protective backup/restore "
+                 "(raw sparse, no data protection)")
+
     if device_ver >= _V("27.0"):
         # iOS 27 era: three-phase protective backup + restore
         await _restore_ios27(back, reboot, lockdown_client, progress_callback,

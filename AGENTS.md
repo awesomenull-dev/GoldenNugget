@@ -165,7 +165,14 @@ backup in `<temp>/goldennugget_protective_cache/master/<udid>`:
 - Triggers the iOS 27 "safe state recovery" wipe on reboot
 
 **Phase 3 (60-90%)**: Protective Restore
-- `_wait_for_device()` — reconnects after reboot (default 20 min timeout)
+- `_wait_for_device()` — reconnects after reboot (default 20 min timeout). On
+  timeout it no longer aborts the restore outright: if the caller passed a
+  `prompt_choice` callback (apply/reset from the GUI do), it shows an
+  **Abort/Resume** pop-up ("device too long without unlock after the security
+  recovery"), and **Resume restarts a fresh waiting cycle** instead of killing
+  the restore. Without the callback the classic `DeviceNotFoundError` is raised.
+  The pop-up text distinguishes between the device "keeps asking for passcode"
+  case (`PasswordRequiredError` seen during the cycle) and a plain no-show.
 - `_restore_protective_backup()` — restores the Phase 1 backup, with password if encrypted; retries **18 times at fixed 3 s**, only for `_is_transient_restore_error` results
 
 **Phase 4 (90-95%)**: `skip_all_setup27()` — only when skip-setup is requested

@@ -51,6 +51,7 @@ class ApplyThread(QThread):
     alert = Signal(object)  # ApplyAlertMessage or None for sudo prompt
     finished_with_result = Signal(bool, str)  # success, error_message
     request_text = Signal(str, str, object)  # title, label, result box (main-thread prompt)
+    choice_prompt = Signal(str, str, object)  # title, text, result box ("abort"/"resume", main-thread prompt)
 
     # Only the password prompt is guarded by a timeout. The apply/restore itself
     # is allowed to run to completion: a three-phase protective restore can
@@ -86,6 +87,21 @@ class ApplyThread(QThread):
             return box.get(timeout=self._PROMPT_TIMEOUT_SEC)
         except queue.Empty:
             return None
+
+    def prompt_user_choice(self, title: str, text: str) -> str:
+        """Ask the user for a two-way decision on the main thread.
+
+        Queued signal, same pattern as ``prompt_password``. Returns the
+        decision the main-thread dialog boxed up: "abort" or "resume"
+        ("abort" on timeout so a stale worker never hangs the restore
+        forever).
+        """
+        box = queue.Queue(maxsize=1)
+        self.choice_prompt.emit(title, text, box)
+        try:
+            return box.get(timeout=self._PROMPT_TIMEOUT_SEC)
+        except queue.Empty:
+            return "abort"
 
     def run(self):
         import logging
@@ -133,9 +149,11 @@ class ApplyThread(QThread):
 
     def _do_work(self):
         if self.reset_pages is None:
-            self.manager.apply_changes(self.update_label, self.alert_window, self.prompt_password)
+            self.manager.apply_changes(self.update_label, self.alert_window,
+                                       self.prompt_password, self.prompt_user_choice)
         else:
-            self.manager.reset_tweaks(self.reset_pages, self.settings, self.update_label, self.alert_window)
+            self.manager.reset_tweaks(self.reset_pages, self.settings, self.update_label,
+                                      self.alert_window, self.prompt_user_choice)
 
 
 class RestoreCacheThread(QThread):

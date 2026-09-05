@@ -228,7 +228,10 @@ Phase 1 (0-40%):  working copy of the cached master (hardlinks), or a fresh
                   → inject PosterBoard files (pb_inject_files, AppDomain)
 Phase 2 (40-60%): perform_restore() sparse restore → reboot
                   → iOS 27 "safe state recovery" wipes data volume
-Phase 3 (60-90%): _wait_for_device() (20 min budget, _RECONNECT_TIMEOUT)
+Phase 3 (60-90%): _wait_for_device() (20 min budget, _RECONNECT_TIMEOUT);
+                  on timeout the GUI gets an Abort/Resume pop-up — Resume
+                  restarts a fresh waiting cycle instead of aborting (no
+                  callback → classic DeviceNotFoundError)
                   → _restore_protective_backup() puts user data back
                   (max_retries=18, fixed 3s sleep, only for transient errors)
 Phase 4 (90-95%): skip_all_setup27()  — only if skip-setup requested

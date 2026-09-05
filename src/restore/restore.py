@@ -6,6 +6,8 @@ import ssl
 import tempfile
 import time
 
+from PySide6.QtCore import QCoreApplication
+
 from . import backup, perform_restore, reboot_device
 from .mbdb import _FileMode
 from .skip_setup27 import skip_all_setup27
@@ -224,7 +226,8 @@ def _scaled_callback(progress_callback, lo: float, hi: float):
 
 
 async def _wait_for_device(udid: str, progress_callback,
-                           timeout: float = _RECONNECT_TIMEOUT) -> LockdownClient:
+                           timeout: float = _RECONNECT_TIMEOUT,
+                           prompt_choice=None) -> LockdownClient:
     """Wait for the device to return after the iOS 27 security recovery.
 
     Polls usbmux with capped exponential backoff. Fully async — the caller's
@@ -235,51 +238,94 @@ async def _wait_for_device(udid: str, progress_callback,
     MissingValueError while the device is still finishing recovery and has
     no DevicePublicKey to give. If the host turns out to be unpaired after
     a short grace period, one autopair fallback is attempted.
+
+    Instead of failing the whole restore when the wait times out (the classic
+    "device was not unlocked in time after the security recovery" case), the
+    caller can pass ``prompt_choice(title, text) -> "abort" | "resume"``: the
+    timeout then shows an Abort/Resume prompt, and "resume" simply restarts a
+    fresh waiting cycle instead of killing the restore.
     """
     from pymobiledevice3.exceptions import (
         DeviceNotFoundError, PasswordRequiredError, NotPairedError,
         ConnectionFailedError, ConnectionTerminatedError, LockdownError,
         MissingValueError,
     )
-    start = time.monotonic()
-    deadline = start + timeout
-    delay = 1.0
-    last_error = None
-    autopair_tried = False
     while True:
-        elapsed = int(time.monotonic() - start)
-        progress_callback(
-            f"Waiting for device after security recovery "
-            f"({elapsed // 60}:{elapsed % 60:02d} elapsed)..."
+        start = time.monotonic()
+        deadline = start + timeout
+        delay = 1.0
+        last_error = None
+        autopair_tried = False
+        saw_password_required = False
+        while True:
+            elapsed = int(time.monotonic() - start)
+            progress_callback(
+                f"Waiting for device after security recovery "
+                f"({elapsed // 60}:{elapsed % 60:02d} elapsed)..."
+            )
+            try:
+                return await create_using_usbmux(serial=udid, autopair=False)
+            except NotPairedError as e:
+                # pairing genuinely lost — try a full re-pair once, after giving
+                # the device time to finish recovery
+                last_error = e
+                if not autopair_tried and time.monotonic() - start >= 30:
+                    autopair_tried = True
+                    try:
+                        return await create_using_usbmux(serial=udid, autopair=True)
+                    except (MissingValueError, LockdownError) as e2:
+                        last_error = e2
+            except (DeviceNotFoundError, PasswordRequiredError,
+                    ConnectionFailedError, ConnectionTerminatedError,
+                    ConnectionError, OSError, asyncio.TimeoutError,
+                    LockdownError) as e:
+                # LockdownError covers MissingValueError and every other
+                # lockdown-level complaint the recovering device may emit
+                last_error = e
+                if isinstance(e, PasswordRequiredError):
+                    saw_password_required = True
+            if time.monotonic() + delay > deadline:
+                break
+            await asyncio.sleep(delay)
+            delay = min(delay * 1.5, 30.0)
+        # inner wait cycle exhausted — offer Abort/Resume instead of aborting
+        err = DeviceNotFoundError(
+            f"Device {udid} not reachable after reboot "
+            f"({int(timeout // 60)} min timeout). Unlock the device and make "
+            f"sure it is connected via USB. Last error: {last_error}"
         )
+        if prompt_choice is None:
+            raise err
+        title = QCoreApplication.tr("Device took too long to unlock")
+        if saw_password_required:
+            text = QCoreApplication.tr(
+                "The device has not been unlocked for too long after the "
+                "security recovery \u2014 it keeps asking for your passcode.\n\n"
+                "Unlock it, enter the passcode and tap \"Trust\" if prompted, "
+                "then choose:\n\n"
+                "  \u2022 Resume \u2014 keep waiting (restarts the \"Waiting for "
+                "device to reconnect after security recovery\" cycle).\n"
+                "  \u2022 Abort \u2014 stop now. Tweaks may not be applied and "
+                "data protection stays incomplete.")
+        else:
+            text = QCoreApplication.tr(
+                "The device has not been unlocked for too long after the "
+                "security recovery.\n\n"
+                "Unlock it, enter the passcode and make sure it stays "
+                "connected via USB, then choose:\n\n"
+                "  \u2022 Resume \u2014 keep waiting (restarts the \"Waiting for "
+                "device to reconnect after security recovery\" cycle).\n"
+                "  \u2022 Abort \u2014 stop now. Tweaks may not be applied and "
+                "data protection stays incomplete.")
+        log_info("Reconnect wait timed out; asking the user whether to resume or abort")
         try:
-            return await create_using_usbmux(serial=udid, autopair=False)
-        except NotPairedError as e:
-            # pairing genuinely lost — try a full re-pair once, after giving
-            # the device time to finish recovery
-            last_error = e
-            if not autopair_tried and time.monotonic() - start >= 30:
-                autopair_tried = True
-                try:
-                    return await create_using_usbmux(serial=udid, autopair=True)
-                except (MissingValueError, LockdownError) as e2:
-                    last_error = e2
-        except (DeviceNotFoundError, PasswordRequiredError,
-                ConnectionFailedError, ConnectionTerminatedError,
-                ConnectionError, OSError, asyncio.TimeoutError,
-                LockdownError) as e:
-            # LockdownError covers MissingValueError and every other
-            # lockdown-level complaint the recovering device may emit
-            last_error = e
-        if time.monotonic() + delay > deadline:
-            break
-        await asyncio.sleep(delay)
-        delay = min(delay * 1.5, 30.0)
-    raise DeviceNotFoundError(
-        f"Device {udid} not reachable after reboot "
-        f"({int(timeout // 60)} min timeout). Unlock the device and make "
-        f"sure it is connected via USB. Last error: {last_error}"
-    )
+            decision = prompt_choice(title, text)
+        except Exception as e:
+            log_warn(f"Reconnect prompt failed ({e}) — aborting")
+            raise err
+        if decision != "resume":
+            raise err
+        log_info("User chose to resume — restarting the reconnect wait cycle")
 
 
 def _is_transient_restore_error(error) -> bool:
@@ -393,7 +439,8 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
                           pb_inject_files: list = None,
                           skip_setup: bool = True,
                           skip_protective_backup: bool = False,
-                          include_keychain: bool = False):
+                          include_keychain: bool = False,
+                          prompt_choice=None):
     """iOS 27+ restore: backup → tweak → wipe → restore → skip setup → reboot.
 
     Phase 1 (0-40%):  Selective backup of photos, Apple ID, user
@@ -591,7 +638,7 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
 
         # === Phase 3: reconnect + restore protective backup (60-90%) ===
         log_info("Phase 3: Waiting for device to reconnect after security recovery")
-        lc = await _wait_for_device(udid, progress_callback)
+        lc = await _wait_for_device(udid, progress_callback, prompt_choice=prompt_choice)
         try:
             # brief settle time after reconnect — _restore_protective_backup
             # retries handle any remaining startup delay
@@ -656,7 +703,7 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
 
 
 # files is a list of FileToRestore objects
-async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdown_client: LockdownClient = None, progress_callback = lambda x: None, backup_password: str = "", prepared_backup_root: PreparedBackup = None, skip_setup: bool = True, skip_protective_backup: bool = False, include_keychain: bool = False):
+async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdown_client: LockdownClient = None, progress_callback = lambda x: None, backup_password: str = "", prepared_backup_root: PreparedBackup = None, skip_setup: bool = True, skip_protective_backup: bool = False, include_keychain: bool = False, prompt_choice=None):
     # create the files to be backed up
     files_list = [
     ]
@@ -752,7 +799,8 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
                              pb_inject_files=pb_inject_files,
                              skip_setup=skip_setup,
                              skip_protective_backup=skip_protective_backup,
-                             include_keychain=include_keychain)
+                             include_keychain=include_keychain,
+                             prompt_choice=prompt_choice)
     else:
         # iOS 26.x: plain sparse restore — no security recovery wipe,
         # no protective backup needed.  When all files use the path-traversal

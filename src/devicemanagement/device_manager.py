@@ -412,7 +412,7 @@ class DeviceManager:
                 "GoldenNugget only supports iOS 26.2 and newer. "
                 "Please use the original Nugget for iOS 26.1 and earlier."))
 
-    async def start_restore(self, files_to_restore: list[FileToRestore], update_label=lambda x: None, backup_password: str = "", prepared_backup_root: str = None, skip_protective_backup: bool = False, include_keychain: bool = False):
+    async def start_restore(self, files_to_restore: list[FileToRestore], update_label=lambda x: None, backup_password: str = "", prepared_backup_root: str = None, skip_protective_backup: bool = False, include_keychain: bool = False, prompt_choice=None):
         # hard-block any restore on an unsupported (old) iOS version
         self._raise_if_unsupported()
         self.update_label = update_label
@@ -432,7 +432,8 @@ class DeviceManager:
                 backup_password=backup_password,
                 prepared_backup_root=prepared_backup_root,
                 skip_protective_backup=skip_protective_backup,
-                include_keychain=include_keychain
+                include_keychain=include_keychain,
+                prompt_choice=prompt_choice,
             )
             tweaks[TweakID.PosterBoard].config_manager.save_staged_ids(self.get_current_device_udid())
             msg = QCoreApplication.tr("Your device will now restart.\n\nRemember to turn Find My back on!")
@@ -466,9 +467,9 @@ class DeviceManager:
                 return
             update_label(QCoreApplication.tr("Backing up device... ({0:.1f}%)").format(progress))
         return _cb
-    def apply_changes(self, update_label=lambda x: None, show_alert=lambda x: None, prompt_password=None):
-        asyncio.run(self._apply_changes(update_label, show_alert, prompt_password))
-    async def _apply_changes(self, update_label=lambda x: None, show_alert=lambda x: None, prompt_password=None):
+    def apply_changes(self, update_label=lambda x: None, show_alert=lambda x: None, prompt_password=None, prompt_choice=None):
+        asyncio.run(self._apply_changes(update_label, show_alert, prompt_password, prompt_choice))
+    async def _apply_changes(self, update_label=lambda x: None, show_alert=lambda x: None, prompt_password=None, prompt_choice=None):
         files_to_restore: list[FileToRestore] = []
         final_alert = None
         pb = tweaks[TweakID.PosterBoard]
@@ -551,6 +552,7 @@ class DeviceManager:
                 templates=tweaks[TweakID.Templates].templates,
                 prepared_backup_root=prepared_root,
                 prompt_password=prompt_password,
+                prompt_choice=prompt_choice,
                 skip_protective_backup=self._protective_backup_skipped,
             )
             update_label(QCoreApplication.tr("Success!"))
@@ -788,7 +790,7 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
                 originals[path] = data
         return originals
 
-    async def _apply_tweak_pass(self, update_label=lambda x: None, templates: list = None, prepared_backup_root=None, prompt_password=None, skip_protective_backup: bool = False):
+    async def _apply_tweak_pass(self, update_label=lambda x: None, templates: list = None, prepared_backup_root=None, prompt_password=None, prompt_choice=None, skip_protective_backup: bool = False):
         """Generate all tweak files and restore them to the device in one pass.
 
         Returns (alert, files_to_restore) so the caller can surface the result
@@ -953,7 +955,8 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
                 files_to_restore, update_label, backup_password=backup_password,
                 prepared_backup_root=prepared_backup_root,
                 skip_protective_backup=skip_protective_backup,
-                include_keychain=bool(backup_password))
+                include_keychain=bool(backup_password),
+                prompt_choice=prompt_choice)
             return final_alert, files_to_restore
         finally:
             if len(tmp_dirs) > 0:
@@ -965,9 +968,9 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
                         print(str(e))
 
     ## RESETTING TWEAKS
-    def reset_tweaks(self, reset_pages: list[Page], settings: QSettings, update_label=lambda x: None, show_alert=lambda x: None):
-        asyncio.run(self._reset_tweaks(reset_pages, settings, update_label, show_alert))
-    async def _reset_tweaks(self, reset_pages: list[Page], settings: QSettings, update_label=lambda x: None, show_alert=lambda x: None):
+    def reset_tweaks(self, reset_pages: list[Page], settings: QSettings, update_label=lambda x: None, show_alert=lambda x: None, prompt_choice=None):
+        asyncio.run(self._reset_tweaks(reset_pages, settings, update_label, show_alert, prompt_choice))
+    async def _reset_tweaks(self, reset_pages: list[Page], settings: QSettings, update_label=lambda x: None, show_alert=lambda x: None, prompt_choice=None):
         try:
             self._raise_if_unsupported()
             # create the restore file list
@@ -1060,7 +1063,8 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
             await self.add_skip_setup(files_to_restore, uses_domains)
 
             # restore to the device
-            final_alert = await self.start_restore(files_to_restore, update_label)
+            final_alert = await self.start_restore(files_to_restore, update_label,
+                                                   prompt_choice=prompt_choice)
             update_label(QCoreApplication.tr("Success!"))
         except Exception as e:
             final_alert = show_apply_error(e, update_label, files_list=files_to_restore)

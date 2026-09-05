@@ -793,6 +793,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.worker_thread.progress.connect(self.update_label)
             self.worker_thread.alert.connect(self.alert_message)
             self.worker_thread.request_text.connect(self.on_password_request)
+            self.worker_thread.choice_prompt.connect(self.on_choice_prompt)
             self.worker_thread.finished_with_result.connect(self.finish_apply_thread)
             self.worker_thread.finished.connect(self.worker_thread.deleteLater)
             self.worker_thread.start()
@@ -880,6 +881,29 @@ class MainWindow(QtWidgets.QMainWindow):
                 box.put(None)
             except Exception:
                 pass
+
+    def on_choice_prompt(self, title: str, text: str, box):
+        """Main-thread Abort/Resume dialog (e.g. device locked too long after
+        the security recovery). Built here — never on the worker thread — and
+        the decision is boxed back to the waiting worker."""
+        try:
+            mbox = QtWidgets.QMessageBox(self)
+            mbox.setWindowTitle(title)
+            mbox.setIcon(QtWidgets.QMessageBox.Warning)
+            mbox.setText(text)
+            abort_btn = mbox.addButton(
+                QCoreApplication.tr("Abort"), QtWidgets.QMessageBox.RejectRole)
+            resume_btn = mbox.addButton(
+                QCoreApplication.tr("Resume"), QtWidgets.QMessageBox.AcceptRole)
+            mbox.setDefaultButton(resume_btn)
+            mbox.exec()
+            result = "abort" if mbox.clickedButton() is abort_btn else "resume"
+        except Exception:
+            result = "abort"
+        try:
+            box.put(result)
+        except Exception:
+            pass
 
     def finish_apply_thread(self, success: bool = False, error_msg: str = ""):
         self.apply_in_progress = False

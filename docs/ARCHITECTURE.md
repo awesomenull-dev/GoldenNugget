@@ -275,7 +275,8 @@ re-pair carries no EscrowBag.
   mid-stream while their manifest rows survive (that is what makes the next
   incremental cheap). Keep-set: CameraRoll/Media (photos),
   SystemPreferencesDomain, HomeDomain Accounts / ConfigurationProfiles /
-  Preferences / SpringBoard / ControlCenter / Shortcuts / WebClips, optionally the
+  Preferences / SpringBoard / ControlCenter / Shortcuts / WebClips (incl. the
+  `.webclip/Storage` PWA data) / WebApp / WebKit/WebsiteData, optionally the
   PosterBoard DB.
   (Note: the module's own doc-comment at `protective.py:212-220` claims
   ConfigurationProfiles was reverted, but the code still keeps it.)

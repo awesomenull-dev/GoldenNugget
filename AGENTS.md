@@ -181,7 +181,7 @@ backup in `<temp>/goldennugget_protective_cache/master/<udid>`:
 
 ### `perform_protective_backup()` (src/restore/protective.py)
 - Creates a selective device backup via mobilebackup2
-- Filters: keeps HomeDomain (Accounts, ConfigurationProfiles, Preferences, SpringBoard, ControlCenter, Shortcuts, WebClips), CameraRoll/Media (photos), SystemPreferencesDomain
+- Filters: keeps HomeDomain (Accounts, ConfigurationProfiles, Preferences, SpringBoard, ControlCenter, Shortcuts, WebClips — including each `.webclip/Storage` PWA payload — plus WebApp and WebKit/WebsiteData web-app data), CameraRoll/Media (photos), SystemPreferencesDomain
 - Skips: AppDomain-* containers (empty `Applications` in factory info), KeychainDomain
 - Encryption: uses existing encryption if enabled, otherwise unencrypted
 - Connection handling: the only retry is `ProtectiveBackupService.connect()`

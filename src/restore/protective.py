@@ -19,7 +19,9 @@ Protective scope: HomeDomain/{Accounts, ConfigurationProfiles, Preferences,
 Library/SpringBoard} (Apple ID + user settings + home screen layout),
 Library/ControlCenter (Control Center module layout), Library/Shortcuts
 (iOS Shortcuts automations and commands), Library/WebClips (Safari
-"Add to Home Screen" web clips), MessagesDomain
+"Add to Home Screen" web clips, incl. each <.webclip>/Storage PWA payload),
+Library/WebApp + Library/WebKit/WebsiteData (installed-PWA data on iOS
+releases that keep it outside the web clip), MessagesDomain
 (iMessage/SMS/MMS), and, optionally, CameraRollDomain + MediaDomain (photos).
 KeychainDomain (Apple Watch pairing, iMessage identity, Wi-Fi passwords) is
 included only when backup encryption is enabled — keychain payloads are
@@ -260,9 +262,26 @@ SHORTCUTS_PATH_PREFIXES = (
 # Path prefixes within HomeDomain holding Safari "Add to Home Screen" web
 # clips (Library/WebClips/<UUID>.webclip/Info.plist + icon.png). Pure user
 # data that the iOS 27 "safe state recovery" wipe would discard; the icon
-# layout (IconState.plist) references them by bundle id.
+# layout (IconState.plist) references them by bundle id. The whole tree is
+# kept, so a web app's own WKWebsiteDataStore under <.webclip>/Storage/
+# (___IndexedDB, Default/<profile>/local storage, cookies, HSTS) rides along —
+# that is where iOS 26/27 keeps installed-PWA data.
 WEB_CLIPS_PATH_PREFIXES = (
     "Library/WebClips",
+)
+
+# Older/alternative HomeDomain homes for installed web-app data. iOS has kept
+# per-web-app state under Library/WebApp (WebAppCache, WebAppLocalStorage) on
+# some releases, and the modern shared WKWebsiteDataStore (ServiceWorkers,
+# IndexedDB, LocalStorage per profile) under Library/WebKit/WebsiteData when
+# a web app runs against the Safari store. Covering both makes PWA data
+# survive the wipe regardless of which layout the release uses — the browser's
+# own store lives in AppDomain-com.apple.mobilesafari and is out of scope.
+WEB_APP_PATH_PREFIXES = (
+    "Library/WebApp",
+)
+WEBKIT_WEBSITE_DATA_PATH_PREFIXES = (
+    "Library/WebKit/WebsiteData",
 )
 
 # Files/dirs inside the protective HomeDomain scope that tweaks write
@@ -307,7 +326,9 @@ def _is_protective_file(domain: str, relative_path: str, include_photos: bool = 
                 or relative_path.startswith(SPRINGBOARD_PATH_PREFIXES)
                 or relative_path.startswith(CONTROL_CENTER_PATH_PREFIXES)
                 or relative_path.startswith(SHORTCUTS_PATH_PREFIXES)
-                or relative_path.startswith(WEB_CLIPS_PATH_PREFIXES))
+                or relative_path.startswith(WEB_CLIPS_PATH_PREFIXES)
+                or relative_path.startswith(WEB_APP_PATH_PREFIXES)
+                or relative_path.startswith(WEBKIT_WEBSITE_DATA_PATH_PREFIXES))
     if include_photos and domain in PROTECTIVE_DOMAINS:
         return True
     if include_keychain and domain == KEYCHAIN_DOMAIN:
@@ -347,7 +368,8 @@ def is_protective_device_file(device_name: str, include_photos: bool = True,
         return True
     for prefix in (APPLE_ID_PATH_PREFIXES + SPRINGBOARD_PATH_PREFIXES
                + CONTROL_CENTER_PATH_PREFIXES + SHORTCUTS_PATH_PREFIXES
-               + WEB_CLIPS_PATH_PREFIXES):
+               + WEB_CLIPS_PATH_PREFIXES + WEB_APP_PATH_PREFIXES
+               + WEBKIT_WEBSITE_DATA_PATH_PREFIXES):
         if _path_match(device_name, f"HomeDomain/{prefix}") or _path_match(device_name, prefix):
             return True
     if include_posterboard:

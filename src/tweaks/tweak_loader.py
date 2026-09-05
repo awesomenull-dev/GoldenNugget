@@ -2,7 +2,7 @@ from .tweaks import tweaks, TweakID
 from .registry import SPECS
 from .basic_plist_locations import FileLocation
 from .tweak_classes import BasicPlistTweak, AdvancedPlistTweak, NullifyFileTweak
-from .daemons_tweak import DANGEROUS_KEYS
+from .daemons_tweak import DANGEROUS_KEYS, INTERFACE_KEYS
 
 
 def _build_spec(spec):
@@ -24,22 +24,17 @@ def load_plist_tweaks():
 def load_daemons():
     if TweakID.Daemons in tweaks:
         return
-    defaults = {
-        "com.apple.magicswitchd.companion": True,
-        "com.apple.security.otpaird": True,
-        "com.apple.dhcp6d": True,
-        "com.apple.bootpd": True,
-        "com.apple.ftp-proxy-embedded": False,
-        "com.apple.relevanced": True
-    }
-    # Dangerous daemons never ship as disabled, even from a stored preset.
-    defaults = {k: v for k, v in defaults.items() if k not in DANGEROUS_KEYS}
+    # Daemons start empty; each interface toggle adds its own keys. Only
+    # interface-visible keys (INTERFACE_KEYS) survive filtering, so unrelated
+    # or hidden daemons can never leak into the apply pass or a stored preset.
+    defaults = {}
     tweaks.update({
         TweakID.Daemons: AdvancedPlistTweak(
             FileLocation.disabledDaemons,
             defaults,
             owner=0, group=0,
             never_enable=DANGEROUS_KEYS,
+            allowed_keys=INTERFACE_KEYS,
         ),
         TweakID.ClearScreenTimeAgentPlist: NullifyFileTweak(FileLocation.screentime),
     })

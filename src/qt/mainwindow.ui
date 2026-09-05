@@ -9980,6 +9980,21 @@ Nugget is not responsible if you mess up your device, especially with resolution
                   </widget>
                  </item>
                  <item>
+                  <widget class="QCheckBox" name="thermalmonitordChk">
+                   <property name="cursor">
+                    <cursorShape>PointingHandCursor</cursorShape>
+                   </property>
+                   <property name="toolTip">
+                    <string>Disables temperature monitoring daemon to reduce system checks.
+
+Warning: Disabling will cause the battery to show &quot;Unknown Part&quot; or &quot;Unverified&quot; in Settings.</string>
+                   </property>
+                   <property name="text">
+                    <string>Disable thermalmonitord</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
                   <widget class="Line" name="line_18">
                    <property name="styleSheet">
                     <string notr="true">QFrame {

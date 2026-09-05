@@ -3,11 +3,13 @@ from enum import Enum
 
 # Daemons that must never be disabled — disabling them bootloops the device.
 # Kept empty by design; entries are removed from the codebase entirely rather
-# than blocked at runtime.
+# than blocked at runtime. Every daemon listed in the Daemon enum is considered
+# interface-available and can be toggled on/off freely.
 DANGEROUS_DAEMONS: set["Daemon"] = set()  # filled below, after the class definition
 DANGEROUS_KEYS = frozenset()
 
 class Daemon(Enum):
+    thermalmonitord = ["com.apple.thermalmonitord"]
     OTA = [
         "com.apple.mobile.softwareupdated",
         "com.apple.OTATaskingAgent",
@@ -74,6 +76,8 @@ class Daemon(Enum):
         "com.apple.wapic",
         "com.apple.wifi.wapic"
     ]
+    HealthKit = ["com.apple.healthd"]
+    AirPrint = ["com.apple.printd"]
     AssistiveTouch = ["com.apple.assistivetouchd"]
     iCloud = ["com.apple.itunescloudd"]
     InternetTethering = ["com.apple.MobileInternetSharing"]
@@ -84,6 +88,11 @@ class Daemon(Enum):
         "com.apple.spotlightknowledged",
         "com.apple.spotlightknowledged.updater",
         "com.apple.spotlight.IndexAgent"
+    ]
+    VoiceControl = [
+        "com.apple.assistant_service",
+        "com.apple.assistantd",
+        "com.apple.voiced"
     ]
     NanoTimeKit = ["com.apple.nanotimekitcompaniond"]
     FollowUp = ["com.apple.followupd"]
@@ -134,3 +143,7 @@ class Daemon(Enum):
 # Danger list fills in now that the class is defined.
 DANGEROUS_DAEMONS: set["Daemon"] = set()
 DANGEROUS_KEYS = frozenset(k for d in DANGEROUS_DAEMONS for k in d.value)
+
+# Interface-visible daemon keys: everything a user can toggle in the UI.
+# Any key outside this set is stripped from presets / the apply pass.
+INTERFACE_KEYS = frozenset(k for d in Daemon for k in d.value)

@@ -82,25 +82,37 @@ class AdvancedPlistTweak(BasicPlistTweak):
         file_location: FileLocation,
         keyValues: dict,
         owner: int = 501, group: int = 501,
-        never_enable: Optional[set] = None
+        never_enable: Optional[set] = None,
+        allowed_keys: Optional[set] = None
     ):
         super().__init__(file_location=file_location, key=None, value=keyValues, owner=owner, group=group)
         self.never_enable = set(never_enable or ())
+        # If set, only keys in this set are ever applied / stored (interface-
+        # visible daemons). Keys outside it are dropped, never written.
+        self.allowed_keys = set(allowed_keys) if allowed_keys is not None else None
+
+    def _filter_keys(self, values: dict) -> dict:
+        """Drop keys that are hard-protected or not interface-visible."""
+        out = {}
+        for key, value in values.items():
+            if key in self.never_enable:
+                continue
+            if self.allowed_keys is not None and key not in self.allowed_keys:
+                continue
+            out[key] = value
+        return out
 
     def set_multiple_values(self, keys: list[str], value: any):
         for key in keys:
             if value and value is not False and value is not None and key in self.never_enable:
                 continue  # hard-protected: this key must never be enabled
+            if self.allowed_keys is not None and key not in self.allowed_keys:
+                continue  # not exposed in the UI: never introduce it
             self.value[key] = value
         _notify_tweak_change()
 
     def apply_tweak(self, other_tweaks: dict) -> dict:
         if not self.enabled:
             return other_tweaks
-        plist = {}
-        for key in self.value:
-            if key in self.never_enable:
-                continue  # never write protected keys, even from a stored preset
-            plist[key] = self.value[key]
-        other_tweaks[self.file_location] = plist
+        other_tweaks[self.file_location] = self._filter_keys(self.value)
         return other_tweaks

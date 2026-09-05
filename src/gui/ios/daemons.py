@@ -46,6 +46,7 @@ class IOSDaemonsContent(QWidget):
         self._confirming = False
         self._hotload_acked = False
         for title, daemon in [
+            (QCoreApplication.translate("Nugget", "Disable thermalmonitord"), Daemon.thermalmonitord),
             (QCoreApplication.translate("Nugget", "Disable OTA"), Daemon.OTA),
             (QCoreApplication.translate("Nugget", "Disable UsageTrackingAgent"), Daemon.UsageTrackingAgent),
             (QCoreApplication.translate("Nugget", "Disable Game Center"), Daemon.GameCenter),
@@ -53,12 +54,15 @@ class IOSDaemonsContent(QWidget):
             (QCoreApplication.translate("Nugget", "Disable Tips Services"), Daemon.Tips),
             (QCoreApplication.translate("Nugget", "VPN Icon"), Daemon.VPN),
             (QCoreApplication.translate("Nugget", "Disable Chinese WLAN Service"), Daemon.ChineseLAN),
+            (QCoreApplication.translate("Nugget", "Disable HealthKit"), Daemon.HealthKit),
+            (QCoreApplication.translate("Nugget", "Disable AirPrint"), Daemon.AirPrint),
             (QCoreApplication.translate("Nugget", "Disable Assistive Touch"), Daemon.AssistiveTouch),
             (QCoreApplication.translate("Nugget", "Disable iCloud"), Daemon.iCloud),
             (QCoreApplication.translate("Nugget", "Disable Internet Tethering (Hotspot)"), Daemon.InternetTethering),
             (QCoreApplication.translate("Nugget", "Disable Passbook"), Daemon.PassBook),
             (QCoreApplication.translate("Nugget", "Disable Spotlight"), Daemon.Spotlight),
             (QCoreApplication.translate("Nugget", "Disable NanoTimeKit (Apple Watch Face Sync)"), Daemon.NanoTimeKit),
+            (QCoreApplication.translate("Nugget", "Disable Voice Control"), Daemon.VoiceControl),
             (QCoreApplication.translate("Nugget", "Follow Up"), Daemon.FollowUp),
             (QCoreApplication.translate("Nugget", "Location Services"), Daemon.Location),
         ]:

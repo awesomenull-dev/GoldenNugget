@@ -176,6 +176,13 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 self.theme_manager.save_theme(ThemeManager.CLASSIC)
 
+        # First launch: remind the user to back up the device before tweaking
+        # (keeps asking until they confirm a backup was made)
+        if not self.settings.value("backup_prompt_done", False, type=bool):
+            if self.prompt_first_launch_backup():
+                self.settings.setValue("backup_prompt_done", True)
+                self._sync_settings()
+
         self.apply_theme(self.theme_manager.current_theme)
 
         # Back navigation: ESC key and mouse back button go to the home page
@@ -535,6 +542,10 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         if "AutoSave" in self.preset_manager.list_presets():
             self.preset_manager.load_preset("AutoSave")
+            # Rewrite AutoSave right away so stale entries (e.g. daemons that
+            # are no longer exposed in the UI) are purged from disk on the
+            # next launch instead of lingering in the file forever.
+            self._save_autosave_preset()
             return
         last_preset = self.settings.value("last_loaded_preset", "", type=str)
         if last_preset:
@@ -948,6 +959,33 @@ class MainWindow(QtWidgets.QMainWindow):
         if box.clickedButton() == star_btn:
             from PySide6.QtGui import QDesktopServices
             QDesktopServices.openUrl(QtCore.QUrl("https://github.com/awesomenull-dev/GoldenNugget"))
+
+    def prompt_first_launch_backup(self) -> bool:
+        box = QtWidgets.QMessageBox(self)
+        box.setIcon(QtWidgets.QMessageBox.Warning)
+        box.setWindowTitle(QCoreApplication.translate("Nugget", "Back up your device"))
+        box.setText(QCoreApplication.translate(
+            "Nugget",
+            "Have you made a backup of your iPhone? Tweaks and daemon changes "
+            "are risky — a bad tweak can bootloop the device or force a full "
+            "restore, which erases everything. Create a backup in iTunes or "
+            "Finder before using GoldenNugget."))
+        box.setDetailedText(QCoreApplication.translate(
+            "Nugget",
+            "Back up your iPhone before tweaking:\n"
+            "• Windows: iTunes → your device → Back Up Now\n"
+            "• Mac: Finder → your device → Back Up Now\n\n"
+            "GoldenNugget's own protected backup also runs automatically when "
+            "you apply tweaks, but a full iTunes/Finder backup is the only "
+            "complete safety net."))
+        got_it = box.addButton(
+            QCoreApplication.translate("Nugget", "Got it, I'm backed up"),
+            QtWidgets.QMessageBox.AcceptRole)
+        box.addButton(
+            QCoreApplication.translate("Nugget", "I'll do it later"),
+            QtWidgets.QMessageBox.RejectRole)
+        box.exec()
+        return box.clickedButton() is got_it
 
     def _sync_settings(self):
         """Sync settings to disk immediately after critical changes."""

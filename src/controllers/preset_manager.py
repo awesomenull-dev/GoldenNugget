@@ -326,7 +326,10 @@ class PresetManager:
 
     def _serialize_tweak(self, tweak) -> dict:
         data = {"type": type(tweak).__name__, "enabled": tweak.enabled}
-        if isinstance(tweak, (AdvancedPlistTweak, BasicPlistTweak)):
+        if isinstance(tweak, AdvancedPlistTweak):
+            # Store only what the UI exposes / what would actually apply.
+            data["value"] = tweak._filter_keys(tweak.value)
+        elif isinstance(tweak, BasicPlistTweak):
             data["value"] = tweak.value
         elif isinstance(tweak, TemplatesTweak):
             data["templates"] = [t.path for t in tweak.templates]
@@ -383,7 +386,12 @@ class PresetManager:
         if "enabled" in data:
             tweak.enabled = data["enabled"]
 
-        if isinstance(tweak, (BasicPlistTweak, AdvancedPlistTweak)):
+        if isinstance(tweak, AdvancedPlistTweak):
+            if "value" in data:
+                # Drop keys not available in the UI (e.g. unknown daemons), so
+                # a stored preset can never re-enable hidden ones.
+                tweak.value = tweak._filter_keys(data["value"])
+        elif isinstance(tweak, BasicPlistTweak):
             if "value" in data:
                 tweak.value = data["value"]
         elif isinstance(tweak, TemplatesTweak):

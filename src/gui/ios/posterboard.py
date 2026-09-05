@@ -1,10 +1,13 @@
-from PySide6.QtCore import Qt, QSize, QCoreApplication
+import os
+
+from PySide6.QtCore import Qt, QSize, QCoreApplication, QUrl
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGridLayout,
     QPushButton, QScrollArea, QToolButton, QStackedWidget,
     QCheckBox, QComboBox
 )
-from PySide6.QtGui import QPixmap, QIcon
+from PySide6.QtGui import QPixmap, QIcon, QImageReader
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 
 from src.gui.ios.components import IOSCard, IOSPrimaryButton
 from src.tweaks.tweaks import tweaks, TweakID
@@ -109,6 +112,11 @@ class IOSPosterboardPage(QWidget):
         # Set initial tab
         self._switch_tab(0)
 
+        # Async preview-by-name loader for tendie cards (mirrors the
+        # wallpaper downloader: fetch -> cached file -> QImageReader frame).
+        self._tendie_nam = QNetworkAccessManager(self)
+        self._tendie_preview_replies = []
+
         # Load existing tendies
         self.refresh_tendies()
 
@@ -155,11 +163,52 @@ class IOSPosterboardPage(QWidget):
         self.tendies_grid.setSpacing(12)
         self.tendies_grid.setAlignment(Qt.AlignTop)
 
-        # Add tendies button as first item if no tendies
+        # Download wallpapers banner (Cowabunga / CaPlayground)
+        self.download_card = self._create_download_card()
+        self.tendies_grid.addWidget(self.download_card, 0, 0, 1, 2)
+
+        # Add tendies button
         self.add_tendies_card = self._create_add_tendies_card()
-        self.tendies_grid.addWidget(self.add_tendies_card, 0, 0)
+        self.tendies_grid.addWidget(self.add_tendies_card, 1, 0)
 
         return scroll
+
+    def _create_download_card(self) -> QWidget:
+        card = IOSCard()
+        card.setCursor(Qt.PointingHandCursor)
+        card.setMinimumHeight(88)
+        card.mousePressEvent = lambda e: self.open_wallpaper_downloader()
+
+        inner = QHBoxLayout(card)
+        inner.setContentsMargins(16, 12, 16, 12)
+        inner.setSpacing(12)
+
+        icon = QLabel()
+        icon.setFixedSize(48, 48)
+        icon.setAlignment(Qt.AlignCenter)
+        icon.setStyleSheet(
+            "QLabel { background-color: #007AFF; border-radius: 12px; font-size: 24px; color: white; }"
+        )
+        icon.setText("\u2193")
+        inner.addWidget(icon)
+
+        text_col = QVBoxLayout()
+        text_col.setSpacing(2)
+        title = QLabel(QCoreApplication.translate("Nugget", "Download Wallpapers"))
+        title.setStyleSheet("font-size: 16px; font-weight: 600; color: #FFFFFF;")
+        text_col.addWidget(title)
+        subtitle = QLabel(QCoreApplication.translate(
+            "Nugget",
+            "Browse and import wallpapers from Cowabunga and CaPlayground"))
+        subtitle.setStyleSheet("font-size: 12px; color: #8E8E93;")
+        text_col.addWidget(subtitle)
+        inner.addLayout(text_col, 1)
+
+        chevron = QLabel("\u203A")
+        chevron.setStyleSheet("font-size: 26px; color: #8E8E93;")
+        inner.addWidget(chevron)
+
+        return card
 
     def _create_add_tendies_card(self) -> QWidget:
         card = IOSCard()
@@ -462,8 +511,13 @@ class IOSPosterboardPage(QWidget):
                 type(e).__name__ + ": " + repr(e))
 
     def on_discover_wallpapers(self):
-        import webbrowser
-        webbrowser.open_new_tab("https://cowabun.ga/wallpapers")
+        self.open_wallpaper_downloader()
+
+    def open_wallpaper_downloader(self):
+        """Open the in-app wallpaper downloader (Cowabunga + CaPlayground)."""
+        from src.gui.dialogs.wallpaper_downloader import WallpaperDownloaderDialog
+        dialog = WallpaperDownloaderDialog(self.window, self)
+        dialog.exec()
 
     def on_help(self):
         from src.gui.dialogs import PBHelpDialog
@@ -482,19 +536,26 @@ class IOSPosterboardPage(QWidget):
             self.refresh_tendies()
 
     def refresh_tendies(self):
-        # Clear existing grid except add card
+        # stop preview downloads for the cards we are about to destroy
+        for reply, *_ in self._tendie_preview_replies:
+            reply.abort()
+        self._tendie_preview_replies = []
+
+        # Clear existing grid except download and add cards
+        keep = (self.add_tendies_card, self.download_card)
         for i in reversed(range(self.tendies_grid.count())):
             widget = self.tendies_grid.itemAt(i).widget()
-            if widget and widget != self.add_tendies_card:
+            if widget and widget not in keep:
                 widget.deleteLater()
 
         tendies = tweaks[TweakID.PosterBoard].tendies
         if not tendies:
-            # Only add card
-            self.tendies_grid.addWidget(self.add_tendies_card, 0, 0)
+            # Ensure download card + add card are the only items
+            self.tendies_grid.addWidget(self.download_card, 0, 0, 1, 2)
+            self.tendies_grid.addWidget(self.add_tendies_card, 1, 0)
             return
 
-        row = 0
+        row = 1
         col = 0
         for tendie in tendies:
             card = self._create_tendie_card(tendie)
@@ -532,6 +593,10 @@ class IOSPosterboardPage(QWidget):
             icon.setStyleSheet("background-color: #2C2C2E; border-radius: 10px;")
         inner.addWidget(icon, 0, Qt.AlignCenter)
 
+        # Load real preview image by matching the tendie's name against the
+        # cached wallpaper catalogs (falls back to the generic icon above).
+        self._load_tendie_preview_by_name(card, icon, tendie.name)
+
         # Name
         name = QLabel(tendie.name.replace(".tendies", ""))
         name.setStyleSheet("font-size: 13px; color: #8E8E93; text-align: center;")
@@ -553,6 +618,69 @@ class IOSPosterboardPage(QWidget):
         inner.addWidget(del_btn, 0, Qt.AlignCenter)
 
         return card
+
+    # --- tendie preview by name ---
+
+    def _load_tendie_preview_by_name(self, card, icon_lbl, file_name):
+        try:
+            from src.controllers.wallpaper_api import (
+                find_wallpaper_by_name, cached_preview_path,
+            )
+            wp = find_wallpaper_by_name(file_name)
+        except Exception:
+            return
+        if wp is None:
+            return
+        path = cached_preview_path(wp.preview_url)
+        if os.path.exists(path):
+            self._set_tendie_thumbnail(icon_lbl, path)
+            return
+        reply = self._tendie_nam.get(QNetworkRequest(QUrl(wp.preview_url)))
+        self._tendie_preview_replies.append((reply, card, icon_lbl, path))
+        reply.finished.connect(
+            lambda r=reply, c=card, il=icon_lbl, p=path:
+                self._on_tendie_preview(r, c, il, p))
+
+    def _on_tendie_preview(self, reply, card, icon_lbl, path):
+        self._tendie_preview_replies = [
+            (r, c, i, p) for (r, c, i, p) in self._tendie_preview_replies
+            if r is not reply]
+        data = bytes(reply.readAll())
+        reply.deleteLater()
+        if reply.error() != QNetworkReply.NetworkError.NoError or not data:
+            return
+        if not self._widget_is_valid(icon_lbl):
+            return
+        try:
+            with open(path, "wb") as f:
+                f.write(data)
+        except OSError:
+            return
+        self._set_tendie_thumbnail(icon_lbl, path)
+
+    def _set_tendie_thumbnail(self, icon_lbl, path):
+        if not self._widget_is_valid(icon_lbl):
+            return
+        try:
+            image = QImageReader(path).read()
+            pixmap = QPixmap.fromImage(image) if not image.isNull() else QPixmap(path)
+            if pixmap.isNull():
+                return
+            # square cover: expand to fill 80x80, then center-crop
+            scaled = pixmap.scaled(
+                80, 80, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+            x = (scaled.width() - 80) // 2
+            y = (scaled.height() - 80) // 2
+            icon_lbl.setPixmap(scaled.copy(x, y, 80, 80))
+        except Exception:
+            pass
+
+    def _widget_is_valid(self, widget) -> bool:
+        import shiboken6
+        try:
+            return shiboken6.isValid(widget)
+        except RuntimeError:
+            return False
 
     def _delete_tendie(self, tendie):
         from src.tweaks.tweaks import tweaks, TweakID

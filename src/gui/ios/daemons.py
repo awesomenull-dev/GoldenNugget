@@ -46,7 +46,6 @@ class IOSDaemonsContent(QWidget):
         self._confirming = False
         self._hotload_acked = False
         for title, daemon in [
-            (QCoreApplication.translate("Nugget", "Disable thermalmonitord"), Daemon.thermalmonitord),
             (QCoreApplication.translate("Nugget", "Disable OTA"), Daemon.OTA),
             (QCoreApplication.translate("Nugget", "Disable UsageTrackingAgent"), Daemon.UsageTrackingAgent),
             (QCoreApplication.translate("Nugget", "Disable Game Center"), Daemon.GameCenter),

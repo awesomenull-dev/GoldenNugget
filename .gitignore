@@ -27,3 +27,6 @@ status_setter_windows.exe
 AARCH64-64-cpu0x0.c
 docs/DATA_LOSS_AUDIT.md
 docs/IOS27_RESTORE_RISK_AUDIT.md
+
+# release changelog (kept in GitHub release body, not the repo)
+CHANGELOG.md

@@ -5201,12 +5201,6 @@ class Ui_Nugget(object):
 
         self.verticalLayout_132.addWidget(self.disableOTAChk)
 
-        self.thermalmonitordChk = QCheckBox(self.advancedOptionsPageContent)
-        self.thermalmonitordChk.setObjectName(u"thermalmonitordChk")
-        self.thermalmonitordChk.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-
-        self.verticalLayout_132.addWidget(self.thermalmonitordChk)
-
         self.line_181 = QFrame(self.advancedOptionsPageContent)
         self.line_181.setObjectName(u"line_181")
         self.line_181.setStyleSheet(u"QFrame {\n"
@@ -6325,12 +6319,6 @@ class Ui_Nugget(object):
         self.disableOTAChk.setToolTip(QCoreApplication.translate("Nugget", u"Uses the file method. Recommended to disable the daemon instead in the Daemons tab.", None))
 #endif // QT_CONFIG(tooltip)
         self.disableOTAChk.setText(QCoreApplication.translate("Nugget", u"Disable OTA Updates (file)", None))
-#if QT_CONFIG(tooltip)
-        self.thermalmonitordChk.setToolTip(QCoreApplication.translate("Nugget", u"Disables temperature monitoring daemon to reduce system checks.\n"
-"\n"
-"Warning: Disabling will cause the battery to show \"Unknown Part\" or \"Unverified\" in Settings.", None))
-#endif // QT_CONFIG(tooltip)
-        self.thermalmonitordChk.setText(QCoreApplication.translate("Nugget", u"Disable thermalmonitord", None))
 #if QT_CONFIG(tooltip)
         self.enableResolutionChk.setToolTip(QCoreApplication.translate("Nugget", u"Set a custom device screen resolution.", None))
 #endif // QT_CONFIG(tooltip)

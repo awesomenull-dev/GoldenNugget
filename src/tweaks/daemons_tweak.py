@@ -2,13 +2,12 @@ from enum import Enum
 
 
 # Daemons that must never be disabled — disabling them bootloops the device.
-# Voice Control: com.apple.assistant_service / assistantd / voiced are what
-# make the phone get stuck at boot on current iOS.
+# Kept empty by design; entries are removed from the codebase entirely rather
+# than blocked at runtime.
 DANGEROUS_DAEMONS: set["Daemon"] = set()  # filled below, after the class definition
 DANGEROUS_KEYS = frozenset()
 
 class Daemon(Enum):
-    thermalmonitord = ["com.apple.thermalmonitord"]
     OTA = [
         "com.apple.mobile.softwareupdated",
         "com.apple.OTATaskingAgent",
@@ -88,11 +87,6 @@ class Daemon(Enum):
         "com.apple.spotlightknowledged.updater",
         "com.apple.spotlight.IndexAgent"
     ]
-    VoiceControl = [
-        "com.apple.assistant_service",
-        "com.apple.assistantd",
-        "com.apple.voiced"
-    ]
     NanoTimeKit = ["com.apple.nanotimekitcompaniond"]
     FollowUp = ["com.apple.followupd"]
     # --- Safe additions (from MiniVoidyy/GoldenNugget-) grouped by function.
@@ -140,5 +134,5 @@ class Daemon(Enum):
 
 
 # Danger list fills in now that the class is defined.
-DANGEROUS_DAEMONS = {Daemon.VoiceControl}
+DANGEROUS_DAEMONS: set["Daemon"] = set()
 DANGEROUS_KEYS = frozenset(k for d in DANGEROUS_DAEMONS for k in d.value)

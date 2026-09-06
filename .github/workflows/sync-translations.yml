@@ -74,7 +74,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/qt/resources_rc.py
+          git add i18n src/qt/resources_rc.py
+          git commit -m "chore: sync translations and bump i18n submodule"
           for i in 1 2 3; do
             git fetch origin main
             git rebase origin/main

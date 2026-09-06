@@ -291,8 +291,9 @@ re-pair carries no EscrowBag.
   survive the wipe through Phase 3's native restore. **Only PosterBoard files
   (`pb_inject_files`, `AppDomain-com.apple.PosterBoard`) are injected today** —
   the old `_HOME_DOMAIN_TWEAK_PATHS`/`_SYSTEM_PREFERENCES_TWEAK_PATHS`
-  constants are dead code. For **encrypted** backups injection is **always
-  skipped** (plaintext payloads would fail the restore agent's decrypt).
+  constants were removed (dead code). For **encrypted** backups injection is
+  **always skipped** (plaintext payloads would fail the restore agent's
+  decrypt).
 - `extract_posterboard_db()` — resolves the PB database by FILE NAME
   (structure version varies), pulls `-wal`/`-shm` siblings and checkpoints
   them into one consolidated database.

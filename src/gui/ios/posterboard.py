@@ -604,20 +604,45 @@ class IOSPosterboardPage(QWidget):
         name.setWordWrap(True)
         inner.addWidget(name)
 
-        # Delete button
+        # Preview + Delete buttons side by side
+        actions = QHBoxLayout()
+        actions.setSpacing(6)
+        actions.setContentsMargins(0, 0, 0, 0)
+
+        preview_btn = QToolButton()
+        preview_btn.setIconSize(QSize(18, 18))
+        preview_btn.setIcon(QIcon(":/icon/wallpaper.svg"))
+        preview_btn.setToolTip(QCoreApplication.translate(
+            "Nugget", "Lock screen preview"))
+        preview_btn.setCursor(Qt.PointingHandCursor)
+        preview_btn.setStyleSheet(
+            "QToolButton { background-color: #1C1C1E; color: #0A84FF; "
+            "border: 1px solid #3A3A3C; border-radius: 12px; padding: 7px; }"
+            "QToolButton:hover { background-color: #48484A; }"
+        )
+        preview_btn.clicked.connect(
+            lambda: self._show_tendie_preview(tendie))
+        actions.addWidget(preview_btn)
+
         del_btn = QToolButton()
-        del_btn.setIconSize(QSize(20, 20))
-        from PySide6.QtGui import QIcon
-        del_btn.setIcon(QIcon(":/icon/trash.svg"))
+        del_btn.setIconSize(QSize(18, 18))
+        from PySide6.QtGui import QIcon as _QIcon
+        del_btn.setIcon(_QIcon(":/icon/trash.svg"))
         del_btn.setStyleSheet(
-            "QToolButton { background-color: #1C1C1E; border-radius: 12px; color: #FF3B30; padding: 8px; }"
+            "QToolButton { background-color: #1C1C1E; color: #FF3B30; "
+            "border: 1px solid #3A3A3C; border-radius: 12px; padding: 7px; }"
             "QToolButton:hover { background-color: #FF3B30; color: white; }"
         )
         del_btn.setCursor(Qt.PointingHandCursor)
         del_btn.clicked.connect(lambda: self._delete_tendie(tendie))
-        inner.addWidget(del_btn, 0, Qt.AlignCenter)
+        actions.addWidget(del_btn)
+        inner.addLayout(actions)
 
         return card
+
+    def _show_tendie_preview(self, tendie):
+        from src.gui.dialogs.tendie_preview_dialog import TendiePreviewDialog
+        TendiePreviewDialog(tendie, self).exec()
 
     # --- tendie preview by name ---
 

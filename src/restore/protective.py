@@ -226,15 +226,14 @@ APPLE_ID_PATH_PREFIXES = (
     "Library/Preferences",           # User settings (dark mode, wallpaper, etc.)
 )
 
-# NOTE: ConfigurationProfiles backup/restore was added in commit 25006f5
-# (Aug 12) to preserve MDM/VPN/WebClip profiles across the restore cycle,
-# but this widened the Phase 3 restore scope enough to also roll back
-# applied tweaks on repeat apply and corrupt the PosterBoard database.
-# Profiles are not reliably preserved by this approach anyway (confirmed
-# still reset in practice), so scope is reverted to the narrow pre-fix
-# state. If profile preservation is revisited, it needs a separate,
-# isolated restore path that does not share scope with tweak/PosterBoard
-# state — see regression found in 8.3 (reverted before public release).
+# NOTE: ConfigurationProfiles (MDM/VPN/WebClip) backup was added in commit
+# 25006f5 (Aug 12) and later removed again in the 8.3 hotfix (875d4e1) — the
+# widened Phase 3 restore scope rolled back applied tweaks on repeat apply and
+# corrupted the PosterBoard database. It was then re-added on top of the
+# iOS 27 five-phase restore, which no longer shares scope with the tweak
+# pass, so profiles now ride the protective backup without those regressions.
+# Restoring profiles is still best-effort: iOS may re-install MDM profiles
+# independently of the backup.
 
 # Path prefixes within HomeDomain that hold SpringBoard's home screen layout
 # and icon state. Restoring these keeps the home screen (icon layout, folders,

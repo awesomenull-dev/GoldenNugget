@@ -196,9 +196,10 @@ class IOSDaemonsContent(QWidget):
 
     def _warn_location_daemon(self):
         """Location Services daemon keeps PosterBoard alive on iPhone 14."""
-        from src.devicemanagement.data_singleton import DataSingleton
-        current = DataSingleton().current_device
-        model = current.model if current is not None else ""
+        dm = getattr(self.window, "device_manager", None)
+        model = dm.get_current_device_model() if dm is not None else ""
+        # "iPhone14," matches the whole iPhone 14 lineup (regular, Plus,
+        # Pro, Pro Max — iPhone14,2 ... iPhone14,8).
         if not model.startswith("iPhone14,"):
             return
         QMessageBox.warning(

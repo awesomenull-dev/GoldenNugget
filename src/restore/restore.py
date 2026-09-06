@@ -179,30 +179,11 @@ _PHASE_TWEAK_END = 60
 # Erase All Contents) → full boot can take several minutes.
 _RECONNECT_TIMEOUT = 20 * 60
 
-# HomeDomain tweak files. They are injected into the protective backup after
-# pruning (with the freshly-applied tweak content) so Phase 3's mobilebackup2
-# restore writes them back after the wipe cleared the sparse restore's copy.
-# AFC cannot reach HomeDomain on iOS 27 — ``com.apple.afc`` only exposes the
-# media directory — so backup injection is the one reliable path.
-_HOME_DOMAIN_TWEAK_PATHS = (
-    "Library/SpringBoard/statusBarOverrides",  # Status Bar tweak
-    # FeatureFlags user-level override candidates (iOS 27). The system-level
-    # /var/preferences/FeatureFlags/Global.plist is on the restore agent's
-    # sysprefs allowlist-blocklist: backups may only rewrite files the device
-    # already knows (verified with a radios.plist marker probe). These user
-    # paths ride the same proven HomeDomain injection.
-    "Library/Preferences/com.apple.FeatureFlags.plist",  # CFPreferences suite
-    "Library/FeatureFlags/Global.plist",
-    "Library/FeatureFlags/Domain/SpringBoard.plist",
-)
-
-# SystemPreferencesDomain tweak files, re-injected for the same reason as the
-# HomeDomain ones: the iOS 27 wipe clears whatever the sparse restore staged
-# unless the protective backup carries it. /var/preferences is outside the
-# protective scope, so tweak files landing there must be injected by hand.
-_SYSTEM_PREFERENCES_TWEAK_PATHS = (
-    "FeatureFlags/Global.plist",  # Status Bar (Speakeasy) feature flag override
-)
+# Tweak files are delivered through Phase 1's backup injection
+# (``inject_file_into_backup``) on iOS 27 — the sparse restore clears whatever
+# it stages otherwise. Only PosterBoard files (``pb_inject_files``,
+# AppDomain-com.apple.PosterBoard) are injected today; the old HomeDomain /
+# SystemPreferencesDomain path lists were removed as dead code.
 
 
 def _scaled_callback(progress_callback, lo: float, hi: float):

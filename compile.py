@@ -15,6 +15,8 @@ args = [
     '--onedir',
     '--noconfirm',
     '--collect-all=pymobiledevice3',
+    '--collect-all=pillow_heif',
+    '--collect-all=PIL',
     '--add-data=files/:files',
     '--copy-metadata=pyimg4',
     '--hidden-import=zeroconf',

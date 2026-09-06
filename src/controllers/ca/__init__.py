@@ -38,6 +38,7 @@ from .render import (  # noqa: F401
     CAMLRenderer,
     document_has_motion,
     document_loop_duration,
+    home_state,
     render_document,
     state_transition_spec,
 )
@@ -66,6 +67,7 @@ __all__ = [
     "CAMLRenderer",
     "document_has_motion",
     "document_loop_duration",
+    "home_state",
     "render_document",
     "state_transition_spec",
 ]

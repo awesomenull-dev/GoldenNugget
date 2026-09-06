@@ -66,7 +66,8 @@ class TendiePreviewDialog(QDialog):
         catalog preview."""
         try:
             from src.controllers.ca import (
-                CAMLRenderer, document_loop_duration, state_transition_spec,
+                CAMLRenderer, document_loop_duration, home_state,
+                state_transition_spec,
             )
             from src.controllers.ca.tendie import load_tendie, preferred_scene
             bundle = load_tendie(self._tendie.path)
@@ -74,8 +75,13 @@ class TendiePreviewDialog(QDialog):
             if doc is not None:
                 renderer = CAMLRenderer(doc)
                 loop = document_loop_duration(doc)
+                home_renderer = None
+                home = home_state(doc)
+                if home is not None:
+                    home_renderer = CAMLRenderer(doc, state=home)
                 if loop > 0.5:
-                    self._frame.set_ca_scene(renderer, loop)
+                    self._frame.set_ca_scene(
+                        renderer, loop, home_renderer=home_renderer)
                     self._hint.setText(QCoreApplication.translate(
                         "Nugget",
                         "Playing the tendie's Core Animation scene. "

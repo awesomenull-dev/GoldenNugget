@@ -30,6 +30,7 @@ class PhoneFrame(QWidget):
         self._show_chrome = show_chrome
 
         self._ca_renderer = None
+        self._ca_home_renderer = None
         self._ca_loop = 0.0
         self._ca_elapsed = 0.0
         self._ca_pixmap = None
@@ -57,10 +58,11 @@ class PhoneFrame(QWidget):
             self._time = QTime.currentTime()
         self.update()
 
-    def set_ca_scene(self, renderer, loop_seconds: float):
+    def set_ca_scene(self, renderer, loop_seconds: float, home_renderer=None):
         self._stop_ca()
         self._pixmap = None
         self._ca_renderer = renderer
+        self._ca_home_renderer = home_renderer
         self._ca_loop = float(loop_seconds or 0.0)
         self._ca_elapsed = 0.0
         self._ca_pixmap = None
@@ -84,6 +86,7 @@ class PhoneFrame(QWidget):
     def _stop_ca(self):
         self._ca_timer.stop()
         self._ca_renderer = None
+        self._ca_home_renderer = None
         self._ca_loop = 0.0
         self._ca_transition = None
         self._ca_pixmap = None
@@ -102,10 +105,13 @@ class PhoneFrame(QWidget):
             img = self._render_transition_frame(
                 self._ca_transition, self._progress)
         else:
+            renderer = self._ca_renderer
+            if self._progress >= 1.0 and self._ca_home_renderer is not None:
+                renderer = self._ca_home_renderer
             start = self._ca_elapsed
             if self._ca_loop > 0.5:
                 start %= self._ca_loop
-            img = self._ca_renderer.render(start * 1000.0)
+            img = renderer.render(start * 1000.0)
             self._ca_elapsed += self._ca_timer.interval() / 1000.0
         if img is not None and not img.isNull():
             long_edge = max(img.width(), img.height())

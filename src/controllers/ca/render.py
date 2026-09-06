@@ -215,6 +215,40 @@ def state_transition_spec(doc: Optional[CADocument]) -> Optional[Tuple[str, str,
     return ("Locked", "Unlock", duration, duration, 0.9)
 
 
+def home_state(doc: Optional[CADocument]) -> Optional[str]:
+    """Return the unlocked (home-screen) state name for ``doc`` if rendering
+    it visibly changes the picture, else ``None``.
+
+    Prefers a state whose name starts with ``Unlock`` (``Unlock``,
+    ``Unlock Light``, ``Unlock Dark`` ...) and returns it only when a render
+    of that state actually differs from the default scene (the one the
+    lock-screen loop shows). Scenes without a distinct home appearance (e.g.
+    Super Mario's ``Unlock`` state, which is visually identical to ``Locked``)
+    return ``None`` so the preview stays on its loop while unlocked.
+    """
+    if doc is None or not doc.stateOverrides or not doc.states:
+        return None
+    mig = None
+    for s in doc.states:
+        if str(s).lower().startswith("unlock"):
+            mig = str(s)
+            break
+    if mig is None:
+        return None
+    try:
+        base = CAMLRenderer(doc).render(0.0)
+        home = CAMLRenderer(doc, state=mig).render(0.0)
+    except Exception:
+        return None
+    if base is None or base.isNull() or home is None or home.isNull():
+        return None
+    if base.size() != home.size():
+        return mig
+    if bytes(base.bits()) == bytes(home.bits()):
+        return None
+    return mig
+
+
 def _hex_color(hex_str: Optional[str], alpha: float = 1.0) -> Optional[QColor]:
     if not hex_str:
         return None

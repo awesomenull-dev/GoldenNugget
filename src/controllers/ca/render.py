@@ -10,13 +10,15 @@ array order without z-sorting.
 Fidelity notes (deliberate, matching the user's request not to over-engineer):
 * ``liquidGlass`` layers render fully transparent (children still drawn).
 * ``rotateX`` / ``rotateY`` / perspective are not simulated (flat 2D).
-* ``CAEmitterLayer`` degrades to a static sprite per cell at ``emitterPosition``.
+* ``CAEmitterLayer`` is emulated as stylised particles (per cell: birth stream,
+  ballistic drift under acceleration and spin, spawn point in layer coords).
 * gyro parallax (``wallpaperParallaxGroups``) is parsed but not rendered.
 """
 
 from __future__ import annotations
 
 import math
+from collections import OrderedDict
 import copy as _copy
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import unquote
@@ -63,9 +65,25 @@ _HSL_KINDS: Dict[str, str] = {
     "luminosityBlendMode": "luminosity",
 }
 
+_MAX_VIDEO_FRAMES = 32
+
 
 def _clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
+
+
+class _LCG:
+    __slots__ = ("_state",)
+
+    def __init__(self, seed: int):
+        self._state = seed & 0xFFFFFFFF or 1
+
+    def next_uint(self) -> int:
+        self._state = (1664525 * self._state + 1013904223) & 0xFFFFFFFF
+        return self._state
+
+    def next_float(self) -> float:
+        return self.next_uint() / 0xFFFFFFFF
 
 
 def find_by_id(layer: Layer, wanted: str) -> Optional[Layer]:
@@ -78,6 +96,33 @@ def find_by_id(layer: Layer, wanted: str) -> Optional[Layer]:
     return None
 
 
+def resolve_state_name(overrides: Optional[dict], state: Optional[str], default: Optional[str] = None) -> Optional[str]:
+    """Map a requested state name to the closest override key.
+
+    Appearance-split scenes (the WWDC22 ``background`` art layers) expose
+    ``Locked Light``/``Locked Dark`` while callers ask for the bare
+    ``Locked``. Preference order: exact key, then ``<name> Light`` (default
+    appearance), then ``<name> Dark``, then ``<name>``-prefixed keys, then
+    any key sharing the leading word, then ``default`` itself.
+    """
+    if not overrides:
+        return default or state
+    if state in overrides:
+        return state
+    for suffix in ("Light", "Dark"):
+        candidate = f"{state} {suffix}"
+        if candidate in overrides:
+            return candidate
+    prefix = str(state).split(" ", 1)[0]
+    for key in overrides:
+        if str(key).lower().startswith(prefix.lower()):
+            return str(key)
+    for key in overrides:
+        if str(key).lower().startswith(str(state).lower()):
+            return str(key)
+    return default or state
+
+
 def apply_state_overrides(root: Layer, overrides: Optional[dict], state: Optional[str]) -> Layer:
     """Deep-copy ``root`` and apply per-state overrides (port of applyOverrides)."""
     import copy as _copy
@@ -86,9 +131,10 @@ def apply_state_overrides(root: Layer, overrides: Optional[dict], state: Optiona
         return _copy.deepcopy(root)
 
     clone = _copy.deepcopy(root)
-    listing = overrides.get(state) or []
-    if (not listing) and len(state) >= 2 and state[-6:] in (" Light",):
-        base = state.rsplit(" ", 1)[0]
+    eff = resolve_state_name(overrides, state)
+    listing = overrides.get(eff) or []
+    if (not listing) and len(eff) >= 2 and eff[-6:] in (" Light",):
+        base = eff.rsplit(" ", 1)[0]
         listing = overrides.get(base) or []
     for o in listing:
         target_id = (str(o.get("targetId") or "")).strip()
@@ -189,8 +235,12 @@ def state_transition_spec(doc: Optional[CADocument]) -> Optional[Tuple[str, str,
     """
     if doc is None or not doc.stateOverrides:
         return None
-    lock_list = doc.stateOverrides.get("Locked") or []
-    unlock_list = doc.stateOverrides.get("Unlock") or []
+    from_state = resolve_state_name(doc.stateOverrides, "Locked") or "Locked"
+    to_state = resolve_state_name(doc.stateOverrides, "Unlock") or "Unlock"
+    if from_state == to_state:
+        return None
+    lock_list = doc.stateOverrides.get(from_state) or []
+    unlock_list = doc.stateOverrides.get(to_state) or []
     if not lock_list or not unlock_list:
         return None
     to_map = {
@@ -207,12 +257,12 @@ def state_transition_spec(doc: Optional[CADocument]) -> Optional[Tuple[str, str,
         return None
     duration = 0.55  # CAPlayground posters use the system unlock cadence by default
     for t in (doc.stateTransitions or []):
-        if getattr(t, "toState", None) == "Unlock":
+        if getattr(t, "toState", None) == to_state or getattr(t, "toState", None) == "Unlock":
             ds = [el.duration for el in t.elements if getattr(el, "duration", None)]
             if ds:
                 duration = max(0.1, max(ds))
             break
-    return ("Locked", "Unlock", duration, duration, 0.9)
+    return (from_state, to_state, duration, duration, 0.9)
 
 
 def home_state(doc: Optional[CADocument]) -> Optional[str]:
@@ -236,7 +286,8 @@ def home_state(doc: Optional[CADocument]) -> Optional[str]:
     if mig is None:
         return None
     try:
-        base = CAMLRenderer(doc).render(0.0)
+        base_state = resolve_state_name(doc.stateOverrides, "Locked")
+        base = CAMLRenderer(doc, state=base_state).render(0.0)
         home = CAMLRenderer(doc, state=mig).render(0.0)
     except Exception:
         return None
@@ -276,61 +327,87 @@ def _rounded_rect_path(w: float, h: float, radius: float) -> QPainterPath:
     return path
 
 
+def _filter_is_noop(flt) -> bool:
+    """True when an enabled filter has no visual effect at its current value."""
+    if not getattr(flt, "enabled", False):
+        return True
+    ft = flt.type
+    value = flt.value
+    if ft == "gaussianBlur":
+        return not value or value <= 0.0
+    if ft in ("colorInvert", "CISepiaTone"):
+        return value is None or value <= 0.0
+    if ft in ("colorContrast", "colorSaturate"):
+        return value is None or abs(value - 1.0) < 1e-6
+    if ft == "colorHueRotate":
+        return (value or 0.0) % 360.0 == 0.0
+    return False
+
+
 def _apply_filters(img: QImage, filters) -> QImage:
     """GPU-free approximation of the CSS filters CAPlayground maps onto layers."""
     if not filters:
         return img
-    enabled = [f for f in filters if f.enabled]
-    if not enabled:
+    active = [f for f in filters if not _filter_is_noop(f)]
+    if not active:
         return img
     try:
         import numpy as np
-        import io
-        from PIL import Image
     except Exception:
         return img
 
-    from PySide6.QtCore import QBuffer, QByteArray
+    from PySide6.QtGui import QImage as _QI
 
-    buf = QBuffer()
-    buf.setData(QByteArray())
-    buf.open(QBuffer.OpenModeFlag.WriteOnly)
-    img.save(buf, "PNG")
-    buf.close()
-    try:
-        pil = Image.open(io.BytesIO(bytes(buf.data()))).convert("RGBA")
-    except Exception:
-        return img
+    src = img
+    if src.format() != _QI.Format.Format_RGBA8888:
+        src = src.convertToFormat(_QI.Format.Format_RGBA8888)
+    w = src.width()
+    h = src.height()
+    arr = np.frombuffer(src.constBits(), np.uint8).reshape((h, w, 4))
 
-    for flt in enabled:
+    for flt in active:
         ft = flt.type
         value = flt.value
         try:
             if ft == "gaussianBlur":
-                from PIL import ImageFilter
+                from PIL import Image, ImageFilter
+                pil = Image.fromarray(arr.copy(), "RGBA")
                 pil = pil.filter(ImageFilter.GaussianBlur(radius=max(0.0, value)))
+                arr = np.asarray(pil)
             elif ft == "colorContrast":
-                from PIL import ImageEnhance
+                from PIL import Image, ImageEnhance
+                pil = Image.fromarray(arr.copy(), "RGBA")
                 pil = ImageEnhance.Contrast(pil).enhance(max(0.0, value))
+                arr = np.asarray(pil)
             elif ft == "colorSaturate":
-                from PIL import ImageEnhance
+                from PIL import Image, ImageEnhance
+                pil = Image.fromarray(arr.copy(), "RGBA")
                 pil = ImageEnhance.Color(pil).enhance(max(0.0, value))
+                arr = np.asarray(pil)
             elif ft == "colorInvert":
-                arr = np.asarray(pil).copy()
-                arr[..., :3] = 255 - arr[..., :3]
-                pil = Image.fromarray(arr, "RGBA")
+                out = arr.copy()
+                if value >= 1.0:
+                    out[..., :3] = 255 - out[..., :3]
+                else:
+                    f = max(0.0, min(1.0, value))
+                    out[..., :3] = out[..., :3] * (1.0 - f) + (255 - out[..., :3]) * f
+                arr = out
             elif ft == "colorHueRotate":
+                from PIL import Image
+                pil = Image.fromarray(arr.copy(), "RGBA")
                 pil = _hue_rotate_pil(pil, value, np)
+                arr = np.asarray(pil)
             elif ft == "CISepiaTone":
+                from PIL import Image
+                pil = Image.fromarray(arr.copy(), "RGBA")
                 pil = _sepia_pil(pil, value, np)
+                arr = np.asarray(pil)
         except Exception:
             continue
 
     try:
-        arr = np.asarray(pil)
-        rgba = np.ascontiguousarray(arr)
-        from PySide6.QtGui import QImage as _QI
-        out = _QI(rgba.data, rgba.shape[1], rgba.shape[0], 4 * rgba.shape[1], _QI.Format.Format_RGBA8888).copy()
+        cont = np.ascontiguousarray(arr)
+        out = _QI(cont.data, w, h, 4 * w, _QI.Format.Format_RGBA8888).copy()
         return out
     except Exception:
         return img
@@ -409,20 +486,13 @@ def _hsl_to_rgb_hsl(h: float, s: float, l: float) -> "np.ndarray":
     c = (1.0 - np.abs(2.0 * l - 1.0)) * s
     hx = np.mod(h / 60.0, 6.0)
     x = c * (1.0 - np.abs(np.mod(hx, 2.0) - 1.0))
-    m = (l - c / 2.0)[..., None]
-    rgb = np.empty((*np.shape(hx), 3), dtype=np.float32)
-    c2 = c[..., None]
-    x2 = x[..., None]
-    cond0 = hx < 1
-    cond1 = (hx >= 1) & (hx < 2)
-    cond2 = (hx >= 2) & (hx < 3)
-    cond3 = (hx >= 3) & (hx < 4)
-    cond4 = (hx >= 4) & (hx < 5)
-    cond5 = hx >= 5
-    rgb[..., 0] = np.where(cond0, c2, np.where(cond1, x2, np.where(cond2, 0, np.where(cond3, 0, np.where(cond4, x2, c2)))))
-    rgb[..., 1] = np.where(cond0, x2, np.where(cond1, c2, np.where(cond2, c2, np.where(cond3, 0, np.where(cond4, 0, c2)))))
-    rgb[..., 2] = np.where(cond0, 0, np.where(cond1, 0, np.where(cond2, x2, np.where(cond3, c2, np.where(cond4, c2, 0)))))
-    return rgb + m
+    m = l - c / 2.0
+    z = np.zeros_like(c)
+    r = np.where(hx < 1, c, np.where(hx < 2, x, np.where(hx < 3, z, np.where(hx < 4, z, np.where(hx < 5, x, c)))))
+    g = np.where(hx < 1, x, np.where(hx < 2, c, np.where(hx < 3, c, np.where(hx < 4, z, np.where(hx < 5, z, c)))))
+    b = np.where(hx < 1, z, np.where(hx < 2, z, np.where(hx < 3, x, np.where(hx < 4, c, np.where(hx < 5, c, z)))))
+    out = np.stack([r + m, g + m, b + m], axis=-1)
+    return out.astype(np.float32, copy=False)
 
 
 def _hsl_blend(src: QImage, kind: str) -> QImage:
@@ -469,6 +539,7 @@ class CAMLRenderer:
         size: Optional[Tuple[int, int]] = None,
         state: str = "Locked",
         backdrop: Optional[str] = None,
+        backdrop_fill: bool = True,
     ):
         self.doc = doc
         root = doc.root
@@ -476,10 +547,21 @@ class CAMLRenderer:
         self.scene_h = root.size.h if root else 844.0
         self.scene_flipped = int(root.geometryFlipped or 0) if root else 0
         self.width, self.height = size or (int(self.scene_w), int(self.scene_h))
+        self._render_edge = max(self.width, self.height)
         self.state = state
-        self.backdrop = backdrop or (root.backgroundColor if root else None)
+        if backdrop is not None:
+            self.backdrop = backdrop
+        elif backdrop_fill:
+            self.backdrop = root.backgroundColor if root else None
+        else:
+            self.backdrop = None
         self._images: Dict[str, Optional[QImage]] = {}
+        self._video_frames = OrderedDict()
+        self._state_root: Optional[Layer] = None
+        self._state_root_id: Optional[object] = None
+        self._emitter_particles: Dict[str, List[Tuple[float, float, float, float, float]]] = {}
         self._painted_layers = 0
+        self.drop_bounds_origin = bool(getattr(doc, "drop_bounds_origin", False))
 
     # -- asset access ------------------------------------------------------ #
 
@@ -511,8 +593,12 @@ class CAMLRenderer:
     # -- top level --------------------------------------------------------- #
 
     def render(self, t_ms: float = 0.0) -> QImage:
-        root = apply_state_overrides(self.doc.root, self.doc.stateOverrides, self.state)
-        return self._paint_root(root, t_ms)
+        key = (self.doc, self.state)
+        if self._state_root is None or self._state_root_id != key:
+            self._state_root = apply_state_overrides(
+                self.doc.root, self.doc.stateOverrides, self.state)
+            self._state_root_id = key
+        return self._paint_root(self._state_root, t_ms)
 
     def render_state_transition(
         self,
@@ -539,23 +625,24 @@ class CAMLRenderer:
             target.fill(bg)
 
         p = QPainter(target)
-        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        kx = self.width / self.scene_w if self.scene_w > 0 else 1.0
-        ky = self.height / self.scene_h if self.scene_h > 0 else 1.0
-        if kx != 1.0 or ky != 1.0:
-            p.scale(kx, ky)
+        try:
+            p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            kx = self.width / self.scene_w if self.scene_w > 0 else 1.0
+            ky = self.height / self.scene_h if self.scene_h > 0 else 1.0
+            if kx != 1.0 or ky != 1.0:
+                p.scale(kx, ky)
 
-        use_y_up = self.scene_flipped == 0
-        parent_h = self.scene_h
+            use_y_up = self.scene_flipped == 0
+            parent_h = self.scene_h
 
-        bg_layers = [l for l in layers if l.name == "BACKGROUND"]
-        fg_layers = [l for l in layers if l.name != "BACKGROUND"]
-        for top_layers in (bg_layers, fg_layers):
-            for layer in top_layers:
-                self._draw_layer(p, layer, use_y_up, parent_h, t_ms, 0.0)
-
-        p.end()
+            bg_layers = [l for l in layers if l.name == "BACKGROUND"]
+            fg_layers = [l for l in layers if l.name != "BACKGROUND"]
+            for top_layers in (bg_layers, fg_layers):
+                for layer in top_layers:
+                    self._draw_layer(p, layer, use_y_up, parent_h, t_ms, 0.0)
+        finally:
+            p.end()
         return target
 
     # -- per-layer ---------------------------------------------------------- #
@@ -575,8 +662,6 @@ class CAMLRenderer:
 
         w = float(ovs.get("bounds.size.width", layer.size.w or 0.0))
         h = float(ovs.get("bounds.size.height", layer.size.h or 0.0))
-        if w <= 0 or h <= 0:
-            return
         x = float(ovs.get("position.x", layer.position.x))
         y = float(ovs.get("position.y", layer.position.y))
         rotation = float(ovs.get("transform.rotation.z", layer.rotation or 0.0))
@@ -594,11 +679,19 @@ class CAMLRenderer:
         # corner, while CAML `position` is the ANCHOR point in parent coords.
         # In a Y-up parent the y coordinate is measured from the BOTTOM of the
         # parent (so walk up to its height), and the box top edge sits
-        # (1-ay)*h above the anchor.
+        # (1-ay)*h above the anchor. In a Y-down parent it sits ay*h above.
         anchor_x = x
         anchor_y = (parent_h - y) if use_y_up else y
-        box_top_left_dx = -ax * w
-        box_top_left_dy = -(1.0 - ay) * h
+        if use_y_up:
+            box_top_left_dy = -(1.0 - ay) * h
+        else:
+            box_top_left_dy = -ay * h
+        if self.drop_bounds_origin:
+            box_top_left_dx = -ax * w
+        else:
+            # Homebrew (9918) exports encode scale artifacts here; drop them.
+            box_top_left_dx = -ax * w - layer.boundsOrigin.x
+            box_top_left_dy -= layer.boundsOrigin.y
 
         filters = [f for f in layer.filters if f.enabled] if layer.filters else []
         blend = _BLEND_MODES.get(layer.blendMode)
@@ -614,11 +707,22 @@ class CAMLRenderer:
         p.translate(box_top_left_dx, box_top_left_dy)
 
         if need_offscreen:
-            off = QImage(max(1, math.ceil(w)), max(1, math.ceil(h)), QImage.Format.Format_ARGB32_Premultiplied)
+            off_w = max(1, math.ceil(w))
+            off_h = max(1, math.ceil(h))
+            cap = self._render_edge
+            if max(off_w, off_h) > cap:
+                k = cap / max(off_w, off_h)
+                off_w = max(1, int(off_w * k))
+                off_h = max(1, int(off_h * k))
+            off = QImage(off_w, off_h, QImage.Format.Format_ARGB32_Premultiplied)
             off.fill(Qt.GlobalColor.transparent)
             op = QPainter(off)
-            self._paint_layer_content(op, layer, w, h, next_use_y_up, t_ms, delay_ms, bg_color)
-            op.end()
+            try:
+                if off_w != w or off_h != h:
+                    op.scale(off_w / w, off_h / h)
+                self._paint_layer_content(op, layer, w, h, next_use_y_up, t_ms, delay_ms, bg_color)
+            finally:
+                op.end()
             if filters:
                 off = _apply_filters(off, filters)
             if hsl_kind is not None:
@@ -629,9 +733,14 @@ class CAMLRenderer:
                 p.setOpacity(_clamp(opacity, 0.0, 1.0))
             p.drawImage(QRectF(0.0, 0.0, w, h), off)
         else:
-            if opacity < 0.999:
-                p.setOpacity(_clamp(opacity, 0.0, 1.0))
-            self._paint_layer_content(p, layer, w, h, next_use_y_up, t_ms, delay_ms, bg_color)
+            try:
+                if opacity < 0.999:
+                    p.setOpacity(_clamp(opacity, 0.0, 1.0))
+                self._paint_layer_content(p, layer, w, h, next_use_y_up, t_ms, delay_ms, bg_color)
+            finally:
+                p.restore()
+                self._painted_layers += 1
+            return
 
         p.restore()
         self._painted_layers += 1
@@ -710,7 +819,7 @@ class CAMLRenderer:
         elif ltype == "liquidGlass":
             pass  # rendered fully transparent (per requirements)
         elif ltype == "emitter":
-            self._paint_emitter(p, layer, use_y_up)
+            self._paint_emitter(p, layer, w, h, use_y_up, t_ms)
         elif ltype == "video":
             self._paint_video(p, layer, w, h, t_ms)
         elif ltype == "shape":
@@ -830,26 +939,66 @@ class CAMLRenderer:
         p.drawRect(QRectF(0.0, 0.0, w, h))
         p.restore()
 
-    def _paint_emitter(self, p: QPainter, layer: Layer, use_y_up: bool):
+    def _paint_emitter(self, p: QPainter, layer: Layer, w: float, h: float, use_y_up: bool, t_ms: float):
         if not layer.emitterCells:
             return
         ex = layer.emitterPosition.x
         ey = layer.emitterPosition.y
         if use_y_up:
-            ey = -ey
-        for cell in layer.emitterCells:
+            ey = h - ey
+        t = t_ms / 1000.0
+        for cell_idx, cell in enumerate(layer.emitterCells):
             img = self._image_for(cell.src) if cell.src else None
             if img is None:
                 continue
             s = cell.scale if cell.scale else 1.0
             target_w = max(1, img.width() * s)
             target_h = max(1, img.height() * s)
-            rect = QRectF(ex - target_w / 2.0, ey - target_h / 2.0, target_w, target_h)
-            p.save()
-            p.setOpacity(_clamp(cell.alpha, 0.0, 1.0))
-            p.rotate(cell.spin)
-            p.drawImage(rect, img)
-            p.restore()
+            base_alpha = _clamp(cell.alpha, 0.0, 1.0)
+            yacc = cell.yAcceleration
+            if use_y_up:
+                yacc = -yacc
+            cache_key = f"{layer.id}|{cell_idx}"
+            particles = self._emitter_particles.get(cache_key)
+            if particles is None:
+                particles = self._build_emitter_particles(cache_key, cell, layer.speed or 1.0)
+                self._emitter_particles[cache_key] = particles
+            life = max(cell.lifetime or 1.0, 1e-6)
+            count = len(particles)
+            stagger = life / count
+            for i, (angle_jitter, speed_jitter, spin_extra, alpha_jit) in enumerate(particles):
+                age = (t - i * stagger) % life
+                ang = (cell.emissionLongitude or 0.0) + angle_jitter * (cell.emissionRange or 0.0)
+                speed = (cell.velocity or 0.0) + speed_jitter * (cell.velocityRange or 0.0)
+                ex_p = ex + math.cos(ang) * speed * age + 0.5 * (cell.xAcceleration or 0.0) * age * age
+                eyp_ = ey + math.sin(ang) * speed * age + 0.5 * yacc * age * age
+                al = base_alpha * max(0.0, min(1.0, 1.0 - age / life)) * (1.0 + alpha_jit)
+                if al <= 0.01:
+                    continue
+                p.save()
+                p.translate(ex_p, eyp_)
+                p.rotate(math.degrees((cell.spin or 0.0) * age) + spin_extra)
+                p.setOpacity(_clamp(al, 0.0, 1.0))
+                p.drawImage(QRectF(-target_w / 2.0, -target_h / 2.0, target_w, target_h), img)
+                p.restore()
+
+    def _build_emitter_particles(self, cache_key: str, cell, speed: float = 1.0) -> List[Tuple[float, float, float, float]]:
+        count = max(8, min(120, int((cell.birthRate or 0.0) * speed * max(cell.lifetime or 1.0, 1e-6))))
+        import hashlib as _hashlib
+        digest = _hashlib.md5(cache_key.encode("utf-8", "replace")).digest()
+        seed = int.from_bytes(digest[:4], "little")
+        jitter = _LCG(seed)
+        out = []
+        for _ in range(count):
+            out.append(
+                (
+                    jitter.next_float() * 2.0 - 1.0,
+                    jitter.next_float() * 2.0 - 1.0,
+                    (jitter.next_float() * 2.0 - 1.0) * 30.0,
+                    (jitter.next_float() * 2.0 - 1.0) * 0.15,
+                )
+            )
+        return out
 
     def _paint_video(self, p: QPainter, layer: Layer, w: float, h: float, t_ms: float):
         frame_count = layer.frameCount
@@ -879,9 +1028,24 @@ class CAMLRenderer:
             f"{prefix}{index}",
             f"{layer.id}_frame_{index}{ext}",
         ]
+        cache_key = (layer.id, index)
+        cached = self._video_frames.get(cache_key)
+        if cached is not None:
+            return cached
         for name in candidates:
-            img = self._image_for(name)
-            if img is not None:
+            basename = name.split("/")[-1]
+            try:
+                decoded = unquote(basename)
+            except Exception:
+                decoded = basename
+            data = self.doc.assets.get(basename) or self.doc.assets.get(decoded)
+            if not data:
+                continue
+            img = decode_image_bytes(data)
+            if img is not None and not img.isNull():
+                self._video_frames[cache_key] = img
+                while len(self._video_frames) > _MAX_VIDEO_FRAMES:
+                    self._video_frames.popitem(last=False)
                 return img
         return None
 
@@ -950,8 +1114,164 @@ def render_document(doc: CADocument, t_ms: float = 0.0, state: str = "Locked",
     return renderer.render(t_ms)
 
 
+class SceneCompositeRenderer:
+    """Render a wallpaper as several scenes composited like the lock screen.
+
+    Photo-style tendies split their art: the ``background`` scene carries the
+    full-bleed picture and the ``floating`` scene the animated character. This
+    renderer paints the floating scene over the background one so the figure
+    sits on its photograph instead of floating alone on an empty canvas.
+    """
+
+    def __init__(self, background: Optional[CAMLRenderer], floating: Optional[CAMLRenderer]):
+        self._background = background
+        self._floating = floating
+        if background is not None and floating is not None:
+            self.width, self.height = floating.width, floating.height
+        elif background is not None:
+            self.width, self.height = background.width, background.height
+        else:
+            self.width, self.height = floating.width, floating.height
+
+    def _composite(self, bg: Optional[QImage], fl: Optional[QImage]) -> QImage:
+        w = self.width
+        h = self.height
+        out = QImage(w, h, QImage.Format.Format_ARGB32_Premultiplied)
+        out.fill(Qt.GlobalColor.transparent)
+        p = QPainter(out)
+        try:
+            if bg is not None:
+                p.drawImage(QRectF(0.0, 0.0, w, h), bg)
+            if fl is not None:
+                p.drawImage(QRectF(0.0, 0.0, w, h), fl)
+        finally:
+            p.end()
+        return out
+
+    def render(self, t_ms: float = 0.0) -> QImage:
+        bg = self._background.render(t_ms) if self._background is not None else None
+        fl = self._floating.render(t_ms) if self._floating is not None else None
+        return self._composite(bg, fl)
+
+    def render_state_transition(self, from_state: str = "Locked", to_state: str = "Unlock",
+                                progress: float = 0.0, t_ms: float = 0.0) -> QImage:
+        bg = self._background.render(t_ms) if self._background is not None else None
+        fl = None
+        if self._floating is not None:
+            fl = self._floating.render_state_transition(from_state, to_state, progress, t_ms)
+        return self._composite(bg, fl)
+
+
+def preview_renderer(bundle, key: str, size: Optional[Tuple[int, int]] = None,
+                     state: str = "Locked", bg_state: Optional[str] = None):
+    """Build the lock-screen renderer for a tendie bundle.
+
+    Photo-style wallpapers split their art between a ``floating`` scene (the
+    animated character) and a ``background`` scene (the full-bleed photo).
+    When the preferred scene is :attr:`floating` and a ``background`` scene
+    exists, the two are composited exactly like the lock screen shows them:
+    floating over background, the floating scene's own root backdrop dropped
+    so the opaque solid that pads an otherwise-empty canvas can't hide the
+    picture. Single-scene tendies (DVD, Super, Rolling, iOS...) render the
+    one scene as today.
+
+    ``bg_state`` optionally overrides the state passed to the composited
+    background scene (e.g. ``Lock PortraitUp Dark`` for the photo wallpapers'
+    appearance variants) while ``state`` drives the floating scene's lock or
+    unlock appearance.
+    """
+    if key == "floating" and bundle.background is not None:
+        bg_doc = bundle.background
+        if bg_doc.root is not None and bg_doc.root.children:
+            background = CAMLRenderer(bg_doc, size=size, state=bg_state or state)
+            floating = CAMLRenderer(bundle.floating, size=size, state=state,
+                                    backdrop_fill=False)
+            return SceneCompositeRenderer(background, floating)
+    doc = getattr(bundle, key, None) or bundle.floating or bundle.background
+    return CAMLRenderer(doc, size=size, state=state)
+
+
+def _appearance_slot_key(name: str) -> Tuple[str, Tuple[str, ...]]:
+    """Group a variant state by its lock/sleep/home slot and orientation.
+
+    ``Lock PortraitUp Light`` -> ``("Lock", ("PortraitUp",))``,
+    ``Locked Dark`` -> ``("Locked", ())``, ``Sleep LandscapeLeft Dark`` ->
+    (``Sleep``, (``LandscapeLeft``,)). The lighter ``Lock``/``Locked`` (and
+    ``Unlock``/``Unlocked``) tokens compare equal so a caller asking for
+    ``Locked`` matches ``Lock PortraitUp Light``.
+    """
+    tokens = [t for t in name.split() if t not in ("Light", "Dark")]
+    if not tokens:
+        return (name, ())
+    head = tokens[0]
+    head = {"Unlock": "Unlock", "Unlocked": "Unlock"}.get(head, head)
+    orientation = tuple(t for t in tokens[1:] if t in
+                        ("PortraitUp", "PortraitDown",
+                         "LandscapeLeft", "LandscapeRight"))
+    return (head, orientation)
+
+
+def appearance_variant_state(doc: Optional[CADocument], state: Optional[str],
+                             dark: bool) -> Optional[str]:
+    """Return ``state`` with the Light/Dark appearance swapped for ``doc``.
+
+    Split wallpapers name their variants `<state> Light`/`<state> Dark`
+    (Cipher) or `Lock PortraitUp Light`/`Lock PortraitUp Dark` (the photo
+    wallpapers, keyed by orientation). The swap preserves the non-appearance
+    tokens — orientation, lock/unlock — so ``Lock PortraitUp Light`` becomes
+    ``Lock PortraitUp Dark`` and ``Locked`` becomes ``Lock PortraitUp Dark``.
+    Returns the input when ``doc`` has no matching variant.
+    """
+    if state is None or doc is None or not doc.states:
+        return state
+    states = [str(s) for s in doc.states]
+    cur = str(state)
+    target = "Dark" if dark else "Light"
+
+    cur_slot, cur_orient = _appearance_slot_key(cur)
+    if cur_slot == "Locked":
+        cur_slot = "Lock"
+    for name in states:
+        slot, orient = _appearance_slot_key(name)
+        slot = "Lock" if slot == "Locked" else slot
+        if slot == cur_slot and orient == cur_orient and target in name:
+            return name
+    if cur_slot and cur_slot != cur:
+        for name in states:
+            slot, orient = _appearance_slot_key(name)
+            slot = "Lock" if slot == "Locked" else slot
+            if slot == cur_slot and target in name:
+                return name
+    for name in states:
+        if target in name and name != cur:
+            return name
+    return state
+
+
+def bundle_has_appearance_variants(bundle) -> bool:
+    """True when any scene in ``bundle`` offers both a Light and a Dark state."""
+    if bundle is None:
+        return False
+    for doc in (bundle.floating, bundle.background, bundle.wallpaper):
+        if doc is None or not doc.states:
+            continue
+        has_light = any("Light" in str(s) for s in doc.states)
+        has_dark = any("Dark" in str(s) for s in doc.states)
+        if has_light and has_dark:
+            return True
+    return False
+
+
+_EMITTER_AMBIENT_LOOP = 3.0
+
+
 def document_loop_duration(doc: CADocument) -> float:
-    """Seconds of the longest infinite animation cycle (0 = static scene)."""
+    """Seconds of the longest infinite animation cycle (0 = static scene).
+
+    Live ``CAEmitterLayer`` outlets animate even without any ``CAAnimation``
+    (falling leaves, drifting particles), so a scene with a live emitter counts
+    as motion with a short ambient loop.
+    """
     if doc is None or doc.root is None:
         return 0.0
     longest = 0.0
@@ -959,6 +1279,8 @@ def document_loop_duration(doc: CADocument) -> float:
     def walk(layer: Layer):
         nonlocal longest
         longest = max(longest, scene_loop_duration(layer.animations))
+        if layer.type == "emitter" and layer.emitterCells:
+            longest = max(longest, _EMITTER_AMBIENT_LOOP)
         for child in layer.children:
             walk(child)
 

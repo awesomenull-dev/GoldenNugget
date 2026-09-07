@@ -102,6 +102,7 @@ class Layer:
     type: str = "shape"  # image | text | gradient | emitter | transform | replicator | liquidGlass | video | shape
     position: Vec2 = field(default_factory=Vec2)
     zPosition: float = 0.0
+    boundsOrigin: Vec2 = field(default_factory=Vec2)
     size: Size = field(default_factory=Size)
     opacity: float = 1.0
     cornerRadius: float = 0.0
@@ -211,6 +212,7 @@ class CADocument:
     stateTransitions: List[StateTransition] = field(default_factory=list)
     parallax: List[ParallaxGroup] = field(default_factory=list)
     assets: Dict[str, bytes] = field(default_factory=dict)
+    drop_bounds_origin: bool = False
 
 
 @dataclass

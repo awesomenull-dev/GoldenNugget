@@ -168,6 +168,8 @@ def _parse_layer_base(el: ET.Element) -> Layer:
 
     layer.position.x = position[0] if len(position) > 0 else 0.0
     layer.position.y = position[1] if len(position) > 0 else 0.0
+    layer.boundsOrigin.x = bounds[0] if len(bounds) > 0 else 0.0
+    layer.boundsOrigin.y = bounds[1] if len(bounds) > 0 else 0.0
     layer.size.w = bounds[2] if len(bounds) > 2 else 0.0
     layer.size.h = bounds[3] if len(bounds) > 3 else 0.0
     layer.zPosition = _numeric_attr(el, "zPosition") or 0.0

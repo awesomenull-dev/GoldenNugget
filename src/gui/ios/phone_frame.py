@@ -14,7 +14,12 @@ _HOME_DIM = QColor(0x00, 0x00, 0x00, 62)
 _ICON_BG = QColor(0x55, 0x55, 0x5A)
 _DOCK_BG = QColor(0xFF, 0xFF, 0xFF, 46)
 _HINT = QColor(0xFF, 0xFF, 0xFF, 150)
-_MAX_CA_EDGE = 1200
+
+# Real iPhone 15 / 15 Pro display: 393x852 pt at @3x (1179x2556 native px).
+DEVICE_PT_W = 393
+DEVICE_PT_H = 852
+DEVICE_SCALE = 3
+_MAX_CA_EDGE = DEVICE_PT_H * DEVICE_SCALE
 
 
 class PhoneFrame(QWidget):
@@ -47,6 +52,10 @@ class PhoneFrame(QWidget):
 
         self.setMinimumSize(120, 240)
         self.setCursor(Qt.CursorShape.OpenHandCursor)
+
+    def device_pixel_size(self):
+        """Native screen pixel size of the represented iPhone (e.g. 1179x2556)."""
+        return (DEVICE_PT_W * DEVICE_SCALE, DEVICE_PT_H * DEVICE_SCALE)
 
     def set_wallpaper(self, pixmap, live_clock: bool = True):
         self._stop_ca()

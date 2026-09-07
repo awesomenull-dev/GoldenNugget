@@ -21,6 +21,13 @@ hide whole broken features. Behaviours per rule `action`:
   `src/gui/main_window.py`), and presets refuse to load it
   (`_hidden_tweak_names` stripping in `preset_manager._apply`, plus the
   "Hidden Features Skipped" warning in `src/gui/ios/settings.py`).
+- `"disable_daemon"` (`daemons` field: Daemon enum member names and/or raw
+  launchd keys) — **force-disable specific daemons** on matching setups: the
+  keys are always injected into the disabled-daemons plist at apply time no
+  matter the UI toggles or a loaded preset
+  (`_apply_hotload_daemon_forcing` in `device_manager.py`, called from
+  `_apply_changes`), and the daemons page locks those switches ON with a
+  "Daemon Locked by Safety Rules" warning (`src/gui/ios/daemons.py`).
 
 Feature → tweak membership lives in `FEATURE_TWEAKS` (Liquid Glass, Springboard,
 Internal, PosterBoard, Daemons, Status Bar, Templates). `hidden_features()` /

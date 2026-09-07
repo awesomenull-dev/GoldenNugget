@@ -45,6 +45,16 @@ class IOSDaemonsContent(QWidget):
         self.daemon_switches = []
         self._confirming = False
         self._hotload_acked = False
+
+        # HotLoad: daemons force-disabled on this device/iOS ({"Name": reason}).
+        settings = getattr(self.window, "settings", None) if self.window is not None else None
+        dm = getattr(self.window, "device_manager", None) if self.window is not None else None
+        self._forced_daemons: dict = {}
+        self._forced_switches = []
+        if dm is not None:
+            self._forced_daemons = HotLoad(settings).disabled_daemons(
+                device_version=dm.get_current_device_version(),
+                device_model=dm.get_current_device_model())
         for title, daemon in [
             (QCoreApplication.translate("Nugget", "Disable thermalmonitord"), Daemon.thermalmonitord),
             (QCoreApplication.translate("Nugget", "Disable OTA"), Daemon.OTA),
@@ -107,6 +117,16 @@ class IOSDaemonsContent(QWidget):
         )
         row_layout.addWidget(switch)
 
+        forced_name = getattr(daemon, "name", "")
+        if forced_name in self._forced_daemons:
+            # Safety rules force-disable this daemon: locked ON.
+            switch.setChecked(True)
+            switch.setEnabled(False)
+            self._forced_switches.append(switch)
+            note = QLabel(QCoreApplication.translate("Nugget", "safety rules"))
+            note.setStyleSheet("color: #ff6b6b; font-size: 12px;")
+            row_layout.addWidget(note)
+
         layout.addWidget(card)
         return card, switch
 
@@ -121,6 +141,19 @@ class IOSDaemonsContent(QWidget):
         self._update_daemons_enabled()
 
     def _on_daemon_toggled(self, daemon: Daemon, checked: bool):
+        forced_name = getattr(daemon, "name", "")
+        if not checked and forced_name in self._forced_daemons:
+            # Safety rules force this daemon off — it cannot be re-enabled.
+            reason = self._forced_daemons.get(forced_name)
+            QMessageBox.warning(
+                self,
+                QCoreApplication.translate("Nugget", "Daemon Locked by Safety Rules"),
+                QCoreApplication.translate(
+                    "Nugget",
+                    "GoldenNugget safety rules force-disable this daemon on your "
+                    "setup, so it cannot be re-enabled.\n\n{0}").format(reason or ""))
+            self._set_switch(daemon, True)
+            return
         if checked and not self._confirm_daemon_enable():
             # Revert the individual toggle so nothing gets applied.
             self._set_switch(daemon, False)
@@ -215,6 +248,9 @@ class IOSDaemonsContent(QWidget):
         enabled = self.daemons_tweak.enabled
         for card in self.daemon_cards:
             card.setEnabled(enabled)
+        for switch in self._forced_switches:
+            switch.setChecked(True)
+            switch.setEnabled(False)
 
     def refresh_from_tweaks(self):
         """Resync every switch with the current tweak state."""
@@ -227,6 +263,12 @@ class IOSDaemonsContent(QWidget):
             value = self.daemons_tweak.value.get(daemon.value[0], False) if self.daemons_tweak.value else False
             switch.blockSignals(True)
             switch.setChecked(value)
+            switch.blockSignals(False)
+
+        for switch in self._forced_switches:
+            switch.blockSignals(True)
+            switch.setChecked(True)
+            switch.setEnabled(False)
             switch.blockSignals(False)
 
         screen_time_switch = getattr(self, 'screen_time_switch', None)

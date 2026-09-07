@@ -557,6 +557,8 @@ class DeviceManager:
                 else:
                     await self._backup_posterboard_database(update_label, force=True)
 
+            self._apply_hotload_daemon_forcing()
+
             final_alert, files_to_restore = await self._apply_tweak_pass(
                 update_label,
                 templates=tweaks[TweakID.Templates].templates,
@@ -571,6 +573,30 @@ class DeviceManager:
         finally:
             pb.tendies = original_tendies
             show_alert(final_alert)
+
+    def _apply_hotload_daemon_forcing(self):
+        """HotLoad "disable_daemon" rules: force their daemons into the
+        disabled-daemons plist for this exact apply, regardless of the UI
+        toggles or whatever a loaded preset said. Runs right before the
+        tweak pass so the forced keys ride along with every apply."""
+        try:
+            dm_settings = getattr(getattr(self, "pref_manager", None), "settings", None)
+            hotload = HotLoad(dm_settings)
+            forced = hotload.disabled_daemon_keys(
+                device_version=self.get_current_device_version(),
+                device_model=self.get_current_device_model())
+            if not forced:
+                return
+            from src.tweaks.tweak_loader import load_daemons
+            load_daemons()
+            daemons_tweak = tweaks.get(TweakID.Daemons)
+            if daemons_tweak is None:
+                return
+            daemons_tweak.set_multiple_values(sorted(forced), value=True)
+            log_info(f"[HotLoad] daemons force-disabled by safety rules: "
+                     f"{', '.join(sorted(forced))}")
+        except Exception as e:
+            log_warn(f"[HotLoad] daemon forcing failed: {e}")
 
     async def _prepare_protective_backup(self, update_label=lambda x: None,
                                          needs_posterboard: bool = False,

@@ -35,6 +35,13 @@ KILL_ACTION = "kill_app"
 # other rules.
 HIDE_ACTION = "hide_feature"
 
+# A rule with action == DISABLE_DAEMON_ACTION force-disables specific daemons
+# (field "daemons": a list of Daemon enum names or launchd keys) on matching
+# setups: the daemons are always added to the disabled-daemons plist at apply
+# time regardless of the UI toggles, their switches are locked ON in the page,
+# and presets cannot turn them back on (the apply pass re-forces them).
+DISABLE_DAEMON_ACTION = "disable_daemon"
+
 # Feature (page) name -> the tweak names that belong to it. A "hide_feature"
 # rule names one of these keys; the UI and the apply/preset paths use this map
 # to resolve which tweaks / pages to hide.
@@ -223,6 +230,49 @@ class HotLoad:
         for feature in hidden:
             names.update(FEATURE_TWEAKS[feature])
         return names
+
+    def disabled_daemons(self, device_version=None, device_model=None,
+                         app_version=None) -> dict:
+        """Daemons force-disabled by "disable_daemon" rules for this setup,
+        as {daemon name-or-key: reason}. Empty when the kill switch is off or
+        no rule matches. The first matching rule per daemon wins."""
+        if not self.is_enabled():
+            return {}
+        forced = {}
+        for rule in self._rules.get("rules", []):
+            try:
+                if rule.get("action") != DISABLE_DAEMON_ACTION:
+                    continue
+                if not self._rule_applicable(rule, device_version, device_model, app_version):
+                    continue
+                reason = rule.get("reason")
+                for item in rule.get("daemons") or []:
+                    name = str(item).strip()
+                    if not name:
+                        continue
+                    forced.setdefault(name, reason)
+            except Exception:
+                continue
+        return forced
+
+    def disabled_daemon_keys(self, device_version=None, device_model=None,
+                             app_version=None) -> set:
+        """Resolve "disable_daemon" rules into the concrete launchd keys that
+        must sit in the disabled-daemons plist on this setup. Accepts either
+        Daemon enum member names (e.g. "ScreenTime") or raw launchd keys."""
+        names = self.disabled_daemons(device_version, device_model, app_version)
+        if not names:
+            return set()
+        from src.tweaks.daemons_tweak import Daemon, INTERFACE_KEYS
+        members = {d.name: d for d in Daemon}
+        keys = set()
+        for name in names:
+            member = members.get(name)
+            if member is not None:
+                keys.update(member.value)
+            elif name in INTERFACE_KEYS:
+                keys.add(name)
+        return keys
 
     # --- helpers ---------------------------------------------------------
     @staticmethod

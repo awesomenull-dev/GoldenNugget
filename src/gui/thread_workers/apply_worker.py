@@ -323,3 +323,27 @@ class RefreshDevicesThread(QThread):
                 exc_type=type(e),
                 exc_value=e,
             ))
+
+
+class ResetPairingThread(QThread):
+    """Ran-no-device-io pair reset (unpair + pair) on a worker thread so the
+    settings page keeps painting while lockdown talks to the device."""
+
+    done = Signal(bool, str)  # success, error message
+
+    def __init__(self, manager):
+        super().__init__()
+        self.manager = manager
+
+    def run(self):
+        import logging
+        import asyncio
+        log = logging.getLogger("GoldenNugget.pairing")
+        try:
+            asyncio.run(self.manager._reset_device_pairing())
+        except Exception as e:
+            traceback_str = traceback.format_exc()
+            log.error("reset pairing failed: %s\n%s", e, traceback_str)
+            self.done.emit(False, str(e))
+            return
+        self.done.emit(True, "")

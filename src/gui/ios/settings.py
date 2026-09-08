@@ -15,6 +15,7 @@ from src.controllers.video_handler import set_ignore_frame_limit
 from src.controllers.preset_manager import PresetManager
 from src.controllers.hotload import HotLoad, confirm_flagged
 from src.tweaks.tweaks import tweaks, TweakID
+from src.gui.thread_workers.apply_worker import ResetPairingThread
 
 
 class IOSSettingsPage(QWidget):
@@ -79,7 +80,7 @@ class IOSSettingsPage(QWidget):
         )
 
         reset_pairing_btn = IOSPrimaryButton(QCoreApplication.translate("Nugget", "Reset Device Pairing"))
-        reset_pairing_btn.clicked.connect(self.window.device_manager.reset_device_pairing)
+        reset_pairing_btn.clicked.connect(self._on_reset_pairing_clicked)
         self.content_layout.addWidget(reset_pairing_btn)
 
         # PosterBoard
@@ -189,6 +190,37 @@ class IOSSettingsPage(QWidget):
         def handler(checked: bool):
             self._hotload.set_enabled(checked)
         return handler
+
+    def _on_reset_pairing_clicked(self):
+        if self.window.device_manager.data_singleton.current_device is None:
+            QMessageBox.information(
+                self.window,
+                QCoreApplication.translate("Nugget", "Pairing Reset"),
+                QCoreApplication.translate("Nugget", "No device selected."),
+            )
+            return
+        thread = ResetPairingThread(self.window.device_manager)
+        thread.done.connect(self._on_reset_pairing_done)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    def _on_reset_pairing_done(self, ok: bool, error: str):
+        title = QCoreApplication.translate("Nugget", "Pairing Reset")
+        if ok:
+            QMessageBox.information(
+                self.window,
+                title,
+                QCoreApplication.translate(
+                    "Nugget", "Your device's pairing was successfully reset. "
+                    "Refresh the device list before applying.")
+            )
+        else:
+            QMessageBox.critical(
+                self.window,
+                title,
+                QCoreApplication.translate(
+                    "Nugget", "Failed to reset device pairing: %1").replace("%1", error)
+            )
 
     def _on_backup_cache_toggled(self, checked: bool, switch):
         pref = self.window.device_manager.pref_manager

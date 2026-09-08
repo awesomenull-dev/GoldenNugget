@@ -305,7 +305,7 @@ class DeviceManager:
             return False
         
     def reset_device_pairing(self):
-        asyncio.run(self._reset_device_pairing())
+        return asyncio.run(self._reset_device_pairing())
     async def _reset_device_pairing(self):
         # first, unpair it
         if self.data_singleton.current_device == None:
@@ -314,7 +314,6 @@ class DeviceManager:
             await ld.unpair()
             # next, pair it again
             await ld.pair()
-        QMessageBox.information(None, QCoreApplication.tr("Pairing Reset"), QCoreApplication.tr("Your device's pairing was successfully reset. Refresh the device list before applying."))
 
     async def add_skip_setup(self, files_to_restore: list[FileToRestore], restoring_domains: bool):
         # TODO: Probably should move this to its own file

@@ -16,12 +16,13 @@ Practical results you *might* actually notice:
 - fewer random failures when connecting to / backing up your device
 - the app's window won't freeze while it scans for devices
 - errors during apply/reset become more predictable — and if something goes wrong, the app handles it more gracefully
+- Speed up (maybe)
 
 This release does the heavy lifting so all the version after it can focus on **stuff you can actually see**.
 
 ## 9.4.1 — new tweaks & quality of life
 
-The first version *for* you, not just at the code: new tweak categories and/or new tweaks, plus smaller UX improvements to make the app more comfortable to use.
+The first version *for* user, not just at the code: new tweak categories and/or new tweaks (maybe), plus smaller UX improvements to make the app more comfortable to use.
 
 ## 9.4.2 — more tweaks & quality of life
 

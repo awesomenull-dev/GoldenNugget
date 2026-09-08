@@ -1,63 +1,32 @@
 # Roadmap
 
-Short-term plan for GoldenNugget. Verify against `docs/ARCHITECTURE.md` before large changes.
+GoldenNugget's plan for the next versions, from 9.3.3 to 9.4.2. What each one means for you.
 
-Release order: 9.3.3 (transitional) → 9.4 (all refactoring) → 9.4.1 / 9.4.2 (new tweaks + QOL).
+## 9.3.3 — small cleanup, nothing new to see
 
-## 9.3.3 — transitional
+A tiny update that fixes a few rough edges under the hood. No new features, no new buttons — just less chance of hiccups and a cleaner codebase so the next big update goes smoothly.
 
-Quick-win fixes only, no architecture change. Bridges 9.3.2 → 9.4.
+> Status: done, ready to ship.
 
-- Remove the dead first `ApplyThread.update_label` (`src/gui/thread_workers/apply_worker.py`, shadowed duplicate at line 71)
-- Drop the leftover `DEBUG: _add_posterboard_container called` log line (`src/restore/protective.py`)
-- `PBTemplateException` → inherit `NuggetException` (it currently bypasses `detailed_text` and crash-handler classification)
-- Unify the SSL handshake timeout: the `_sc.DEFAULT_SSL_HANDSHAKE_TIMEOUT = 60` set in both `protective.py` and `device_manager.py` should have a single owner
-- Bump version to 9.3.3, changelog entry (format matches existing `CHANGELOG.md` entries)
+## 9.4 — the big under-the-hood overhaul
 
-> Status: all items done on branch `9.3.3` (`f01a5d0`), awaiting release.
-> Note: the quick-wins in `apply_worker.py` / `protective.py` / `posterboard_exceptions.py` / `device_manager.py` also need to land in 9.4 when 9.3.3 merges back.
+To you, GoldenNugget will look almost the same. But inside, a lot gets rebuilt: the way the app talks to your device, handles errors, and keeps its own code organized.
 
-## 9.4 — full refactor
+Practical results you *might* actually notice:
+- fewer random failures when connecting to / backing up your device
+- the app's window won't freeze while it scans for devices
+- errors during apply/reset become more predictable — and if something goes wrong, the app handles it more gracefully
 
-**The entire refactoring lands in 9.4.** After this release the codebase is considered structurally done; later versions carry features, not restructuring. Also carries the CA changes already on `9.4-refactor` (drop bounds-origin workaround, honor `contentsScale` for emitter particles) and the version bump to 9.4.
+This release does the heavy lifting so all the version after it can focus on **stuff you can actually see**.
 
-### Safety / regression risk
-1. **Shared retry helper** — the exponential-backoff loops in `protective.py` (`ProtectiveBackupService.connect`, 5 retries), `original_plist.py` (`psysbackup`), `pb_dialog.py` (`backup_posterboard_database`) and the InstallationProxy query in `restore.py` are copies with subtly different exception sets/retry counts. Extract one `async_retry` with configurable predicates/backoff. Backfilled into existing retry configs (5 / 3 / 3 / 3 attempts) without changing behaviour.
-2. **Single source for domain↔path mapping** — `DeviceManager.get_domain_for_path` and `absolute_path_to_backup_location` maintain the same table independently; a reset writes to the wrong domain if they drift. Extract to one module, keep both call sites on it.
-3. **Error classification** — `is_connection_error` / `is_device_locked_error` / `_is_transient_restore_error` are string-heuristics on pymobiledevice3 messages; move `_is_transient_restore_error` from `restore.py` into `device_errors.py` next to the others and harden matching.
+## 9.4.1 — new tweaks & quality of life
 
-### Maintainability
-4. **Split `protective.py` (1541 LOC)** — extract logging, `inject_file_into_backup` (~320 LOC) into `src/restore/inject.py`, and `ProtectiveBackupCache` into `src/restore/protective_cache.py`. No logic changes, only movement.
-5. **`main_window.py` (1002 LOC)** — extract navigation/routing and settings persistence into mixins.
-6. **`FEATURE_TWEAKS` derived from the registry** — the hand-maintained dict in `hotload.py` drifts when tweaks are added to `SPECS`; derive it from the main tweak spec (`Section`) instead so hidden-feature gating can't silently miss new tweaks.
-7. **Unify logging** — `protective.py` owns an independent `print()`+file logger (`_LOG_FILE` hardcoded) that ignores `GOLDENNUGGET_LOG_FILE`; fold it into the stdlib logger path.
-8. **Thread off GUI-blocking calls** — `get_devices()` and `reset_device_pairing()` call `asyncio.run()` on the caller's thread; move to the worker-thread pattern already used by `ApplyThread`/`PBDBThread`.
+The first version *for* you, not just at the code: new tweak categories and/or new tweaks, plus smaller UX improvements to make the app more comfortable to use.
 
-Exit criteria: apply + reset flows fully re-tested on device, retry counts unchanged, no behaviour drift; `protective.py` / `main_window.py` below ~700 LOC each; no `asyncio.run()` on the GUI thread; single logging path for restore ops; `FEATURE_TWEAKS` no longer hand-maintained.
+## 9.4.2 — more tweaks & quality of life
 
-## 9.4.1 — new tweaks + QOL
+Whatever doesn't fit in 9.4.1 lands here — more tweaks, more small usability wins.
 
-Structural work is done; this and later versions ship features.
+---
 
-- New tweak categories / tweaks (TBD against registry — one entry per tweak, `Section`-derived `FEATURE_TWEAKS` picks them up automatically)
-- QOL improvements (TBD)
-
-## 9.4.2 — new tweaks + QOL
-
-- More new tweaks / QOL (carry unshipped 9.4.1 items forward)
-
-## Backlog (unconfirmed)
-
-Ideas not yet scheduled:
-
-- Wallpaper/CA enhancements on top of the refactored renderer
-- Restore UX (e.g. progress/diagnostics improvements)
-- Review fork-feature differences (`dev-9.0`)
-
-## Merge order
-
-```
-main ← 9.3.3         (transitional fixes)
-main ← 9.4-refactor   (full refactor; bring back 9.3.3 quick-wins)
-main ← 9.4.1 / 9.4.2  (features; cut from 9.4-refactor or fresh branches)
-```
+Roadmap is a plan, not a promise — items can shift between versions if needed.

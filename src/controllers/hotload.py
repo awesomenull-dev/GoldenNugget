@@ -19,6 +19,7 @@ import urllib.request
 from PySide6.QtCore import QStandardPaths
 
 from src.gui.version import App_Version as _APP_VERSION
+from src.tweaks.registry import SPECS_BY_SECTION, SECTION_FEATURES
 
 RULES_URL = ("https://raw.githubusercontent.com/awesomenull-dev/"
              "GoldenNugget/main/hotload_rules.json")
@@ -45,38 +46,23 @@ DISABLE_DAEMON_ACTION = "disable_daemon"
 # Feature (page) name -> the tweak names that belong to it. A "hide_feature"
 # rule names one of these keys; the UI and the apply/preset paths use this map
 # to resolve which tweaks / pages to hide.
+#
+# Registry-backed features are derived from SPECS_BY_SECTION (a tweak belongs
+# to its section's feature automatically). Only the non-registry features and
+# a handful of pre-registry members stay explicit here.
 FEATURE_TWEAKS = {
-    "Liquid Glass": [
-        "ForceSolariumFallback", "DisableSolarium", "IgnoreSolariumLinkedOnCheck",
-        "NoLiquidClock", "NoLiquidDock", "DisableSpecularMotion",
-        "DisableOuterRefraction", "DisableSolariumHDR", "DisallowGlassButtons",
-        "DisallowGlassLockScreen", "ForceEnhancedSpeculars",
-        "ForceSolariumIntelligence", "UISolariumFallback",
-        "IgnoreSolariumHardwareCheck", "IgnoreSolariumOptOut",
-        "DisableSpecularEverywhere",
-    ],
-    "Springboard": [
-        "LockScreenFootnote", "WatchOSCompatibility", "AirDropDisableTimeLimit",
-        "SBDontLockAfterCrash", "SBDontDimOrLockOnAC", "SBHideLowPowerAlerts",
-        "SBHideACPower", "SBNeverBreadcrumb", "SBShowSupervisionTextOnLockScreen",
-        "AirplaySupport", "SBMinimumLockscreenIdleTime",
-        "SBAlwaysShowSystemApertureInSnapshots", "HideDICompletely",
-        "SBShowAuthenticationEngineeringUI", "UseFloatingTabBar",
-    ],
-    "Internal": [
-        "SBBuildNumber", "RTL", "LTR", "SBIconVisibility", "MetalForceHudEnabled",
-        "iMessageDiagnosticsEnabled", "IDSDiagnosticsEnabled",
-        "VCDiagnosticsEnabled", "AccessoryDeveloperEnabled", "DisableSecondsHand",
-        "DisableSearchingWebsites", "ShowButtonHints", "AppStoreDebug",
-        "NotesDebugMode", "BKDigitizerVisualizeTouches",
-        "BKHideAppleLogoOnLaunch", "EnableWakeGestureHaptic", "PlaySoundOnPaste",
-        "AnnounceAllPastes",
-    ],
+    feature: [spec.id.name for spec in specs]
+    for section, feature in SECTION_FEATURES.items()
+    for specs in [SPECS_BY_SECTION[section]]
+}
+FEATURE_TWEAKS.update({
+    "Liquid Glass": FEATURE_TWEAKS["Liquid Glass"] + ["DisableSolarium"],
+    "Internal": FEATURE_TWEAKS["Internal"] + ["MetalForceHudEnabled"],
     "PosterBoard": ["PosterBoard"],
     "Daemons": ["Daemons", "ClearScreenTimeAgentPlist"],
     "Status Bar": ["StatusBar"],
     "Templates": ["Templates"],
-}
+})
 
 
 def _settings_dir() -> str:

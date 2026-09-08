@@ -10,18 +10,14 @@ from src.gui.ios.components import (
 )
 from src.gui.ios.compat import is_tweak_compatible
 from src.tweaks.tweaks import tweaks, TweakID
-from src.tweaks.registry import SPECS_BY_SECTION, Kind, Section
+from src.tweaks.registry import SPECS_BY_SECTION, SECTION_FEATURES, Kind, Section
 from src.tweaks.tweak_loader import load_plist_tweaks
 from src.controllers.hotload import HotLoad
 
 # Feature (page) name -> registry Section it maps to in the iOS tweaks UI.
 # A HotLoad-hidden feature loses its whole section here (and the Sidebar/Home
 # entries), so its tweaks are never even shown.
-_SECTION_FEATURES = {
-    Section.LIQUID_GLASS: "Liquid Glass",
-    Section.SPRINGBOARD: "Springboard",
-    Section.INTERNAL: "Internal",
-}
+_SECTION_FEATURES = SECTION_FEATURES
 
 
 def _hotload() -> HotLoad:

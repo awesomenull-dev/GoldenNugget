@@ -27,6 +27,16 @@ class Kind(Enum):
     NUMBER = "number"   # numeric value
 
 
+# Feature (page) key each registry Section belongs to. Feeds HotLoad's
+# FEATURE_TWEAKS so every registry tweak automatically joins its feature;
+# the Sidebar uses the same keys to know which page owns a section.
+SECTION_FEATURES: dict[Section, str] = {
+    Section.LIQUID_GLASS: "Liquid Glass",
+    Section.SPRINGBOARD: "Springboard",
+    Section.INTERNAL: "Internal",
+}
+
+
 @dataclass(frozen=True)
 class TweakSpec:
     id: TweakID

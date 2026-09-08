@@ -5,6 +5,13 @@ source tree. Every statement below was confirmed by direct file reads with exact
 `file:line` citations. Sections 1–9 cover mechanics; the final section gives an
 ACCURATE / OUTDATED / MISSING verdict per claim.
 
+> **Stale since 9.4 refactor.** The `file:line` citations throughout were
+> verified against v9.1 and have shifted: `main_window.py` was split into
+> `src/gui/main_window_mixins.py`, `restore/protective.py` was split into
+> `inject.py` / `protective_cache.py`, and the classic designer stack was
+> parked. Treat line numbers as pointers to the feature, not the exact line;
+> the structural verdicts in the final section remain valid.
+
 ---
 
 ## 1. MainWindow and the Two UI Systems

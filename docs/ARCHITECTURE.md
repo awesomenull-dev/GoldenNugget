@@ -378,11 +378,14 @@ and is not the live navigator. Real navigation uses:
   `is_connection_error`) and is imported (aliased) by other modules, feeding
   the retry loops (`min(2**attempt, 15)s` connection backoff; Phase 3 restore
   uses 18 × fixed 3 s for transient errors only).
-- **Logging**: `log_info/log_warn/log_error` in `protective.py` → console +
-  `/tmp/goldennugget_log.txt`. `GOLDENNUGGET_LOG_FILE` overrides the stdlib
-  `setup_logging` path (`main_app.py`/`nugget_logger.py`); note that
-  `protective.py`'s own `_LOG_FILE` is a hardcoded constant and does **not**
-  read the env var.
+- **Logging**: unified stdlib logging on the `GoldenNugget` logger hierarchy.
+  `src/restore/protective.py` exports `log_info/log_warn/log_error` thin wrappers
+  around `logging.getLogger("GoldenNugget.protective")` (console + rotating
+  session file; WARNING+ falls back to stderr headless) — the legacy
+  `/tmp/goldennugget_log.txt` files are gone. `GOLDENNUGGET_LOG_FILE` overrides
+  the stdlib `setup_logging` path (`gui/logger.py` respects both the env var and
+  an AppData default); `--debug` on `main_app.py` upgrades to DEBUG + captures
+  pymobiledevice3.
 - **i18n**: registry titles use `QT_TRANSLATE_NOOP("Nugget", …)` at definition
   time and are evaluated with `QCoreApplication.translate("Nugget", …)` at
   render time; other UI strings translate inline. Catalogs are crowdsourced in

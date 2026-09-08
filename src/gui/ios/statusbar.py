@@ -1,115 +1,15 @@
 from PySide6.QtCore import Qt, QCoreApplication
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QScrollArea, QHBoxLayout, QLabel,
-    QDialog, QDialogButtonBox, QLineEdit, QSpinBox
+    QDialog
 )
 
 from src.gui.ios.components import (
-    IOSSectionHeader, IOSSwitch, IOSSettingsRow
+    IOSSectionHeader, IOSSwitch, IOSSettingsRow,
+    TextInputDialog, NumberInputDialog
 )
 from src.tweaks.tweaks import tweaks, TweakID
 from src.tweaks.status_bar.status_setter import StatusBarItem
-
-
-class _TextDialog(QDialog):
-    def __init__(self, title: str, current_value: str = "", parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(title)
-        self.setModal(True)
-        self.setMinimumWidth(320)
-        self.setStyleSheet("""
-            QDialog { background-color: #1e1e1e; }
-            QLabel { color: #FFFFFF; font-size: 15px; }
-            QLineEdit {
-                background-color: #1C1C1E;
-                border: none;
-                border-radius: 10px;
-                color: #FFFFFF;
-                font-size: 15px;
-                padding: 12px 16px;
-            }
-            QPushButton {
-                background-color: #007AFF;
-                border-radius: 10px;
-                color: #FFFFFF;
-                font-size: 15px;
-                font-weight: 600;
-                padding: 12px 24px;
-                border: none;
-                min-width: 80px;
-            }
-            QPushButton:hover { background-color: #0066CC; }
-        """)
-        layout = QVBoxLayout(self)
-        layout.setSpacing(16)
-        layout.setContentsMargins(24, 24, 24, 24)
-        self.input = QLineEdit()
-        self.input.setText(current_value)
-        layout.addWidget(self.input)
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    def get_value(self) -> str:
-        return self.input.text()
-
-
-class _NumDialog(QDialog):
-    def __init__(self, title: str, current_value: int = 0, min_val: int = 0, max_val: int = 999, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(title)
-        self.setModal(True)
-        self.setMinimumWidth(320)
-        self.setStyleSheet("""
-            QDialog { background-color: #1e1e1e; }
-            QLabel { color: #FFFFFF; font-size: 15px; }
-            QSpinBox {
-                background-color: #1C1C1E;
-                border: none;
-                border-radius: 10px;
-                color: #FFFFFF;
-                font-size: 15px;
-                padding: 12px 16px;
-            }
-            QSpinBox::up-button, QSpinBox::down-button { width: 0; }
-            QPushButton {
-                background-color: #007AFF;
-                border-radius: 10px;
-                color: #FFFFFF;
-                font-size: 15px;
-                font-weight: 600;
-                padding: 12px 24px;
-                border: none;
-                min-width: 80px;
-            }
-            QPushButton:hover { background-color: #0066CC; }
-        """)
-        layout = QVBoxLayout(self)
-        layout.setSpacing(16)
-        layout.setContentsMargins(24, 24, 24, 24)
-        self.spin = QSpinBox()
-        self.spin.setRange(min_val, max_val)
-        self.spin.setValue(current_value)
-        self.spin.setButtonSymbols(QSpinBox.NoButtons)
-        self.spin.setStyleSheet("""
-            QSpinBox {
-                background-color: #1C1C1E;
-                border: none;
-                border-radius: 10px;
-                color: #FFFFFF;
-                font-size: 15px;
-                padding: 12px 16px;
-            }
-        """)
-        layout.addWidget(self.spin)
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    def get_value(self) -> int:
-        return self.spin.value()
 
 
 class IOSStatusBarPage(QWidget):
@@ -356,7 +256,7 @@ class IOSStatusBarPage(QWidget):
         value_lbl.setText(current if checked else QCoreApplication.translate("Nugget", "Default"))
 
     def _on_text_row_edit(self, title: str, current: str, setter, label, value_lbl):
-        dialog = _TextDialog(title, current, self)
+        dialog = TextInputDialog(title, current, self)
         if dialog.exec() == QDialog.Accepted:
             value = dialog.get_value()
             setter(value)
@@ -398,7 +298,7 @@ class IOSStatusBarPage(QWidget):
         value_lbl.setText(str(current) if checked else QCoreApplication.translate("Nugget", "Default"))
 
     def _on_number_row_edit(self, title: str, current: int, setter, value_lbl, min_val: int, max_val: int):
-        dialog = _NumDialog(title, current, min_val, max_val, self)
+        dialog = NumberInputDialog(title, current, min_val, max_val, self)
         if dialog.exec() == QDialog.Accepted:
             value = dialog.get_value()
             setter(value)

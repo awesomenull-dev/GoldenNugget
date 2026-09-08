@@ -43,15 +43,7 @@ class StatusBarTweak(Tweak):
         once the real keys are extracted from SpringBoard (speakeasy strings
         in the dyld shared cache).
         """
-        overrides = self.setter.get_overrides()
-        if self.setter.silly_mode:
-            # copy the struct and turn every non-overridden item on
-            overrides = ffi.new("StatusBarOverrideData *")
-            ffi.memmove(overrides, self.setter.get_overrides(), ffi.sizeof(self.setter.get_overrides()))
-            for i in range(46):
-                if overrides.overrideItemIsEnabled[i] == 0:
-                    overrides.overrideItemIsEnabled[i] = 1
-                    overrides.values.itemIsEnabled[i] = 1
+        overrides = self.setter.get_overrides_with_silly_mode()
 
         override: dict = {}
         values: dict = {}

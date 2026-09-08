@@ -110,122 +110,17 @@ class IOSHomePage(QWidget):
         cards_row = QHBoxLayout()
         cards_row.setSpacing(12)
 
-        # PosterBoard card
-        self.posterboard_card = IOSCard()
-        pb_layout = QVBoxLayout(self.posterboard_card)
-        pb_layout.setContentsMargins(0, 0, 0, 0)
-        pb_layout.setSpacing(0)
-
-        # Header bar matching card background
-        pb_header = QFrame()
-        pb_header.setFixedHeight(56)
-        pb_header.setStyleSheet("background-color: #1C1C1E; border-top-left-radius: 12px; border-top-right-radius: 12px;")
-        pb_header_layout = QHBoxLayout(pb_header)
-        pb_header_layout.setContentsMargins(16, 8, 16, 8)
-        pb_title = QLabel(QCoreApplication.translate("Nugget", "PosterBoard"), pb_header)
-        pb_title.setStyleSheet("font-size: 17px; font-weight: 600; color: #FFFFFF;")
-        pb_header_layout.addWidget(pb_title, 1, Qt.AlignCenter)
-        pb_layout.addWidget(pb_header)
-
-        pb_content = QWidget()
-        pb_content_layout = QVBoxLayout(pb_content)
-        pb_content_layout.setContentsMargins(16, 16, 16, 16)
-        pb_content_layout.setSpacing(8)
-        pb_sub = QLabel(QCoreApplication.translate("Nugget", "Animated wallpapers & templates"), pb_content)
-        pb_sub.setStyleSheet("font-size: 14px; color: #8E8E93;")
-        pb_content_layout.addWidget(pb_sub)
-        pb_layout.addWidget(pb_content)
-
-        self.posterboard_card.mousePressEvent = lambda e: self.switch_to_ios_page(2)
-        self.posterboard_card.setCursor(Qt.PointingHandCursor)
+        self.posterboard_card = self._make_card(
+            "PosterBoard", "Animated wallpapers & templates", 2)
+        self.tweaks_card = self._make_card(
+            "Tweaks", "Customize system settings", 1)
+        self.daemons_card = self._make_card(
+            "Daemons", "Disable system daemons", 3)
+        self.statusbar_card = self._make_card(
+            "Status Bar", "Customize the status bar", 5)
         cards_row.addWidget(self.posterboard_card, 1)
-
-        # Tweaks card
-        self.tweaks_card = IOSCard()
-        tc_layout = QVBoxLayout(self.tweaks_card)
-        tc_layout.setContentsMargins(0, 0, 0, 0)
-        tc_layout.setSpacing(0)
-
-        tc_header = QFrame()
-        tc_header.setFixedHeight(56)
-        tc_header.setStyleSheet("background-color: #1C1C1E; border-top-left-radius: 12px; border-top-right-radius: 12px;")
-        tc_header_layout = QHBoxLayout(tc_header)
-        tc_header_layout.setContentsMargins(16, 8, 16, 8)
-        tc_title = QLabel(QCoreApplication.translate("Nugget", "Tweaks"), tc_header)
-        tc_title.setStyleSheet("font-size: 17px; font-weight: 600; color: #FFFFFF;")
-        tc_header_layout.addWidget(tc_title, 1, Qt.AlignCenter)
-        tc_layout.addWidget(tc_header)
-
-        tc_content = QWidget()
-        tc_content_layout = QVBoxLayout(tc_content)
-        tc_content_layout.setContentsMargins(16, 16, 16, 16)
-        tc_content_layout.setSpacing(8)
-        tc_sub = QLabel(QCoreApplication.translate("Nugget", "Customize system settings"), tc_content)
-        tc_sub.setStyleSheet("font-size: 14px; color: #8E8E93;")
-        tc_content_layout.addWidget(tc_sub)
-        tc_layout.addWidget(tc_content)
-
-        self.tweaks_card.mousePressEvent = lambda e: self.switch_to_ios_page(1)
-        self.tweaks_card.setCursor(Qt.PointingHandCursor)
         cards_row.addWidget(self.tweaks_card, 1)
-
-        # Daemons card
-        self.daemons_card = IOSCard()
-        dm_layout = QVBoxLayout(self.daemons_card)
-        dm_layout.setContentsMargins(0, 0, 0, 0)
-        dm_layout.setSpacing(0)
-
-        dm_header = QFrame()
-        dm_header.setFixedHeight(56)
-        dm_header.setStyleSheet("background-color: #1C1C1E; border-top-left-radius: 12px; border-top-right-radius: 12px;")
-        dm_header_layout = QHBoxLayout(dm_header)
-        dm_header_layout.setContentsMargins(16, 8, 16, 8)
-        dm_title = QLabel(QCoreApplication.translate("Nugget", "Daemons"), dm_header)
-        dm_title.setStyleSheet("font-size: 17px; font-weight: 600; color: #FFFFFF;")
-        dm_header_layout.addWidget(dm_title, 1, Qt.AlignCenter)
-        dm_layout.addWidget(dm_header)
-
-        dm_content = QWidget()
-        dm_content_layout = QVBoxLayout(dm_content)
-        dm_content_layout.setContentsMargins(16, 16, 16, 16)
-        dm_content_layout.setSpacing(8)
-        dm_sub = QLabel(QCoreApplication.translate("Nugget", "Disable system daemons"), dm_content)
-        dm_sub.setStyleSheet("font-size: 14px; color: #8E8E93;")
-        dm_content_layout.addWidget(dm_sub)
-        dm_layout.addWidget(dm_content)
-
-        self.daemons_card.mousePressEvent = lambda e: self.switch_to_ios_page(3)
-        self.daemons_card.setCursor(Qt.PointingHandCursor)
         cards_row.addWidget(self.daemons_card, 1)
-
-        # Status Bar card
-        self.statusbar_card = IOSCard()
-        sb_layout = QVBoxLayout(self.statusbar_card)
-        sb_layout.setContentsMargins(0, 0, 0, 0)
-        sb_layout.setSpacing(0)
-
-        sb_header = QFrame()
-        sb_header.setFixedHeight(56)
-        sb_header.setStyleSheet("background-color: #1C1C1E; border-top-left-radius: 12px; border-top-right-radius: 12px;")
-        sb_header_layout = QHBoxLayout(sb_header)
-        sb_header_layout.setContentsMargins(16, 8, 16, 8)
-        sb_title = QLabel(QCoreApplication.translate("Nugget", "Status Bar"), sb_header)
-        sb_title.setStyleSheet("font-size: 17px; font-weight: 600; color: #FFFFFF;")
-        sb_header_layout.addWidget(sb_title, 1, Qt.AlignCenter)
-        sb_layout.addWidget(sb_header)
-
-        sb_content = QWidget()
-        sb_content_layout = QVBoxLayout(sb_content)
-        sb_content_layout.setContentsMargins(16, 16, 16, 16)
-        sb_content_layout.setSpacing(8)
-        sb_sub = QLabel(QCoreApplication.translate("Nugget", "Customize the status bar"), sb_content)
-        sb_sub.setStyleSheet("font-size: 14px; color: #8E8E93;")
-        sb_sub.setWordWrap(True)
-        sb_content_layout.addWidget(sb_sub)
-        sb_layout.addWidget(sb_content)
-
-        self.statusbar_card.mousePressEvent = lambda e: self.switch_to_ios_page(5)
-        self.statusbar_card.setCursor(Qt.PointingHandCursor)
         cards_row.addWidget(self.statusbar_card, 1)
         layout.addLayout(cards_row)
 
@@ -370,3 +265,37 @@ class IOSHomePage(QWidget):
 
     def set_statusbar_visible(self, visible: bool):
         self.statusbar_card.setVisible(visible)
+
+    def _make_card(self, title: str, subtitle: str, page_index: int) -> IOSCard:
+        """Build one of the feature shortcut cards (title + subtitle header)."""
+        card = IOSCard()
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(0, 0, 0, 0)
+        card_layout.setSpacing(0)
+
+        header = QFrame()
+        header.setFixedHeight(56)
+        header.setStyleSheet(
+            "background-color: #1C1C1E; border-top-left-radius: 12px; "
+            "border-top-right-radius: 12px;")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(16, 8, 16, 8)
+        header_title = QLabel(
+            QCoreApplication.translate("Nugget", title), header)
+        header_title.setStyleSheet("font-size: 17px; font-weight: 600; color: #FFFFFF;")
+        header_layout.addWidget(header_title, 1, Qt.AlignCenter)
+        card_layout.addWidget(header)
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(16, 16, 16, 16)
+        content_layout.setSpacing(8)
+        sub = QLabel(QCoreApplication.translate("Nugget", subtitle), content)
+        sub.setStyleSheet("font-size: 14px; color: #8E8E93;")
+        sub.setWordWrap(True)
+        content_layout.addWidget(sub)
+        card_layout.addWidget(content)
+
+        card.mousePressEvent = lambda e: self.switch_to_ios_page(page_index)
+        card.setCursor(Qt.PointingHandCursor)
+        return card

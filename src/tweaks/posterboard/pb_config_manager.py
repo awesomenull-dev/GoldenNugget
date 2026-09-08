@@ -13,6 +13,10 @@ from src.restore.protective import log_warn
 from .pb_config_item import PBConfigItem
 
 
+# The classic pre-db5 PosterBoard table set; strict validation requires all four.
+POSTERBOARD_TABLES = ("poster", "posterAttributes", "posterRoleMembership", "sqlite_sequence")
+
+
 def _list_tables(db_path: str) -> list[str]:
     try:
         conn = sqlite3.connect(db_path)
@@ -39,8 +43,7 @@ def _validate_posterboard_db(db_path: str, strict: bool = True) -> bool:
         conn.execute("SELECT 1 FROM sqlite_master LIMIT 1")
         cursor = conn.cursor()
         if strict:
-            tables_to_check = ["poster", "posterAttributes", "posterRoleMembership", "sqlite_sequence"]
-            for tab in tables_to_check:
+            for tab in POSTERBOARD_TABLES:
                 cursor.execute(f"PRAGMA table_info({tab})")
                 if cursor.fetchone() is None:
                     log_warn(f"PosterBoard DB validation: missing table '{tab}' "
@@ -192,15 +195,8 @@ class PBConfigManager:
                 "The backup file may be corrupted. Please create a fresh backup and try again."
             )
 
-        # make sure it has the tables
         db_connection = sqlite3.connect(dbpath)
         db_cursor = db_connection.cursor()
-        tables_to_check = ["poster", "posterAttributes", "posterRoleMembership", "sqlite_sequence"]
-        for tab in tables_to_check:
-            db_cursor.execute(f"PRAGMA table_info({tab})")
-            if db_cursor.fetchone() is None:
-                db_connection.close()
-                return False
         # check the saved ids
         final_saved_items: list[PBConfigItem] = []
         for item in self.saved_items:

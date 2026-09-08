@@ -77,20 +77,28 @@ class Setter:
                 final_str += "0"
         return final_str
 
+    def get_overrides_with_silly_mode(self):
+        """Return the overrides struct, copying it when silly mode is on and
+        turning every non-overridden status bar item on. The caller's original
+        struct is never mutated.
+        """
+        if not self.silly_mode:
+            return self.current_overrides
+        # create a copy so that it doesn't change the original data
+        overrides = ffi.new("StatusBarOverrideData *")
+        # since it doesn't contain pointers, can just copy directly
+        ffi.memmove(overrides, self.current_overrides, ffi.sizeof(self.current_overrides))
+        # now turn on everything funny
+        for i in range(46):
+            if overrides.overrideItemIsEnabled[i] == 1:
+                # don't change setting
+                continue
+            overrides.overrideItemIsEnabled[i] = 1
+            overrides.values.itemIsEnabled[i] = 1
+        return overrides
+
     def get_data(self) -> bytes:
-        overrides = self.current_overrides
-        if self.silly_mode:
-            # create a copy so that it doesn't change the original data
-            overrides = ffi.new("StatusBarOverrideData *")
-            # since it doesn't contain pointers, can just copy directly
-            ffi.memmove(overrides, self.current_overrides, ffi.sizeof(self.current_overrides))
-            # now turn on everything funny
-            for i in range(46):
-                if overrides.overrideItemIsEnabled[i] == 1:
-                    # don't change setting
-                    continue
-                overrides.overrideItemIsEnabled[i] = 1
-                overrides.values.itemIsEnabled[i] = 1
+        overrides = self.get_overrides_with_silly_mode()
         if os.name != 'nt':
             return ffi.buffer(overrides)
 

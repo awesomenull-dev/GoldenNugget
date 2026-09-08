@@ -223,7 +223,7 @@ class AboutProgramDialog(QDialog):
         discord_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         discord_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         discord_btn.setStyleSheet("QToolButton { color: #007AFF; font-size: 14px; font-weight: 500; background: none; border: none; padding: 4px 8px; } QToolButton:hover { text-decoration: underline; }")
-        discord_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://discord.gg/RwbtH7pW5e")))
+        discord_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://discord.gg/Rm6r4zeE3y")))
         links_layout.addWidget(discord_btn)
         
         layout.addLayout(links_layout)

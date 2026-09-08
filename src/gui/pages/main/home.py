@@ -15,7 +15,7 @@ class HomePage(Page):
     def load_page(self):
         ## HOME PAGE ACTIONS
         self.ui.phoneVersionLbl.linkActivated.connect(self.toggle_version_label)
-        self.ui.discordBtn.clicked.connect(lambda: open_new_tab("https://discord.gg/RwbtH7pW5e"))
+        self.ui.discordBtn.clicked.connect(lambda: open_new_tab("https://discord.gg/Rm6r4zeE3y"))
 
         self._trim_to_logo_header()
         self._inject_preset_widget()

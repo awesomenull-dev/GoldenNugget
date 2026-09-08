@@ -253,4 +253,4 @@ See [CONTRIBUTING.md](https://github.com/awesomenull-dev/GoldenNugget/blob/main/
 [DuyGitHub]: https://github.com/khanhduytran0
 [HuyTwitter]: https://x.com/Little_34306
 [iTechExpertTwitter]: https://twitter.com/iTechExpert21
-[server]: https://discord.gg/RwbtH7pW5e
+[server]: https://discord.gg/Rm6r4zeE3y

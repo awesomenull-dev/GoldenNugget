@@ -5,7 +5,6 @@ from src.qt.mainwindow_ui import Ui_Nugget
 import src.gui.pages as Pages
 
 from src.controllers.translator import Translator
-import src.controllers.video_handler as video_handler
 from src.controllers.preset_manager import PresetManager
 
 from src.devicemanagement.device_manager import DeviceManager
@@ -54,10 +53,7 @@ class MainWindow(QtWidgets.QMainWindow, DeviceBarMixin, SettingsMixin,
 
         # hide every page
         self.ui.posterboardPageBtn.hide()
-        self.ui.templatePageBtn.hide()
         self.ui.euEnablerPageBtn.hide()
-        self.ui.enableiPadOSChk.hide()
-        self.ui.ipadOSAlphaWarningLbl.hide()
         self.ui.statusBarPageBtn.hide()
         self.ui.springboardOptionsPageBtn.hide()
         self.ui.internalOptionsPageBtn.hide()
@@ -195,10 +191,6 @@ class MainWindow(QtWidgets.QMainWindow, DeviceBarMixin, SettingsMixin,
         self.ui.refreshBtn.clicked.connect(self.refresh_devices)
         self.ui.devicePicker.currentIndexChanged.connect(self.change_selected_device)
 
-        # disable video features if OpenCV isn't working properly
-        if not video_handler.cv2_successful:
-            self.ui.videoPageBtn.hide()
-
         ## SIDE BAR ACTIONS
         self.ui.homePageBtn.clicked.connect(self.on_homePageBtn_clicked)
         self.ui.statusBarPageBtn.clicked.connect(self.on_statusBarPageBtn_clicked)
@@ -209,7 +201,3 @@ class MainWindow(QtWidgets.QMainWindow, DeviceBarMixin, SettingsMixin,
         self.ui.posterboardPageBtn.clicked.connect(self.on_posterboardPageBtn_clicked)
         self.ui.applyPageBtn.clicked.connect(self.on_applyPageBtn_clicked)
         self.ui.settingsPageBtn.clicked.connect(self.on_settingsPageBtn_clicked)
-
-        ## APPLY PAGE ACTIONS
-        self.ui.applyTweaksBtn.clicked.connect(self.on_applyTweaksBtn_clicked)
-        self.ui.removeTweaksBtn.clicked.connect(self.on_removeTweaksBtn_clicked)

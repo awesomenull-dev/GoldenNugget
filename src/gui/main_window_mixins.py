@@ -103,24 +103,11 @@ class DeviceBarMixin:
             ), log_to_console=False)
 
 
-    def update_pb_saved_ids_list(self):
-        # update PosterBoard saved ids list
-        self.ui.savedConfigIdsList.clear()
-        saved_ids = tweaks[TweakID.PosterBoard].config_manager.saved_items
-        if len(saved_ids) == 0:
-            self.ui.savedConfigIdsList.setDisabled(True)
-            self.ui.savedConfigIdsList.addItem("None")
-        else:
-            self.ui.savedConfigIdsList.setDisabled(False)
-            self.ui.savedConfigIdsList.addItems([id.to_str() for id in saved_ids])
-
-
     def refresh_devices_finished(self):
         self.refresh_in_progress = False
         self.toggle_thread_btns(disabled=False)
         # clear the picker
         self.ui.devicePicker.clear()
-        self.ui.restoreProgressBar.hide()
 
         if len(self.device_manager.devices) == 0:
             self.ui.devicePicker.setEnabled(False)
@@ -144,7 +131,6 @@ class DeviceBarMixin:
             self.ui.jjtechBtn.hide()
             self.ui.duyBtn.show()
 
-            self.ui.resetPairBtn.hide()
             # mirror in the iOS UI: no device → no status bar card
             if hasattr(self, "ios_home"):
                 self.ios_home.set_statusbar_visible(False)
@@ -168,14 +154,6 @@ class DeviceBarMixin:
             self.ui.sidebarDiv2.show()
             self.ui.applyPageBtn.show()
 
-            self.ui.springboardOptionsPageContent.setDisabled(False)
-            self.ui.internalOptionsPageContent.setDisabled(False)
-            self.ui.advancedOptionsPageContent.setDisabled(False)
-            self.ui.liquidGlassPageContent.setDisabled(False)
-            self.ui.pbPages.setDisabled(False)
-
-            self.ui.resetPairBtn.show()
-
             # HotLoad-hidden features are carved out of the Sidebar and iOS home
             self._apply_hidden_feature_gating()
         
@@ -192,87 +170,48 @@ class DeviceBarMixin:
     def change_selected_device(self, index):
         if len(self.device_manager.devices) > 0:
             self.device_manager.set_current_device(index=index)
-            # hide options that are for newer versions
+            # hide sidebar buttons that are for newer versions
             MinTweakVersions = {
-                "no_patch": [self.ui.chooseGestaltBtn, self.ui.gestaltPageBtn, self.ui.gestaltLocationLbl, self.ui.gestaltLocationTitleLbl],
-                "17.4": [self.ui.supportsDIChk],
-                "18.0": [self.ui.aodChk, self.ui.aodVibrancyChk, self.ui.iphone16SettingsChk],
-                "26.0": [self.ui.liquidGlassPageBtn]
+                "no_patch": [self.ui.gestaltPageBtn],
+                "26.0": [self.ui.liquidGlassPageBtn],
             }
 
             device_ver = Version(self.device_manager.data_singleton.current_device.version)
             # toggle option visibility for the minimum versions
-            for version in MinTweakVersions.keys():
-                if version == "exploit":
-                    # disable if the exploit is not available
-                    for pair in MinTweakVersions[version]:
-                        if device_ver >= Version(pair[0]):
-                            pair[1].show()
-                        else:
-                            pair[1].hide()
-                elif version == "no_patch":
+            for version, views in MinTweakVersions.items():
+                if version == "no_patch":
                     # these items only apply to unpatched devices, which do not exist on this fork
-                    for view in MinTweakVersions[version]:
+                    for view in views:
                         view.hide()
                 else:
                     # show views if the version is higher
                     parsed_ver = Version(version)
-                    for view in MinTweakVersions[version]:
-                        if device_ver >= parsed_ver:
-                            view.show()
-                        else:
-                            view.hide()
+                    for view in views:
+                        view.setVisible(device_ver >= parsed_ver)
             # The Status Bar override file is dropped by the iOS 27
             # safe-state-recovery wipe, so the whole feature is hidden on iOS 27+.
             if device_ver >= Version("27.0"):
                 self.ui.statusBarPageBtn.hide()
-                self.ui.forceSolariumFallbackContent.hide()
                 if hasattr(self, "ios_tweaks"):
                     self.ios_tweaks.set_force_solarium_fallback_visible(False)
             else:
                 self.ui.statusBarPageBtn.show()
-                self.ui.forceSolariumFallbackContent.show()
                 if hasattr(self, "ios_tweaks"):
                     self.ios_tweaks.set_force_solarium_fallback_visible(True)
             # mirror the Status Bar gating in the iOS UI
             if hasattr(self, "ios_home"):
                 self.ios_home.set_statusbar_visible(device_ver < Version("27.0"))
 
-            # hide posterboard .aar video option on ipads
+            # force video looping on iPads (loop gated off the classic widgets)
             is_iphone = self.device_manager.get_current_device_model().startswith("iPhone")
             if not is_iphone:
                 # force looping
                 tweaks[TweakID.PosterBoard].loop_video = True
-            is_looping = tweaks[TweakID.PosterBoard].loop_video
-            self.ui.pbVideoThumbLbl.setVisible(is_iphone and not is_looping)
-            self.ui.chooseThumbBtn.setVisible(is_iphone and not is_looping)
-            self.ui.caVideoChk.setVisible(is_iphone)
-            self.ui.exportPBVideoBtn.setVisible(is_looping and tweaks[TweakID.PosterBoard].videoFile != None)
-            # show status bar date on ipads
-            self.ui.dateChk.setVisible(not is_iphone)
-            self.ui.dateTxt.setVisible(not is_iphone)
-            # show floating tab bar on ipads
-            self.ui.floatingTabBarContent.setVisible(not is_iphone)
-            # iPadOS stuff
-            self.ui.stageManagerChk.setVisible(not is_iphone)
-            # liquid glass low performance mode stuff
-            supports_lg = device_ver >= Version("26.0")
-            # show the disable toggle on iPhone 12s and below (iPhone13,*)
-            is_lglpm = self.device_manager.get_current_device_model().removeprefix("iPhone") < "14"
-            self.ui.enableLGLPMChk.setVisible(supports_lg and not is_lglpm)
-            self.ui.disableLGLPMChk.setVisible(supports_lg and is_lglpm)
 
             # sparse-restore book credits do not apply to this fork
             self.ui.jjtechBtn.hide()
             # swap out the current posterboard file
-            if tweaks[TweakID.PosterBoard].config_manager.update_for_saved_database(self.device_manager.get_current_device_udid()):
-                self.ui.pbDBLbl.setText("sqlite: Selected")
-            else:
-                self.ui.pbDBLbl.setText("sqlite: None")
-            self.update_pb_saved_ids_list()
-            # wallpapers are always applied as configurations (iOS 26+ data
-            # store layout); the descriptors method is gone, so hide the toggle
-            self.ui.pbApplyMethods.setVisible(False)
+            tweaks[TweakID.PosterBoard].config_manager.update_for_saved_database(self.device_manager.get_current_device_udid())
 
             # show the PB if initial load is true
             if self.initial_load:
@@ -311,24 +250,6 @@ class SettingsMixin:
             supervised = self.settings.value("supervised", False, type=bool)
             organization_name = self.settings.value("organization_name", "", type=str)
             use_encrypted_backup = self.settings.value("use_encrypted_backup", False, type=bool)
-
-            self.ui.autoRebootChk.setChecked(auto_reboot)
-            self.ui.ignorePBFrameLimitChk.setChecked(ignore_frame_limit)
-            self.ui.disableTendiesLimitChk.setChecked(disable_tendies_limit)
-            self.ui.forcePBRefreshChk.setChecked(auto_refresh_posterboard)
-            # Experimental encrypted backup option
-            if hasattr(self.ui, 'encryptedBackupChk'):
-                self.ui.encryptedBackupChk.setChecked(use_encrypted_backup)
-            
-            self.ui.skipSetupChk.setChecked(skip_setup)
-            self.ui.supervisionChk.setChecked(supervised)
-            self.ui.supervisionOrganization.setText(organization_name)
-
-            # hide/show the warning label
-            if skip_setup:
-                self.ui.skipSetupOnLbl.show()
-            else:
-                self.ui.skipSetupOnLbl.hide()
 
             self.device_manager.pref_manager.auto_reboot = auto_reboot
             video_handler.set_ignore_frame_limit(ignore_frame_limit)
@@ -634,7 +555,6 @@ class ApplyMixin:
     """Apply/reset orchestration, alerts and dialog prompts."""
 
     def update_label(self, txt: str):
-        self.ui.statusLbl.setText(txt)
         # Mirror progress into the iOS surfaces (home indicator + Apply page)
         try:
             if txt:
@@ -644,13 +564,13 @@ class ApplyMixin:
             pass
 
 
-    def on_removeTweaksBtn_clicked(self):
+    def remove_tweaks_clicked(self):
         dialog = ResetDialog(device_manager=self.device_manager, apply_reset=self.apply_changes)
         dialog.exec()
 
 
     @QtCore.Slot()
-    def on_applyTweaksBtn_clicked(self):
+    def apply_tweaks_clicked(self):
         self.apply_changes()
 
 
@@ -786,7 +706,6 @@ class ApplyMixin:
     def finish_apply_thread(self, success: bool = False, error_msg: str = ""):
         self.apply_in_progress = False
         self.toggle_thread_btns(disabled=False)
-        self.update_pb_saved_ids_list()
         worker = getattr(self, 'worker_thread', None)
         is_reset = worker is not None and worker.reset_pages is not None
         # Show completion indicator on the iOS home page
@@ -860,8 +779,6 @@ class ApplyMixin:
 
     def toggle_thread_btns(self, disabled: bool):
         if disabled or not self.apply_in_progress:
-            self.ui.applyTweaksBtn.setDisabled(disabled)
-            self.ui.removeTweaksBtn.setDisabled(disabled)
             self.ios_apply.set_busy(disabled)
         if disabled or not self.refresh_in_progress:
             self.ui.refreshBtn.setDisabled(disabled)

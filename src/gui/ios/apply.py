@@ -48,7 +48,7 @@ class IOSApplyPage(QWidget):
 
         self.apply_btn = IOSPrimaryButton(QCoreApplication.translate(
             "Nugget", "Apply Tweaks"))
-        self.apply_btn.clicked.connect(self.window.on_applyTweaksBtn_clicked)
+        self.apply_btn.clicked.connect(self.window.apply_tweaks_clicked)
         apply_layout.addWidget(self.apply_btn)
         content_layout.addWidget(apply_card)
 
@@ -70,7 +70,7 @@ class IOSApplyPage(QWidget):
 
         self.remove_btn = IOSPrimaryButton(QCoreApplication.translate(
             "Nugget", "Remove Tweaks"))
-        self.remove_btn.clicked.connect(self.window.on_removeTweaksBtn_clicked)
+        self.remove_btn.clicked.connect(self.window.remove_tweaks_clicked)
         remove_layout.addWidget(self.remove_btn)
         content_layout.addWidget(remove_card)
 

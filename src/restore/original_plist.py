@@ -15,7 +15,6 @@ Manifest.db is then used to map ``(domain, relativePath)`` back to the
 payload files.
 """
 
-import asyncio
 import plistlib
 import sqlite3
 
@@ -55,33 +54,12 @@ _TEMPLATE_KEYS = (
     "PartitionType",
 )
 
-# Absolute path prefix -> backup (domain prefix, remainder handling).
-# Mirrors the mapping in DeviceManager.get_domain_for_path, but always uses
-# the fully-patched domain names (independent of the sparserestore status).
-_BACKUP_DOMAIN_MAPPINGS = (
-    ("/var/Managed Preferences/", "ManagedPreferencesDomain", False),
-    ("/var/root/", "RootDomain", False),
-    ("/var/preferences/", "SystemPreferencesDomain", False),
-    ("/var/MobileDevice/", "MobileDeviceDomain", False),
-    ("/var/mobile/", "HomeDomain", False),
-    ("/var/db/", "DatabaseDomain", False),
-    ("/var/containers/Shared/SystemGroup/", "SysSharedContainerDomain-", True),
-    ("/var/containers/Data/SystemGroup/", "SysContainerDomain-", True),
-)
+# Absolute path prefix -> backup (domain prefix, remainder handling) now
+# lives in one place: src/restore/path_mapping.py.
+from src.restore.path_mapping import split_path_into_domain
 
-
-def absolute_path_to_backup_location(path: str) -> tuple[Optional[str], Optional[str]]:
-    """Map an absolute device path to ``(domain, relativePath)`` as used in Manifest.db."""
-    for prefix, domain, is_container in _BACKUP_DOMAIN_MAPPINGS:
-        if path.startswith(prefix):
-            rest = path[len(prefix):]
-            if is_container:
-                group, sep, rel = rest.partition("/")
-                if not sep:
-                    return domain + group, ""
-                return domain + group, rel
-            return domain, rest
-    return None, None
+# Back-compat alias (same signature: (path) -> (domain | None, rel | None)).
+absolute_path_to_backup_location = split_path_into_domain
 
 
 _MANAGED_PREFERENCES_MOBILE = "/var/Managed Preferences/mobile/"
@@ -159,65 +137,71 @@ async def psysbackup(
     """
     from src.exceptions.device_errors import is_device_locked_error as _is_device_locked_error
     from src.exceptions.device_errors import is_connection_error as _is_connection_error
+    from src.utils.async_retry import async_retry
 
     update_label("Backing up device to capture original plists...")
     max_retries = 3
-    for attempt in range(1, max_retries + 1):
-        try:
-            async with lockdown_session(udid) as ld:
-                if attempt == 1:
-                    await check_disk_space_for_backup(ld)
-                # Check if backup encryption is enabled on device
-                is_encrypted = False
-                try:
-                    async with Mobilebackup2Service(ld) as backup_client:
-                        is_encrypted = await backup_client.get_will_encrypt()
-                except Exception:
-                    pass
 
-                if is_encrypted:
-                    if backup_password:
-                        update_label("Backup encryption enabled — using provided password to decrypt manifest...")
-                        print("[psysbackup] Backup encryption enabled, using provided password to decrypt manifest")
-                    else:
-                        # Can't read encrypted manifest without password - skip snapshot
-                        update_label("Backup encryption enabled — skipping pre-apply snapshot (auto-revert unavailable).")
-                        print("[psysbackup] Backup encryption enabled on device, skipping pre-apply snapshot (cannot read encrypted manifest without password)")
-                        return {}
+    async def _attempt() -> dict[str, bytes]:
+        # The disk-space pre-check runs once before the retry loop below.
+        async with lockdown_session(udid) as ld:
+            # Check if backup encryption is enabled on device
+            is_encrypted = False
+            try:
+                async with Mobilebackup2Service(ld) as backup_client:
+                    is_encrypted = await backup_client.get_will_encrypt()
+            except Exception:
+                pass
 
-                with TemporaryDirectory() as tmp_dir:
-                    async with Mobilebackup2Service(ld) as backup_client:
-                        try:
-                            await backup_client.backup(
-                                full=True,
-                                backup_directory=tmp_dir,
-                                progress_callback=update_progress,
-                                password=backup_password,
-                            )
-                        except NotEnoughDiskSpaceError:
-                            raise NuggetException(
-                                "Not enough free disk space on the computer for "
-                                "the pre-reset capture. Free up space (previous "
-                                "protective backups in the temp dir count against "
-                                "it) and try again.")
-                        except Exception as e:
-                            if _is_device_locked_error(e):
-                                update_label("Device locked during backup. Please unlock your device and keep it awake (tap screen periodically), then click Retry.")
-                                raise NuggetException("Device locked during backup. Please unlock your device, keep it awake, and try again.")
-                            if _is_connection_error(e) and attempt < max_retries:
-                                delay = min(2 ** attempt, 15)
-                                update_label(f"Connection lost, retrying in {delay}s... (attempt {attempt}/{max_retries})")
-                                await asyncio.sleep(delay)
-                                continue
-                            raise
-                    return _read_originals(Path(tmp_dir) / udid, paths)
-        except NuggetException:
-            raise
-        except Exception as e:
-            if _is_connection_error(e) and attempt < max_retries:
-                continue
-            raise
-        # lockdown_session closes the connection safely on every path
+            if is_encrypted:
+                if backup_password:
+                    update_label("Backup encryption enabled — using provided password to decrypt manifest...")
+                    print("[psysbackup] Backup encryption enabled, using provided password to decrypt manifest")
+                else:
+                    # Can't read encrypted manifest without password - skip snapshot
+                    update_label("Backup encryption enabled — skipping pre-apply snapshot (auto-revert unavailable).")
+                    print("[psysbackup] Backup encryption enabled on device, skipping pre-apply snapshot (cannot read encrypted manifest without password)")
+                    return {}
+
+            with TemporaryDirectory() as tmp_dir:
+                async with Mobilebackup2Service(ld) as backup_client:
+                    try:
+                        await backup_client.backup(
+                            full=True,
+                            backup_directory=tmp_dir,
+                            progress_callback=update_progress,
+                            password=backup_password,
+                        )
+                    except NotEnoughDiskSpaceError:
+                        raise NuggetException(
+                            "Not enough free disk space on the computer for "
+                            "the pre-reset capture. Free up space (previous "
+                            "protective backups in the temp dir count against "
+                            "it) and try again.")
+                    except Exception as e:
+                        if _is_device_locked_error(e):
+                            update_label("Device locked during backup. Please unlock your device and keep it awake (tap screen periodically), then click Retry.")
+                            raise NuggetException("Device locked during backup. Please unlock your device, keep it awake, and try again.")
+                        raise
+                return _read_originals(Path(tmp_dir) / udid, paths)
+
+    async with lockdown_session(udid) as ld:
+        await check_disk_space_for_backup(ld)
+
+    def _on_retry(attempt: int, total: int, e: Exception, delay: float) -> None:
+        if attempt < total:
+            update_label(f"Connection lost, retrying in {delay}s... (attempt {attempt}/{max_retries})")
+
+    try:
+        return await async_retry(
+            _attempt,
+            max_retries,
+            retry_if=_is_connection_error,
+            exp_cap=15,
+            on_retry=_on_retry,
+        )
+    except NuggetException:
+        raise
 
 
 def _read_originals(device_dir: Path, paths: list[str]) -> dict[str, bytes]:

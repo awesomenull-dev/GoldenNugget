@@ -32,6 +32,7 @@ from pymobiledevice3.services.mobilebackup2 import Mobilebackup2Service
 from pymobiledevice3.exceptions import ConnectionTerminatedError, PyMobileDevice3Exception, DeviceNotFoundError, PasswordRequiredError, NotPairedError, ConnectionFailedError, InvalidServiceError
 
 from src.exceptions.nugget_exception import NuggetException
+from src.exceptions.device_errors import is_transient_restore_error
 
 class FileToRestore:
     def __init__(self,
@@ -309,23 +310,6 @@ async def _wait_for_device(udid: str, progress_callback,
         log_info("User chose to resume — restarting the reconnect wait cycle")
 
 
-def _is_transient_restore_error(error) -> bool:
-    """True for Phase 3 errors that mean 'device still booting, try again'."""
-    name = type(error).__name__
-    msg = str(error)
-    # ssl.SSLError subclasses OSError, so this covers SSL drops too.
-    if isinstance(error, (ConnectionTerminatedError, OSError)):
-        return True
-    if "InvalidService" in name:
-        return True
-    if "NotEnoughDiskSpace" in str(error):
-        return True  # device-side purge request — retry after cleanup
-    # MBErrorDomain/1: SpringBoard not ready for a restore yet.
-    if "SpringBoard" in msg and "ready for a restore" in msg:
-        return True
-    return "start" in msg.lower() and "service" in msg.lower()
-
-
 class _Mobilebackup2NoEscrow(Mobilebackup2Service):
     """mobilebackup2 started WITHOUT the escrow bag.
 
@@ -362,55 +346,63 @@ async def _restore_protective_backup(lc: LockdownClient, backup_root: str,
 
     The progress_callback is already pre-scaled by the caller.
     """
+    from src.utils.async_retry import async_retry
+
     max_retries = 18
-    for attempt in range(1, max_retries + 1):
-        try:
-            async with _start_mobilebackup2(lc) as mb:
-                await mb.restore(
-                    backup_root,
-                    system=True, copy=True, remove=False,
-                    reboot=reboot, source=udid,
-                    skip_apps=skip_apps,
-                    progress_callback=progress_callback,
-                    password=backup_password,
-                )
-            return
-        except (PyMobileDevice3Exception, ConnectionTerminatedError,
-                ssl.SSLError, OSError, DeviceNotFoundError, PasswordRequiredError, 
-                NotPairedError, ConnectionFailedError) as e:
-            if attempt >= max_retries or not _is_transient_restore_error(e):
-                # The device already told us which file it stubbed on — cross-check
-                # the pruned manifest on disk so the log shows exactly which rows
-                # are missing their payload (MBErrorDomain/205 post-mortem).
-                if not _is_transient_restore_error(e):
-                    try:
-                        missing = verify_backup_payloads(backup_root, udid, backup_password)
-                        if missing:
-                            log_error(f"MBErrorDomain/205 context: {len(missing)} manifest rows "
-                                      f"lack payloads (e.g. {missing[:5]})")
-                    except Exception:
-                        pass
-                if isinstance(e, InvalidServiceError):
-                    raise NuggetException(
-                        "The iPhone would not start the restore service "
-                        "(mobilebackup2) even after several minutes of retries.",
-                        detailed_text=(
-                            "This is not about Developer Mode - that is only "
-                            "needed for the tweak restore (BookRestore), not "
-                            "for restoring your data.\n\nThe phone was likely "
-                            "still booting, locked, or had the screen off. "
-                            "Unlock the iPhone, keep the screen on, wait for "
-                            "it to reach the home screen, then apply again. "
-                            "Your data was not lost - the protective backup is "
-                            "kept on this computer and will be restored on the "
-                            "next run."
-                        ),
-                    )
-                raise
-            progress_callback(
-                f"Device not ready, retrying ({attempt}/{max_retries})..."
+
+    async def _restore_once():
+        async with _start_mobilebackup2(lc) as mb:
+            await mb.restore(
+                backup_root,
+                system=True, copy=True, remove=False,
+                reboot=reboot, source=udid,
+                skip_apps=skip_apps,
+                progress_callback=progress_callback,
+                password=backup_password,
             )
-            await asyncio.sleep(3)
+
+    def _on_retry(attempt: int, total: int, e: Exception, delay: float) -> None:
+        progress_callback(
+            f"Device not ready, retrying ({attempt}/{max_retries})..."
+        )
+
+    def _on_failure(e: Exception) -> None:
+        # The device already told us which file it stubbed on — cross-check
+        # the pruned manifest on disk so the log shows exactly which rows
+        # are missing their payload (MBErrorDomain/205 post-mortem).
+        if not is_transient_restore_error(e):
+            try:
+                missing = verify_backup_payloads(backup_root, udid, backup_password)
+                if missing:
+                    log_error(f"MBErrorDomain/205 context: {len(missing)} manifest rows "
+                              f"lack payloads (e.g. {missing[:5]})")
+            except Exception:
+                pass
+        if isinstance(e, InvalidServiceError):
+            raise NuggetException(
+                "The iPhone would not start the restore service "
+                "(mobilebackup2) even after several minutes of retries.",
+                detailed_text=(
+                    "This is not about Developer Mode - that is only "
+                    "needed for the tweak restore (BookRestore), not "
+                    "for restoring your data.\n\nThe phone was likely "
+                    "still booting, locked, or had the screen off. "
+                    "Unlock the iPhone, keep the screen on, wait for "
+                    "it to reach the home screen, then apply again. "
+                    "Your data was not lost - the protective backup is "
+                    "kept on this computer and will be restored on the "
+                    "next run."
+                ),
+            )
+
+    await async_retry(
+        _restore_once,
+        max_retries,
+        retry_if=is_transient_restore_error,
+        fixed_delay=3,
+        on_retry=_on_retry,
+        on_failure=_on_failure,
+    )
 
 
 async def _restore_ios27(back: backup.Backup, reboot: bool,
@@ -765,22 +757,25 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
                 if apps is None:
                     # A failed lookup here would abort the whole sparse
                     # restore later — retry hard, then fail loudly.
-                    last_err = None
-                    for attempt in range(1, 4):
-                        try:
-                            async with InstallationProxyService(lockdown=lockdown_client) as ips:
-                                apps = await ips.get_apps(application_type="Any", calculate_sizes=False)
-                            break
-                        except Exception as e:
-                            last_err = e
-                            log_warn(f"InstallationProxy query failed "
-                                     f"(attempt {attempt}/3): {e}")
-                            await asyncio.sleep(min(2 ** attempt, 8))
-                    if apps is None:
+                    from src.utils.async_retry import async_retry
+
+                    async def _get_apps():
+                        async with InstallationProxyService(lockdown=lockdown_client) as ips:
+                            return await ips.get_apps(application_type="Any", calculate_sizes=False)
+
+                    try:
+                        apps = await async_retry(
+                            _get_apps, 3,
+                            exp_cap=8,
+                            on_retry=lambda attempt, total, e, delay: log_warn(
+                                f"InstallationProxy query failed (attempt {attempt}/3): {e}"
+                            ),
+                        )
+                    except Exception as e:
                         raise NuggetException(
                             "Could not query installed apps from the device "
                             f"(needed to register {bundle_id} for the restore). "
-                            f"Last error: {last_err}")
+                            f"Last error: {e}") from e
                 try:
                     app_info = apps[bundle_id]
                 except KeyError:

@@ -157,7 +157,7 @@ async def _restore_with_wait(lc, backup_root: str, udid: str, backup_password: s
     import ssl
     import time
 
-    from src.restore.restore import _is_transient_restore_error  # noqa: E401
+    from src.exceptions.device_errors import is_transient_restore_error
 
     start = time.monotonic()
     deadline = start + unlock_timeout_min * 60
@@ -193,7 +193,7 @@ async def _restore_with_wait(lc, backup_root: str, udid: str, backup_password: s
                 lc = await create_using_usbmux(serial=udid, autopair=True)
             continue
         except transmit as e:
-            if not _is_transient_restore_error(e):
+            if not is_transient_restore_error(e):
                 progress_callback(f"Restore error ({type(e).__name__}): {e}")
                 raise
             remaining = int(deadline - time.monotonic())

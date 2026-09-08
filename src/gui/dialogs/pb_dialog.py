@@ -19,6 +19,7 @@ from src.devicemanagement.constants import is_supported_by_fork
 from src.gui.thread_workers.apply_worker import ApplyAlertMessage
 from src.gui.thread_workers.pb_worker import PBDBThread
 from src.tweaks.tweaks import tweaks, TweakID
+from src.utils.async_retry import async_retry
 
 
 async def backup_posterboard_database(udid: str, update_label=lambda x: None, update_progress=lambda x: None) -> str:
@@ -40,30 +41,37 @@ async def backup_posterboard_database(udid: str, update_label=lambda x: None, up
                 break
 
     max_retries = 3
-    for attempt in range(1, max_retries + 1):
+
+    async def _attempt():
         async with lockdown_session(udid) as service_provider:
-            if attempt == 1:
-                await check_disk_space_for_backup(service_provider, path=app_data_path)
             # hard-block fetching the database from an unsupported (old) iOS version
             if not is_supported_by_fork(service_provider.all_values.get("ProductVersion", "0.0")):
                 raise NuggetException(
                     "This version of iOS is not supported by this fork.\n\n"
                     "GoldenNugget only supports iOS 26.2 and newer. "
                     "Please use the original Nugget for iOS 26.1 and earlier.")
-            try:
-                async with Mobilebackup2Service(service_provider) as backup_client:
+            async with Mobilebackup2Service(service_provider) as backup_client:
+                try:
                     await backup_client.backup(full=needs_full, backup_directory=app_data_path, progress_callback=update_progress)
-            except Exception as e:
-                if _is_device_locked_error(e):
-                    raise NuggetException("Device locked during backup. Please unlock your device, keep it awake (tap screen periodically), and try again.")
-                if _is_connection_error(e) and attempt < max_retries:
-                    delay = min(2 ** attempt, 15)
-                    update_label(f"Connection lost, retrying in {delay}s... (attempt {attempt}/{max_retries})")
-                    await asyncio.sleep(delay)
-                    continue
-                raise
-            break  # Success
-        # lockdown_session closes the connection safely on every path
+                except Exception as e:
+                    if _is_device_locked_error(e):
+                        raise NuggetException("Device locked during backup. Please unlock your device, keep it awake (tap screen periodically), and try again.")
+                    raise
+
+    async with lockdown_session(udid) as service_provider:
+        await check_disk_space_for_backup(service_provider, path=app_data_path)
+
+    def _on_retry(attempt: int, total: int, e: Exception, delay: float) -> None:
+        if attempt < total:
+            update_label(f"Connection lost, retrying in {delay}s... (attempt {attempt}/{max_retries})")
+
+    await async_retry(
+        _attempt,
+        max_retries,
+        retry_if=_is_connection_error,
+        exp_cap=15,
+        on_retry=_on_retry,
+    )
 
     # get the file, reading the sqlite db first to get the file id
     update_label("Getting the file...")

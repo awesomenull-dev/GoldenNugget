@@ -397,22 +397,20 @@ class ProtectiveBackupService(Mobilebackup2Service):
         self.include_posterboard = include_posterboard
 
     async def connect(self, max_retries: int = 5):
-        last_error = None
-        for attempt in range(1, max_retries + 1):
-            try:
-                return await super().connect()
-            except (_pm3_exc.ConnectionTerminatedError, ConnectionError,
-                    OSError, asyncio.TimeoutError) as e:
-                last_error = e
-                if attempt >= max_retries:
-                    break
-                delay = min(2 ** attempt, 15)
-                print(
-                    f"[ProtectiveBackup] mobilebackup2 connect failed "
-                    f"(attempt {attempt}/{max_retries}), retrying in {delay}s: {e}"
-                )
-                await asyncio.sleep(delay)
-        raise last_error  # type: ignore[misc]
+        from src.utils.async_retry import async_retry
+
+        retryable = (_pm3_exc.ConnectionTerminatedError, ConnectionError,
+                     OSError, asyncio.TimeoutError)
+        return await async_retry(
+            lambda: super().connect(),
+            max_retries,
+            retry_if=lambda e: isinstance(e, retryable),
+            exp_cap=15,
+            on_retry=lambda attempt, total, e, delay: print(
+                f"[ProtectiveBackup] mobilebackup2 connect failed "
+                f"(attempt {attempt}/{total}), retrying in {delay}s: {e}"
+            ),
+        )
 
     async def init_mobile_backup_factory_info(self, afc):
         root_node = self.lockdown.all_values

@@ -368,31 +368,12 @@ class DeviceManager:
 
     def get_domain_for_path(self, path: str, owner: int = 501) -> str:
         # returns Domain: str?, Path: str
-        fully_patched = True
-        # just make the Sys Containers to use the regular way (won't work for mga)
-        sysSharedContainer = "SysSharedContainerDomain-"
-        sysContainer = "SysContainerDomain-"
-        mappings: dict = {
-            "/var/Managed Preferences/": "ManagedPreferencesDomain",
-            "/var/root/": "RootDomain",
-            "/var/preferences/": "SystemPreferencesDomain",
-            "/var/MobileDevice/": "MobileDeviceDomain",
-            "/var/mobile/": "HomeDomain",
-            "/var/db/": "DatabaseDomain",
-            "/var/containers/Shared/SystemGroup/": sysSharedContainer,
-            "/var/containers/Data/SystemGroup/": sysContainer
-        }
-        for mapping in mappings.keys():
-            if path.startswith(mapping):
-                new_path = path.replace(mapping, "")
-                new_domain = mappings[mapping]
-                # if patched, include the next part of the path in the domain
-                if fully_patched and (new_domain == sysSharedContainer or new_domain == sysContainer):
-                    parts = new_path.split("/")
-                    new_domain += parts[0]
-                    new_path = new_path.replace(parts[0] + "/", "")
-                return new_path, new_domain
-        return path, ""
+        from src.restore.path_mapping import split_path_into_domain
+
+        mobile_domain, rel_path = split_path_into_domain(path)
+        if mobile_domain is None:
+            return path, ""
+        return rel_path, mobile_domain
     
     def concat_file(self, contents: str, path: str, files_to_restore: list[FileToRestore], owner: int = 501, group: int = 501):
         # TODO: try using inodes here instead

@@ -75,28 +75,6 @@ def _ca_refs_from_plist(xml: bytes) -> List[str]:
     return refs
 
 
-def _family_drops_bounds_origin(xml: bytes) -> bool:
-    """Homebrew exports (``family`` Homebrew/AnimalCrossing) bake scale/offset
-    artifacts into ``layer.bounds.origin`` that push content far off-canvas
-    (`-53370` etc. appearing across unrelated wallpapers). The device renderer
-    ignores them, so the port drops the origin for this family."""
-    try:
-        import plistlib
-        data = plistlib.loads(xml)
-    except Exception:
-        return False
-    if not isinstance(data, dict):
-        return False
-    family = data.get("family")
-    if isinstance(family, str):
-        if family.lower() == "homebrew" or family.lower() == "animalcrossing":
-            return True
-    ident = data.get("identifier")
-    if isinstance(ident, (int, float)) and int(ident) == 9918:
-        return True
-    return False
-
-
 def _resolve_ca_dir(ca_ref: str, paths: List[str]) -> Optional[str]:
     """Match ``ca_ref`` to a zip directory ending in ``.ca``."""
     norm_ref = _norm(ca_ref)
@@ -250,11 +228,9 @@ def load_tendie(tendie_path: str) -> Optional[TendieBundle]:
 
         plist = _find_wallpaper_plist(paths)
         resolved_dirs: List[str] = []
-        drop_bounds_origin = False
         if plist:
             plist_data = zf.read(plist)
             ca_refs = _ca_refs_from_plist(plist_data)
-            drop_bounds_origin = _family_drops_bounds_origin(plist_data)
             for ref in ca_refs:
                 d = _resolve_ca_dir(ref, paths)
                 if d and d not in resolved_dirs:
@@ -294,10 +270,6 @@ def load_tendie(tendie_path: str) -> Optional[TendieBundle]:
         bundle.floating = _extract_ca_dir(floating_dir, paths, zf) if floating_dir else None
         bundle.background = _extract_ca_dir(background_dir, paths, zf) if background_dir else None
         bundle.wallpaper = _extract_ca_dir(wallpaper_dir, paths, zf) if wallpaper_dir else None
-
-        for _d in (bundle.floating, bundle.background, bundle.wallpaper):
-            if _d is not None:
-                _d.drop_bounds_origin = drop_bounds_origin
 
         any_root = None
         for d in (bundle.floating, bundle.background, bundle.wallpaper):

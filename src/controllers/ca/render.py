@@ -561,7 +561,6 @@ class CAMLRenderer:
         self._state_root_id: Optional[object] = None
         self._emitter_particles: Dict[str, List[Tuple[float, float, float, float, float]]] = {}
         self._painted_layers = 0
-        self.drop_bounds_origin = bool(getattr(doc, "drop_bounds_origin", False))
 
     # -- asset access ------------------------------------------------------ #
 
@@ -686,12 +685,8 @@ class CAMLRenderer:
             box_top_left_dy = -(1.0 - ay) * h
         else:
             box_top_left_dy = -ay * h
-        if self.drop_bounds_origin:
-            box_top_left_dx = -ax * w
-        else:
-            # Homebrew (9918) exports encode scale artifacts here; drop them.
-            box_top_left_dx = -ax * w - layer.boundsOrigin.x
-            box_top_left_dy -= layer.boundsOrigin.y
+        box_top_left_dx = -ax * w - layer.boundsOrigin.x
+        box_top_left_dy -= layer.boundsOrigin.y
 
         filters = [f for f in layer.filters if f.enabled] if layer.filters else []
         blend = _BLEND_MODES.get(layer.blendMode)
@@ -952,8 +947,9 @@ class CAMLRenderer:
             if img is None:
                 continue
             s = cell.scale if cell.scale else 1.0
-            target_w = max(1, img.width() * s)
-            target_h = max(1, img.height() * s)
+            contents_scale = cell.contentsScale if cell.contentsScale else 1.0
+            target_w = max(1, round(img.width() / contents_scale * s))
+            target_h = max(1, round(img.height() / contents_scale * s))
             base_alpha = _clamp(cell.alpha, 0.0, 1.0)
             yacc = cell.yAcceleration
             if use_y_up:

@@ -212,7 +212,6 @@ class CADocument:
     stateTransitions: List[StateTransition] = field(default_factory=list)
     parallax: List[ParallaxGroup] = field(default_factory=list)
     assets: Dict[str, bytes] = field(default_factory=dict)
-    drop_bounds_origin: bool = False
 
 
 @dataclass

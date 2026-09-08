@@ -1,2 +1,2 @@
-App_Version = "9.3.2"
-App_Build = 0
+App_Version = "9.4"
+App_Build = 1

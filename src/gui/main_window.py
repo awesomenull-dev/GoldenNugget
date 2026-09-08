@@ -4,17 +4,13 @@ from PySide6.QtCore import QCoreApplication
 from src.qt.mainwindow_ui import Ui_Nugget
 import src.gui.pages as Pages
 
-from src.controllers.web_request_handler import is_update_available
 from src.controllers.translator import Translator
 import src.controllers.video_handler as video_handler
 from src.controllers.preset_manager import PresetManager
 
 from src.devicemanagement.device_manager import DeviceManager
 
-from src.gui.dialogs import UpdateAppDialog
 from src.gui.pages.pages_list import Page
-
-from src.gui.version import App_Version, App_Build
 
 from src.gui.ios.theme_manager import ThemeManager
 from src.gui.ios.home import IOSHomePage
@@ -189,10 +185,6 @@ class MainWindow(QtWidgets.QMainWindow, DeviceBarMixin, SettingsMixin,
         # Back navigation: ESC key and mouse back button go to the home page
         QtWidgets.QApplication.instance().installEventFilter(self)
 
-        # Check for an update
-        if is_update_available(App_Version, App_Build):
-            # notify with prompt to download the new version from github
-            UpdateAppDialog().exec()
         # Update the app version/build number label
         self.updateAppVersionLabel()
         self.pages[Page.Home].load()

@@ -23,7 +23,7 @@ def get_latest_version() -> str:
         return last_fetched_version
     # fetch with web requests
     try:
-        response = get(f"https://api.github.com/repos/{Nugget_Repo}")
+        response = get(f"https://api.github.com/repos/{Nugget_Repo}", timeout=5)
         response.raise_for_status()  # To raise an exception for 4xx/5xx responses
 
         data = response.json()  # Parse the JSON response

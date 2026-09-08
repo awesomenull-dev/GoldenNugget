@@ -231,6 +231,38 @@ def main() -> int:
     widget.resize(800, 600)
     widget.show()
 
+    # Check for updates in the background so startup never blocks on the
+    # network (GitHub API latency / offline timeouts). The modal dialog is
+    # exec'd on the main thread via a queued signal once the answer is known.
+    try:
+        import threading
+        from PySide6.QtCore import QObject, Signal
+
+        class _UpdateSignal(QObject):
+            available = Signal(bool)
+
+        _update_signal = _UpdateSignal()
+
+        def _show_update_dialog():
+            from src.gui.dialogs import UpdateAppDialog
+            UpdateAppDialog().exec()
+
+        def _check_update():
+            try:
+                from src.controllers.web_request_handler import is_update_available
+                from src.gui.version import App_Version, App_Build
+                ok = bool(is_update_available(App_Version, App_Build))
+            except Exception as e:
+                logger.debug("Update check failed: %s", e)
+                ok = False
+            _update_signal.available.emit(ok)
+
+        _update_signal.available.connect(lambda ok: _show_update_dialog() if ok else None)
+        threading.Thread(target=_check_update, daemon=True).start()
+        app._update_signal = _update_signal  # keep a strong reference
+    except Exception as e:
+        logger.debug("Background update check skipped: %s", e)
+
     # HotLoad: refresh the remote safety rules in the background every launch,
     # and watch for a kill rule to become active while the app is already
     # running. Local caching means applications still use whatever is on disk

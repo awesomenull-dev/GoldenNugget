@@ -499,18 +499,23 @@ class DeviceManager:
                         force_live=not partially_supported)
                 except Exception as e:
                     if "disk space" in str(e).lower() or "NotEnoughDiskSpace" in type(e).__name__:
-                        from PySide6.QtWidgets import QMessageBox
-                        reply = QMessageBox.question(
-                            None,
+                        # The Yes/No decision must be asked on the main thread
+                        # (this runs on ApplyThread — a QMessageBox here is a
+                        # cross-thread-widget bug). Relay via ``prompt_choice``;
+                        # "resume" == continue without protection, "abort" ==
+                        # refuse. Without a callback (headless) default to abort.
+                        if prompt_choice is None:
+                            log_warn("Protective backup failed (disk space) and no "
+                                     "prompt_choice callback — aborting apply")
+                            return
+                        decision = prompt_choice(
                             QCoreApplication.tr("Not Enough Disk Space"),
                             QCoreApplication.tr(
                                 "The protective backup failed because the device or "
                                 "computer does not have enough free disk space.\n\n"
                                 "Continue anyway WITHOUT data protection?\n"
-                                "(Photos, settings and app data may be lost.)"),
-                            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                            QMessageBox.StandardButton.No)
-                        if reply == QMessageBox.StandardButton.Yes:
+                                "(Photos, settings and app data may be lost.)"))
+                        if decision == "resume":
                             log_warn("User chose to continue without protective backup")
                             prepared_root = None
                             pb_from_cache = False

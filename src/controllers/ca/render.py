@@ -413,19 +413,29 @@ def _apply_filters(img: QImage, filters) -> QImage:
         return img
 
 
+def _rgb_hue_delta(r, g, b, np=None):
+    """Compute the hue angles (0..360) and max-min delta for an RGB array."""
+    if np is None:
+        import numpy as np
+    maxc = np.maximum(np.maximum(r, g), b)
+    minc = np.minimum(np.minimum(r, g), b)
+    delta = maxc - minc
+    mask = delta != 0
+    safe = np.where(mask, delta, 1.0)
+    h = np.zeros_like(maxc)
+    h = np.where(mask & (maxc == r), 60.0 * (((g - b) / safe) % 6.0), h)
+    h = np.where(mask & (maxc == g), 60.0 * (((b - r) / safe) + 2.0), h)
+    h = np.where(mask & (maxc == b), 60.0 * (((r - g) / safe) + 4.0), h)
+    return h, delta
+
+
 def _hue_rotate_pil(pil, degrees: float, np):
     arr = np.asarray(pil).astype(np.float32) / 255.0
     rgb = arr[..., :3]
     alpha = arr[..., 3]
     r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+    h, delta = _rgb_hue_delta(r, g, b, np)
     maxc = np.maximum(np.maximum(r, g), b)
-    minc = np.minimum(np.minimum(r, g), b)
-    delta = maxc - minc
-    h = np.zeros_like(maxc)
-    mask = delta != 0
-    h = np.where(mask & (maxc == r), 60.0 * (((g - b) / np.where(mask, delta, 1.0)) % 6.0), h)
-    h = np.where(mask & (maxc == g), 60.0 * (((b - r) / np.where(mask, delta, 1.0)) + 2.0), h)
-    h = np.where(mask & (maxc == b), 60.0 * (((r - g) / np.where(mask, delta, 1.0)) + 4.0), h)
     s = np.where(maxc != 0, delta / np.where(maxc, maxc, 1.0), 0.0)
     v = maxc
     h = np.mod(h + degrees, 360.0)
@@ -436,12 +446,13 @@ def _hue_rotate_pil(pil, degrees: float, np):
     t = v * (1.0 - (1.0 - f) * s)
     h6 = np.mod(floor_h, 6.0).astype(np.float32)
     out = np.empty_like(rgb)
-    for i, (h_, p_, q_, t_) in enumerate([(0, [v, t, pp]), (1, [q, v, pp]), (2, [pp, v, t]), (3, [pp, q, v]), (4, [t, pp, v]), (5, [v, pp, q])]):
+    sector_rgb = [(0, (v, t, pp)), (1, (q, v, pp)), (2, (pp, v, t)),
+                  (3, (pp, q, v)), (4, (t, pp, v)), (5, (v, pp, q))]
+    for i, comps in sector_rgb:
         mask_i = h6 == i
-        out[..., 0] = np.where(mask_i, h_[0], out[..., 0])
-        out[..., 0] = np.where(mask_i, h_[0], out[..., 0])
-        out[..., 1] = np.where(mask_i, h_[1], out[..., 1])
-        out[..., 2] = np.where(mask_i, h_[2], out[..., 2])
+        out[..., 0] = np.where(mask_i, comps[0], out[..., 0])
+        out[..., 1] = np.where(mask_i, comps[1], out[..., 1])
+        out[..., 2] = np.where(mask_i, comps[2], out[..., 2])
     out = np.stack([out[..., 0], out[..., 1], out[..., 2], alpha], axis=-1)
     out = np.clip(out, 0.0, 1.0)
     from PIL import Image as _I
@@ -466,18 +477,12 @@ def _sepia_pil(pil, factor: float, np):
 def _rgb_to_hsl(rgb: "np.ndarray") -> "np.ndarray":
     import numpy as np
     r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+    h, delta = _rgb_hue_delta(r, g, b, np)
     mx = np.maximum(np.maximum(r, g), b)
     mn = np.minimum(np.minimum(r, g), b)
-    delta = mx - mn
-    h = np.empty_like(mx)
-    h[:] = 0.0
-    nz = delta > 0
-    h = np.where(nz & (mx == r), 60.0 * (((g - b) / np.where(nz, delta, 1.0)) % 6.0), h)
-    h = np.where(nz & (mx == g), 60.0 * (((b - r) / np.where(nz, delta, 1.0)) + 2.0), h)
-    h = np.where(nz & (mx == b), 60.0 * (((r - g) / np.where(nz, delta, 1.0)) + 4.0), h)
     light = (mx + mn) / 2.0
     denom = np.where((light == 0) | (light == 1), np.full_like(light, 1e-6), 1.0 - np.abs(2.0 * light - 1.0))
-    s = np.where(nz, delta / denom, 0.0)
+    s = np.where(delta > 0, delta / denom, 0.0)
     return np.stack([h, s, light], axis=-1)
 
 

@@ -68,15 +68,6 @@ class ApplyThread(QThread):
         self.success = False
         self._error_msg: str = ""
 
-    def update_label(self, txt: str):
-        if txt == 'sudo_pwd':
-            self.alert.emit(None)
-        else:
-            self.progress.emit(txt)
-
-    def alert_window(self, msg: ApplyAlertMessage):
-        self.alert.emit(msg)
-
     def prompt_password(self, title: str, label: str) -> Optional[str]:
         # Modal dialogs must be built on the main thread (macOS raises
         # NSInternalInconsistencyException otherwise), so relay the request

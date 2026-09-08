@@ -426,7 +426,6 @@ class ProtectiveBackupService(Mobilebackup2Service):
         return info
 
     async def _add_posterboard_container(self, info: dict):
-        log_info('DEBUG: _add_posterboard_container called')
         """List only the PosterBoard container so its sqlite DB rides this backup.
 
         The entry mirrors what the stock factory info carries for an app

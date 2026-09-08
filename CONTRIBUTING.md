@@ -39,6 +39,9 @@ To keep the repository history clean and easy to read, please use the appropriat
 * **`[FIX]`** – For bug fixes and stability improvements.
 * **`[QOL]`** – For app features, UI changes, or overall GoldenNugget improvements.
 * **`[DOCS]`** – For updates to the README, documentation, or this guide.
+* **`[CA]`** - For CoreAnimation preview commits
+* **`[HOTFIX]`** - For hotfixes
+* **`[REFACTOR]`** - For backend updates
 * **`[?]`** - For changes that does not apply to any of existing tags.
 
 ### Examples

@@ -8,7 +8,8 @@ for line-level verified facts gathered during a codebase audit see [FINDINGS.md]
 
 ```
 main_app.py ──► src/gui/main_window.py ──► pages/ (classic UI)  +  ios/ (iOS-style UI)
-                        │
+                        │  (MainWindow = QMainWindow + DeviceBar/Settings/Navigation/Apply
+                        │   mixins from src/gui/main_window_mixins.py)
                         ▼
             src/devicemanagement/device_manager.py   (apply / reset orchestration)
                         │
@@ -264,7 +265,12 @@ construction) and `__init__.py::perform_restore` (with `GOLDENNUGGET_KEEP_SPARSE
 debug copy support). `_Mobilebackup2NoEscrow` is used when a fresh post-wipe
 re-pair carries no EscrowBag.
 
-### `protective.py` — the cache and everything around it
+### The `restore/` package — protective backup, injection and the cache
+The protective backup pipeline lives in `protective.py` (live backup,
+working copies, prune/dedupe, clean-for-restore); the backup-file injector
+was split out to `inject.py` (blob builders + `inject_file_into_backup`) and
+the `ProtectiveBackupCache` to `protective_cache.py` (both re-exported from
+`protective.py`):
 - `ProtectiveBackupCache` — per-device master copy in
   `<temp>/goldennugget_protective_cache/master/<udid>`. The master keeps a
   FULL Manifest.db (rows for drained payloads stay) so mobilebackup2 can run

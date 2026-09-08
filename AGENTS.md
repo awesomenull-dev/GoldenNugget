@@ -79,7 +79,7 @@ Main entry point for applying tweaks. Order:
 3. Fallback: if the PB DB was needed but missing from the protective backup (device rejected container inclusion / encrypted), the legacy separate `_backup_posterboard_database(force=True)` runs (skipped if `GOLDENNUGGET_SKIP_PB_BACKUP=1`)
 4. `_apply_tweak_pass()` — generate all tweak files, handle backup encryption, then `start_restore(prepared_backup_root=...)`
 
-### Protective Backup Cache (src/restore/protective.py)
+### Protective Backup Cache (src/restore/protective_cache.py)
 `ProtectiveBackupCache` keeps a per-device master copy of the protective
 backup in `<temp>/goldennugget_protective_cache/master/<udid>`:
 - **EXPERIMENTAL, OFF BY DEFAULT** — the cache only engages when the user
@@ -187,7 +187,12 @@ backup in `<temp>/goldennugget_protective_cache/master/<udid>`:
 **Phase 5 (95-100%)**: `reboot_device()` — only when auto-reboot is on
 
 ### `perform_protective_backup()` (src/restore/protective.py)
-- Creates a selective device backup via mobilebackup2
+- Creates a selective device backup via mobilebackup2. The module keeps the
+  whole live-backup pipeline (`perform_protective_backup`,
+  `make_protective_working_copy`, `prune_protective_backups`, `psysbackup`,
+  `clean_backup_for_restore`); the injection helpers live in
+  `src/restore/inject.py` and the cache in `src/restore/protective_cache.py`
+  (both re-exported from `protective.py`).
 - Filters: keeps HomeDomain (Accounts, ConfigurationProfiles, Preferences, SpringBoard, ControlCenter, Shortcuts, WebClips — including each `.webclip/Storage` PWA payload — plus WebApp and WebKit/WebsiteData web-app data), CameraRoll/Media (photos), SystemPreferencesDomain
 - Skips: AppDomain-* containers (empty `Applications` in factory info), KeychainDomain
 - Encryption: uses existing encryption if enabled, otherwise unencrypted

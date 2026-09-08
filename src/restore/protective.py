@@ -168,31 +168,24 @@ async def check_disk_space_for_backup(lockdown_client=None, path: str = None,
 # Importing this module applies it process-wide.
 _sc.DEFAULT_SSL_HANDSHAKE_TIMEOUT = 60
 
-# Log file path
-_LOG_FILE = "/tmp/goldennugget_log.txt"
+import logging
 
-def _log_write(msg: str) -> None:
-    """Write message to log file (always writes, regardless of debug mode)."""
-    try:
-        with open(_LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n")
-    except Exception:
-        pass  # Never fail on logging
+_logger = logging.getLogger("GoldenNugget.protective")
+
 
 def log_info(msg: str) -> None:
-    """Log info message (always writes to log file)."""
-    print(f"[INFO] {msg}")
-    _log_write(f"[INFO] {msg}")
+    """Log an info message through the session logger."""
+    _logger.info(msg)
+
 
 def log_warn(msg: str) -> None:
-    """Log warning message (always writes to log file)."""
-    print(f"[WARN] {msg}")
-    _log_write(f"[WARN] {msg}")
+    """Log a warning through the session logger."""
+    _logger.warning(msg)
+
 
 def log_error(msg: str) -> None:
-    """Log error message (always writes to log file)."""
-    print(f"[ERROR] {msg}")
-    _log_write(f"[ERROR] {msg}")
+    """Log an error through the session logger."""
+    _logger.error(msg)
 
 # --- DeviceLink protocol constants (from pymobiledevice3.services.device_link) ---
 

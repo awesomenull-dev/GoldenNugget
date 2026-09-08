@@ -336,8 +336,12 @@ _apply_changes()
 
 ## Logging
 
-- Console output: `print()` for immediate feedback
-- Log file: `/tmp/goldennugget_log.txt` (via `src/restore/protective.py` log functions;
-  note `protective.py`'s `_LOG_FILE` is a hardcoded constant and ignores the env var)
+- Unified stdlib logging: all modules log through the `GoldenNugget` logger
+  hierarchy (rotating session file + console handler).
+- `src/restore/protective.py` exports `log_info` / `log_warn` / `log_error`
+  thin wrappers around `logging.getLogger("GoldenNugget.protective")` (they
+  inherit the console + file handlers attached to `GoldenNugget`, and fall
+  back to stderr for WARNING+ in headless contexts).
+- Legacy `/tmp/goldennugget_log.txt` files created by `protective.py` are gone.
 - Verbose logging: pass `--debug` to `main_app.py`; the stdlib logger path can be
   overridden with the `GOLDENNUGGET_LOG_FILE` env var

@@ -392,8 +392,9 @@ class ProtectiveBackupService(Mobilebackup2Service):
 
         retryable = (_pm3_exc.ConnectionTerminatedError, ConnectionError,
                      OSError, asyncio.TimeoutError)
+        base_connect = super().connect
         return await async_retry(
-            lambda: super().connect(),
+            base_connect,
             max_retries,
             retry_if=lambda e: isinstance(e, retryable),
             exp_cap=15,

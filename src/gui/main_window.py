@@ -21,12 +21,51 @@ from src.gui.ios.settings import IOSSettingsPage
 from src.gui.ios.statusbar import IOSStatusBarPage
 from src.tweaks.registry import Section
 
+from src.gui.theme import ColorThemeManager, t, theme_icon, themed_stylesheet
+
 from src.gui.main_window_mixins import (
     ApplyMixin,
     DeviceBarMixin,
     NavigationMixin,
     SettingsMixin,
 )
+
+# Classic chrome (device bar + sidebar + home toolbar) uses monochrome white
+# bootstrap SVGs; they must be recolored on every theme change.
+_CLASSIC_THEMED_ICONS = {
+    "phoneIconBtn": ":/icon/phone.svg",
+    "refreshBtn": ":/icon/arrow-clockwise.svg",
+    "homePageBtn": ":/icon/house.svg",
+    "gestaltPageBtn": ":/icon/iphone-island.svg",
+    "euEnablerPageBtn": ":/icon/geo-alt.svg",
+    "statusBarPageBtn": ":/icon/wifi.svg",
+    "passcodePageBtn": ":/icon/lock.svg",
+    "springboardOptionsPageBtn": ":/icon/app-indicator.svg",
+    "internalOptionsPageBtn": ":/icon/hdd.svg",
+    "liquidGlassPageBtn": ":/icon/liquid-glass.svg",
+    "daemonsPageBtn": ":/icon/toggles.svg",
+    "applyPageBtn": ":/icon/check-circle.svg",
+    "posterboardPageBtn": ":/icon/wallpaper.svg",
+    "settingsPageBtn": ":/icon/gear.svg",
+    "mainDevBtn": ":/icon/github.svg",
+    "discordBtn": ":/icon/discord.svg",
+    "starOnGithubBtn": ":/icon/star.svg",
+    "leminGithubBtn": ":/icon/github.svg",
+    "leminTwitterBtn": ":/icon/twitter.svg",
+    "leminKoFiBtn": ":/icon/currency-dollar.svg",
+}
+
+# Classic home "credits" buttons that hardcode dark borders in the .ui.
+_CLASSIC_BORDERED_BTNS = [
+    "helpFromBtn", "posterRestoreBtn", "snoolieBtn", "disfordottieBtn",
+    "mikasaBtn", "wind0ws11AeroBtn", "translatorsBtn", "libiBtn",
+    "duyBtn", "jjtechBtn", "qtBtn",
+]
+
+_CARET_SVG = ('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" '
+              'fill="{color}" viewBox="0 0 16 16">'
+              '<path d="M7.247 11.14 2.451 5.658C1.885 5.013 2.345 4 3.204 4 '
+              'h9.592a1 1 0 0 1 .753 1.659l-4.796 5.48a1 1 0 0 1-1.506 0z"/></svg>')
 
 class MainWindow(QtWidgets.QMainWindow, DeviceBarMixin, SettingsMixin,
                  NavigationMixin, ApplyMixin):
@@ -74,11 +113,15 @@ class MainWindow(QtWidgets.QMainWindow, DeviceBarMixin, SettingsMixin,
         # full-screen iOS); apply_theme() below applies it
         self.theme_manager = ThemeManager(self)
 
+        # Color theme manager (dark/light + accent)
+        self._color_theme = ColorThemeManager.instance()
+        self._color_theme.theme_changed.connect(self._on_color_theme_changed)
+
         # build the iOS-style pages stack
         # 0 = home, 1 = tweaks, 2 = posterboard, 3 = daemons, 4 = settings,
         # 5 = statusbar, 6 = apply, 7 = springboard, 8 = internal, 9 = liquidglass
         self.ios_pages = QtWidgets.QStackedWidget(self)
-        self.ios_pages.setStyleSheet("background-color: #1e1e1e;")
+        self.ios_pages.setStyleSheet(t("page_bg"))
         self.ios_home = IOSHomePage(self)
         self.ios_tweaks = IOSTweaksPage(self)
         self.ios_posterboard = IOSPosterboardPage(self)
@@ -201,3 +244,84 @@ class MainWindow(QtWidgets.QMainWindow, DeviceBarMixin, SettingsMixin,
         self.ui.posterboardPageBtn.clicked.connect(self.on_posterboardPageBtn_clicked)
         self.ui.applyPageBtn.clicked.connect(self.on_applyPageBtn_clicked)
         self.ui.settingsPageBtn.clicked.connect(self.on_settingsPageBtn_clicked)
+
+        # Apply the initial themed global stylesheet
+        self._apply_global_stylesheet()
+
+    # ---- Color theme reactivity ------------------------------------------
+
+    def _apply_global_stylesheet(self):
+        """Re-apply the global stylesheet using the current color theme."""
+        self.setStyleSheet(t("global"))
+        # Also update the QPalette so native widgets pick up the colors
+        QtWidgets.QApplication.instance().setPalette(self._color_theme.build_palette())
+        # Re-style the ios_pages stack
+        self.ios_pages.setStyleSheet(t("page_bg"))
+        # Re-style the classic chrome (sidebar icons, device bar, home toolbar)
+        self._retheme_classic()
+
+    def _retheme_classic(self):
+        """Re-color the classic shell: chrome icons, device picker, version
+        link and the hardcoded-dark credit buttons."""
+        c = self._color_theme.colors
+
+        # Recolor white SVG chrome icons to the current text color
+        for obj_name, res in _CLASSIC_THEMED_ICONS.items():
+            widget = getattr(self.ui, obj_name, None)
+            if widget is not None:
+                widget.setIcon(theme_icon(res, c.text_primary))
+
+        # Device picker combo + themed drop-down caret
+        caret_path = self._themed_caret(c.text_secondary)
+        self.ui.devicePicker.setStyleSheet(
+            themed_stylesheet("device_picker", caret=caret_path))
+
+        # Version link inherits white from the .ui — restyle to text_secondary
+        self.ui.phoneNameLbl.setStyleSheet(f"color: {c.text_primary};")
+        self.ui.phoneVersionLbl.setText(
+            f'<a style="text-decoration:none; color:{c.text_secondary}" href="#">Version</a>')
+
+        # Always-visible shell chrome: the sidebar and device bar are shown on
+        # every page/tab, so their text color must be themed explicitly
+        # (otherwise it falls back to whatever the .ui bundled).
+        chrome = f"""
+            QToolButton {{
+                color: {c.text_primary};
+                background: transparent;
+            }}
+            QToolButton:hover {{
+                color: {c.text_primary};
+                background-color: {c.surface_hover};
+            }}
+            QLabel {{ color: {c.text_primary}; }}
+        """
+        self.ui.sidebar.setStyleSheet(chrome)
+        self.ui.deviceBar.setStyleSheet(chrome)
+
+        # Credit buttons hardcode #3b3b3b borders in the generated .ui
+        bordered_style = themed_stylesheet("classic_bordered_btn")
+        for obj_name in _CLASSIC_BORDERED_BTNS:
+            widget = getattr(self.ui, obj_name, None)
+            if widget is not None:
+                widget.setStyleSheet(bordered_style)
+
+    def _themed_caret(self, color_hex: str) -> str:
+        """Write a themed drop-down caret SVG next to the cached ones and
+        return its file path for the device_picker stylesheet."""
+        import os
+        from tempfile import gettempdir
+        path = os.path.join(gettempdir(),
+                            f"gn_caret_{color_hex.strip('#').lower()}.svg")
+        if not os.path.exists(path):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(_CARET_SVG.format(color=color_hex))
+        return path.replace(os.sep, "/")
+
+    def _on_color_theme_changed(self):
+        """Called when the color theme (dark/light or accent) changes."""
+        self._apply_global_stylesheet()
+        # Force re-render of all iOS page stylesheets by re-applying them
+        for i in range(self.ios_pages.count()):
+            page = self.ios_pages.widget(i)
+            if page and hasattr(page, '_retheme'):
+                page._retheme()

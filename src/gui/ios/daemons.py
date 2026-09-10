@@ -2,6 +2,7 @@ from PySide6.QtCore import QCoreApplication
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QScrollArea, QHBoxLayout, QLabel, QMessageBox
 
 from src.gui.ios.components import IOSSectionHeader, IOSSwitch
+from src.gui.theme import ColorThemeManager
 from src.tweaks.tweaks import tweaks, TweakID
 from src.tweaks.tweak_loader import load_daemons
 from src.tweaks.daemons_tweak import Daemon
@@ -33,8 +34,10 @@ class IOSDaemonsContent(QWidget):
         master_row = QHBoxLayout(master_card)
         master_row.setContentsMargins(16, 10, 16, 10)
         master_row.setSpacing(12)
+        c = ColorThemeManager.instance().colors
         master_label = QLabel(QCoreApplication.translate("Nugget", "Enable Daemon Modifications"))
-        master_label.setStyleSheet("color: #FFFFFF; font-size: 15px;")
+        master_label.setStyleSheet(f"color: {c.text_primary}; font-size: 15px;")
+        self._master_label = master_label
         master_row.addWidget(master_label, 1)
         self.master_switch = IOSSwitch(self.daemons_tweak.enabled)
         self.master_switch.toggled.connect(self._on_master_toggled)
@@ -43,6 +46,8 @@ class IOSDaemonsContent(QWidget):
 
         self.daemon_cards = []
         self.daemon_switches = []
+        self._daemon_labels = []
+        self._forced_notes = []
         self._confirming = False
         self._hotload_acked = False
 
@@ -90,7 +95,8 @@ class IOSDaemonsContent(QWidget):
             row_layout.setContentsMargins(16, 10, 16, 10)
             row_layout.setSpacing(12)
             label = QLabel(QCoreApplication.translate("Nugget", "Clear ScreenTimeAgent.plist file"))
-            label.setStyleSheet("color: #FFFFFF; font-size: 15px;")
+            label.setStyleSheet(f"color: {c.text_primary}; font-size: 15px;")
+            self._screen_time_label = label
             row_layout.addWidget(label, 1)
             self.screen_time_switch = IOSSwitch(self.screen_time_tweak.enabled)
             self.screen_time_switch.toggled.connect(self.screen_time_tweak.set_enabled)
@@ -106,8 +112,10 @@ class IOSDaemonsContent(QWidget):
         row_layout.setContentsMargins(16, 10, 16, 10)
         row_layout.setSpacing(12)
 
+        c = ColorThemeManager.instance().colors
         label = QLabel(title)
-        label.setStyleSheet("color: #FFFFFF; font-size: 15px;")
+        label.setStyleSheet(f"color: {c.text_primary}; font-size: 15px;")
+        self._daemon_labels.append(label)
         row_layout.addWidget(label, 1)
 
         value = self.daemons_tweak.value.get(daemon.value[0], False) if self.daemons_tweak.value else False
@@ -124,7 +132,8 @@ class IOSDaemonsContent(QWidget):
             switch.setEnabled(False)
             self._forced_switches.append(switch)
             note = QLabel(QCoreApplication.translate("Nugget", "safety rules"))
-            note.setStyleSheet("color: #ff6b6b; font-size: 12px;")
+            note.setStyleSheet(f"color: {c.error}; font-size: 12px;")
+            self._forced_notes.append(note)
             row_layout.addWidget(note)
 
         layout.addWidget(card)
@@ -277,6 +286,16 @@ class IOSDaemonsContent(QWidget):
             screen_time_switch.setChecked(self.screen_time_tweak.enabled)
             screen_time_switch.blockSignals(False)
 
+    def _retheme(self):
+        c = ColorThemeManager.instance().colors
+        self._master_label.setStyleSheet(f"color: {c.text_primary}; font-size: 15px;")
+        for lbl in self._daemon_labels:
+            lbl.setStyleSheet(f"color: {c.text_primary}; font-size: 15px;")
+        for note in self._forced_notes:
+            note.setStyleSheet(f"color: {c.error}; font-size: 12px;")
+        if hasattr(self, '_screen_time_label'):
+            self._screen_time_label.setStyleSheet(f"color: {c.text_primary}; font-size: 15px;")
+
 
 class IOSDaemonsPage(QWidget):
     def __init__(self, window, parent=None):
@@ -288,12 +307,19 @@ class IOSDaemonsPage(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
+        c = ColorThemeManager.instance().colors
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("background-color: #1e1e1e; border: none;")
+        scroll.setStyleSheet(f"background-color: {c.bg_primary}; border: none;")
+        self._scroll = scroll
         self.content = IOSDaemonsContent(window, self)
         scroll.setWidget(self.content)
         layout.addWidget(scroll)
 
     def refresh_from_tweaks(self):
         self.content.refresh_from_tweaks()
+
+    def _retheme(self):
+        c = ColorThemeManager.instance().colors
+        self._scroll.setStyleSheet(f"background-color: {c.bg_primary}; border: none;")
+        self.content._retheme()

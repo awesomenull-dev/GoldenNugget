@@ -1,13 +1,14 @@
 from PySide6.QtCore import Qt, QCoreApplication
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QScrollArea, QHBoxLayout, QLabel,
-    QDialog
+    QDialog, QPushButton
 )
 
 from src.gui.ios.components import (
     IOSSectionHeader, IOSSwitch, IOSSettingsRow,
     TextInputDialog, NumberInputDialog
 )
+from src.gui.theme import ColorThemeManager
 from src.tweaks.tweaks import tweaks, TweakID
 from src.tweaks.status_bar.status_setter import StatusBarItem
 
@@ -26,7 +27,7 @@ class IOSStatusBarPage(QWidget):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("background-color: #1e1e1e; border: none;")
+        self._scroll = scroll
         content = QWidget()
         scroll.setWidget(content)
         layout.addWidget(scroll)
@@ -188,6 +189,49 @@ class IOSStatusBarPage(QWidget):
 
         self.content_layout.addStretch()
 
+        self._retheme()
+        ColorThemeManager.instance().theme_changed.connect(self._retheme)
+
+    def _retheme(self):
+        c = ColorThemeManager.instance().colors
+        self._scroll.setStyleSheet(f"background-color: {c.bg_primary}; border: none;")
+        for i in range(self.content_layout.count()):
+            item = self.content_layout.itemAt(i)
+            if item is None:
+                continue
+            widget = item.widget()
+            if widget is None:
+                continue
+            # Style labels inside cards (switch rows, text rows, number rows)
+            row = widget.findChild(QHBoxLayout)
+            if row is not None:
+                for j in range(row.count()):
+                    child = row.itemAt(j)
+                    if child is None:
+                        continue
+                    w = child.widget()
+                    if w is None:
+                        continue
+                    if isinstance(w, QLabel):
+                        current = w.styleSheet()
+                        if "font-size: 15px" in current:
+                            w.setStyleSheet(f"color: {c.text_primary}; font-size: 15px;")
+                        elif "font-size: 14px" in current:
+                            w.setStyleSheet(f"color: {c.text_secondary}; font-size: 14px;")
+                        elif "font-size: 17px" in current:
+                            w.setStyleSheet(f"color: {c.accent}; font-size: 17px;")
+            # Style QPushButton (edit buttons) inside cards
+            btn = widget.findChild(QPushButton) if hasattr(widget, 'findChild') else None
+            if btn is not None:
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: transparent;
+                        border: none;
+                        color: {c.accent};
+                        font-size: 17px;
+                    }}
+                """)
+
     def _make_item_handler(self, item: StatusBarItem):
         def handler(checked: bool):
             if checked:
@@ -200,12 +244,13 @@ class IOSStatusBarPage(QWidget):
         return handler
 
     def _make_switch(self, title: str, checked: bool, on_toggled):
+        c = ColorThemeManager.instance().colors
         card = QWidget()
         row = QHBoxLayout(card)
         row.setContentsMargins(16, 10, 16, 10)
         row.setSpacing(12)
         label = QLabel(title)
-        label.setStyleSheet("color: #FFFFFF; font-size: 15px;")
+        label.setStyleSheet(f"color: {c.text_primary}; font-size: 15px;")
         row.addWidget(label, 1)
         switch = IOSSwitch(checked)
         switch.toggled.connect(on_toggled)
@@ -214,17 +259,18 @@ class IOSStatusBarPage(QWidget):
         return switch
 
     def _make_text_row(self, title: str, overridden: bool, current: str, setter, unsetter):
+        c = ColorThemeManager.instance().colors
         card = QWidget()
         row = QHBoxLayout(card)
         row.setContentsMargins(16, 10, 16, 10)
         row.setSpacing(12)
 
         label = QLabel(title)
-        label.setStyleSheet("color: #FFFFFF; font-size: 15px;")
+        label.setStyleSheet(f"color: {c.text_primary}; font-size: 15px;")
         row.addWidget(label, 1)
 
         value_lbl = QLabel(current if overridden else QCoreApplication.translate("Nugget", "Default"))
-        value_lbl.setStyleSheet("color: #8E8E93; font-size: 14px;")
+        value_lbl.setStyleSheet(f"color: {c.text_secondary}; font-size: 14px;")
         row.addWidget(value_lbl)
 
         switch = IOSSwitch(overridden)
@@ -234,13 +280,13 @@ class IOSStatusBarPage(QWidget):
         edit_btn = IOSSettingsRow("")
         edit_btn.setFixedWidth(44)
         edit_btn.setText("✎")
-        edit_btn.setStyleSheet("""
-            QPushButton {
+        edit_btn.setStyleSheet(f"""
+            QPushButton {{
                 background-color: transparent;
                 border: none;
-                color: #007AFF;
+                color: {c.accent};
                 font-size: 17px;
-            }
+            }}
         """)
         edit_btn.clicked.connect(lambda: self._on_text_row_edit(title, current, setter, label, value_lbl))
         row.addWidget(edit_btn)
@@ -264,17 +310,18 @@ class IOSStatusBarPage(QWidget):
             label.setText(title)
 
     def _make_number_row(self, title: str, overridden: bool, current: int, setter, unsetter, min_val: int, max_val: int):
+        c = ColorThemeManager.instance().colors
         card = QWidget()
         row = QHBoxLayout(card)
         row.setContentsMargins(16, 10, 16, 10)
         row.setSpacing(12)
 
         label = QLabel(title)
-        label.setStyleSheet("color: #FFFFFF; font-size: 15px;")
+        label.setStyleSheet(f"color: {c.text_primary}; font-size: 15px;")
         row.addWidget(label, 1)
 
         value_lbl = QLabel(str(current) if overridden else QCoreApplication.translate("Nugget", "Default"))
-        value_lbl.setStyleSheet("color: #8E8E93; font-size: 14px;")
+        value_lbl.setStyleSheet(f"color: {c.text_secondary}; font-size: 14px;")
         row.addWidget(value_lbl)
 
         switch = IOSSwitch(overridden)
@@ -282,7 +329,7 @@ class IOSStatusBarPage(QWidget):
         row.addWidget(switch)
 
         edit_btn = QLabel("✎")
-        edit_btn.setStyleSheet("color: #007AFF; font-size: 17px;")
+        edit_btn.setStyleSheet(f"color: {c.accent}; font-size: 17px;")
         edit_btn.setCursor(Qt.PointingHandCursor)
         edit_btn.mousePressEvent = lambda e: self._on_number_row_edit(title, current, setter, value_lbl, min_val, max_val)
         row.addWidget(edit_btn)

@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.tweaks.tweaks import tweaks, TweakID
+from src.gui.theme import ColorThemeManager
 
 
 CARD_W = 150
@@ -43,17 +44,7 @@ class _WallpaperCard(QFrame):
         self._on_click_cb = on_click
         self.setCursor(Qt.PointingHandCursor)
         self.setObjectName("wallpaperCard")
-        self.setStyleSheet("""
-            QFrame#wallpaperCard {
-                background-color: #1C1C1E;
-                border-radius: 12px;
-                border: none;
-            }
-            QFrame#wallpaperCard:hover { background-color: #2C2C2E; }
-            QLabel#wpName { color: #FFFFFF; font-size: 13px; font-weight: 600; }
-            QLabel#wpAuthor { color: #8E8E93; font-size: 11px; }
-            QLabel#wpPreview { background-color: #26262A; border-radius: 8px; }
-        """)
+        self._retheme()
         self.setFixedSize(CARD_W, CARD_H)
 
         layout = QVBoxLayout(self)
@@ -87,18 +78,34 @@ class _WallpaperCard(QFrame):
 
         layout.addStretch()
 
+    def _retheme(self):
+        c = ColorThemeManager.instance().colors
+        self.setStyleSheet(f"""
+            QFrame#wallpaperCard {{
+                background-color: {c.bg_secondary};
+                border-radius: 12px;
+                border: none;
+            }}
+            QFrame#wallpaperCard:hover {{ background-color: {c.surface_hover}; }}
+            QLabel#wpName {{ color: {c.text_primary}; font-size: 13px; font-weight: 600; }}
+            QLabel#wpAuthor {{ color: {c.text_secondary}; font-size: 11px; }}
+            QLabel#wpPreview {{ background-color: {c.bg_tertiary}; border-radius: 8px; }}
+        """)
+
     def _set_loading(self):
+        c = ColorThemeManager.instance().colors
         self.preview_lbl.setText(QCoreApplication.translate("Nugget", "Loading..."))
         self.preview_lbl.setStyleSheet(
-            "background-color: #26262A; border-radius: 8px;"
-            "font-size: 13px; color: #6E6E73;"
+            f"background-color: {c.bg_tertiary}; border-radius: 8px;"
+            f"font-size: 13px; color: {c.text_disabled};"
         )
 
     def _set_placeholder(self):
+        c = ColorThemeManager.instance().colors
         self.preview_lbl.setText("\U0001F5BC\ufe0f")
         self.preview_lbl.setStyleSheet(
-            "background-color: #26262A; border-radius: 8px;"
-            "font-size: 34px; color: #3A3A3C;"
+            f"background-color: {c.bg_tertiary}; border-radius: 8px;"
+            f"font-size: 34px; color: {c.border};"
         )
 
     def set_preview_file(self, path):
@@ -177,44 +184,7 @@ class WallpaperDownloaderDialog(QDialog):
         self.setWindowTitle(QCoreApplication.translate("Nugget", "Download Wallpapers"))
         self.setModal(True)
         self.setFixedSize(760, 780)
-        self.setStyleSheet("""
-            QDialog { background-color: #1e1e1e; }
-            QLabel { color: #FFFFFF; }
-            QComboBox {
-                background-color: #1C1C1E;
-                border: none;
-                border-radius: 10px;
-                color: #FFFFFF;
-                font-size: 14px;
-                padding: 8px 12px;
-                min-height: 24px;
-            }
-            QComboBox::drop-down { border: none; width: 24px; }
-            QComboBox QAbstractItemView {
-                background-color: #2C2C2E;
-                border: 1px solid #3A3A3C;
-                border-radius: 10px;
-                color: #FFFFFF;
-                selection-background-color: #007AFF;
-            }
-            QLineEdit {
-                background-color: #1C1C1E;
-                border: none;
-                border-radius: 10px;
-                color: #FFFFFF;
-                font-size: 14px;
-                padding: 8px 12px;
-            }
-            QScrollArea { background: transparent; border: none; }
-            QProgressBar {
-                background-color: #1C1C1E;
-                border-radius: 4px;
-                border: none;
-                height: 7px;
-                text-align: center;
-            }
-            QProgressBar::chunk { background-color: #007AFF; border-radius: 4px; }
-        """)
+        self._retheme()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
@@ -244,8 +214,9 @@ class WallpaperDownloaderDialog(QDialog):
         layout.addLayout(top)
 
         # Status / progress area
+        c = ColorThemeManager.instance().colors
         self.status_lbl = QLabel(QCoreApplication.translate("Nugget", "Loading..."))
-        self.status_lbl.setStyleSheet("color: #8E8E93; font-size: 13px;")
+        self.status_lbl.setStyleSheet(f"color: {c.text_secondary}; font-size: 13px;")
         layout.addWidget(self.status_lbl)
 
         self.progress = QProgressBar()
@@ -269,17 +240,17 @@ class WallpaperDownloaderDialog(QDialog):
         # Bottom close button
         close_btn = QPushButton(QCoreApplication.translate("Nugget", "Close"))
         close_btn.setCursor(Qt.PointingHandCursor)
-        close_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #007AFF;
+        close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {c.accent};
                 border-radius: 12px;
-                color: #FFFFFF;
+                color: {c.text_primary};
                 font-size: 16px;
                 font-weight: 600;
                 padding: 12px;
                 border: none;
-            }
-            QPushButton:hover { background-color: #0066CC; }
+            }}
+            QPushButton:hover {{ background-color: {c.accent_hover}; }}
         """)
         close_btn.clicked.connect(self.accept)
         layout.addWidget(close_btn)
@@ -311,6 +282,47 @@ class WallpaperDownloaderDialog(QDialog):
 
         self._populate_categories()
         self._fetch_wallpapers()
+
+    def _retheme(self):
+        c = ColorThemeManager.instance().colors
+        self.setStyleSheet(f"""
+            QDialog {{ background-color: {c.bg_elevated}; }}
+            QLabel {{ color: {c.text_primary}; }}
+            QComboBox {{
+                background-color: {c.bg_secondary};
+                border: none;
+                border-radius: 10px;
+                color: {c.text_primary};
+                font-size: 14px;
+                padding: 8px 12px;
+                min-height: 24px;
+            }}
+            QComboBox::drop-down {{ border: none; width: 24px; }}
+            QComboBox QAbstractItemView {{
+                background-color: {c.surface_hover};
+                border: 1px solid {c.border};
+                border-radius: 10px;
+                color: {c.text_primary};
+                selection-background-color: {c.accent};
+            }}
+            QLineEdit {{
+                background-color: {c.bg_secondary};
+                border: none;
+                border-radius: 10px;
+                color: {c.text_primary};
+                font-size: 14px;
+                padding: 8px 12px;
+            }}
+            QScrollArea {{ background: transparent; border: none; }}
+            QProgressBar {{
+                background-color: {c.bg_secondary};
+                border-radius: 4px;
+                border: none;
+                height: 7px;
+                text-align: center;
+            }}
+            QProgressBar::chunk {{ background-color: {c.accent}; border-radius: 4px; }}
+        """)
 
     # --- source / category handling ---
 

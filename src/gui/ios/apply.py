@@ -4,6 +4,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.ios.components import IOSSectionHeader, IOSCard, IOSPrimaryButton
+from src.gui.theme import ColorThemeManager
 
 
 class IOSApplyPage(QWidget):
@@ -20,7 +21,9 @@ class IOSApplyPage(QWidget):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("background-color: #1e1e1e; border: none;")
+        c = ColorThemeManager.instance().colors
+        scroll.setStyleSheet(f"background-color: {c.bg_primary}; border: none;")
+        self._scroll = scroll
         content = QWidget()
         scroll.setWidget(content)
         layout.addWidget(scroll)
@@ -43,7 +46,8 @@ class IOSApplyPage(QWidget):
             "Applies every enabled tweak to your device. The device reboots "
             "when done — remember to turn Find My back on afterwards."))
         apply_desc.setWordWrap(True)
-        apply_desc.setStyleSheet("color: #8E8E93; font-size: 13px;")
+        apply_desc.setStyleSheet(f"color: {c.text_secondary}; font-size: 13px;")
+        self.apply_desc = apply_desc
         apply_layout.addWidget(apply_desc)
 
         self.apply_btn = IOSPrimaryButton(QCoreApplication.translate(
@@ -65,7 +69,8 @@ class IOSApplyPage(QWidget):
             "Nugget",
             "Restores the original values for the tweak pages you pick."))
         remove_desc.setWordWrap(True)
-        remove_desc.setStyleSheet("color: #8E8E93; font-size: 13px;")
+        remove_desc.setStyleSheet(f"color: {c.text_secondary}; font-size: 13px;")
+        self.remove_desc = remove_desc
         remove_layout.addWidget(remove_desc)
 
         self.remove_btn = IOSPrimaryButton(QCoreApplication.translate(
@@ -86,7 +91,7 @@ class IOSApplyPage(QWidget):
         self.status_lbl = QLabel("")
         self.status_lbl.setWordWrap(True)
         self.status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status_lbl.setStyleSheet("color: #FFFFFF; font-size: 14px;")
+        self.status_lbl.setStyleSheet(f"color: {c.text_primary}; font-size: 14px;")
         status_layout.addWidget(self.status_lbl)
         content_layout.addWidget(status_card)
 
@@ -98,3 +103,10 @@ class IOSApplyPage(QWidget):
     def set_busy(self, busy: bool):
         self.apply_btn.setEnabled(not busy)
         self.remove_btn.setEnabled(not busy)
+
+    def _retheme(self):
+        c = ColorThemeManager.instance().colors
+        self._scroll.setStyleSheet(f"background-color: {c.bg_primary}; border: none;")
+        self.apply_desc.setStyleSheet(f"color: {c.text_secondary}; font-size: 13px;")
+        self.remove_desc.setStyleSheet(f"color: {c.text_secondary}; font-size: 13px;")
+        self.status_lbl.setStyleSheet(f"color: {c.text_primary}; font-size: 14px;")

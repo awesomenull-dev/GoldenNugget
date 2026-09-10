@@ -1,6 +1,7 @@
 from ..page import Page
 from src.qt.mainwindow_ui import Ui_Nugget
 from src.gui.ios.daemons import IOSDaemonsContent
+from src.gui.theme import ColorThemeManager
 
 
 class DaemonsPage(Page):
@@ -14,8 +15,9 @@ class DaemonsPage(Page):
         if self._content is not None:
             return
 
+        c = ColorThemeManager.instance().colors
         self.ui.daemonsScrollArea.setStyleSheet(
-            "background-color: #1e1e1e; border: none;")
+            f"background-color: {c.bg_primary}; border: none;")
         self._content = IOSDaemonsContent(
             self.window, self.ui.daemonsScrollContent)
         self.ui.daemonsScrollLayout.addWidget(self._content)

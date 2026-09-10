@@ -4,6 +4,60 @@
 
 This document describes the background threads, async backup/restore operations, and error handling used in GoldenNugget.
 
+## Color Theme System (src/gui/theme/)
+
+Dark/light mode + accent color customization for the whole GUI.
+
+- `colors.py` — frozen dataclass `ThemeColors` with `DARK` and `LIGHT` palettes
+  (named slots: `bg_primary`, `bg_secondary`, `bg_input`, `text_primary`,
+  `text_secondary`, `accent`, `divider`, `error`, `success`, ...). `ACCENT_PRESETS`
+  holds 8 accent hex colors (blue/purple/pink/red/orange/yellow/green/teal).
+- `theme_manager.py` — `ColorThemeManager` singleton (`instance()`): `mode`
+  (`"dark"`/`"light"`), `accent_hex()`, `is_dark`, `set_mode()`, `set_accent()`,
+  `set_system_theme(mode)`, `apply_system_theme(dark)` (follows the OS but never
+  overrides a user choice — `_has_explicit_mode` becomes set the moment the
+  Settings switch saves a mode), `c(slot)` (color accessor), `build_palette()`
+  (QPalette for native widgets). Persisted via QSettings (`color_mode`,
+  `accent_color`). Emits `theme_changed` (no payload) on any color change.
+- `styles.py` — `STYLES` dict of Qt stylesheet templates using `{slot}` named
+  placeholders (literal braces are doubled `{{`/`}}`).
+- `accent_picker.py` — `AccentPicker` widget: row of circular preset buttons,
+  self-connects to `theme_changed` to repaint its selection border.
+- `__init__.py` — exports the above plus `t(style_key) -> str`.
+
+### Styling contract (IMPORTANT)
+
+- `t(key)` is the **only** way widgets read theme colors; it renders the
+  template with the current palette **internally** (`format_map`). Callers must
+  use `widget.setStyleSheet(t("key"))` and **must NOT** call `.format_map()`
+  again on top of `t(...)` (double-formatting breaks on the `{{` escapes).
+- Any widget/page that draws theme colors implements `_retheme(self)` which
+  re-applies all its stylesheets from `ColorThemeManager.instance().colors`.
+  It is called by `MainWindow._on_color_theme_changed` for every `ios_pages`
+  entry (line 224 of `src/gui/main_window.py`) AND by self-connections.
+- Reused components in `src/gui/ios/components.py` call
+  `_auto_retheme(self)` from their `__init__` (defined at module level),
+  which connects `ColorThemeManager.instance().theme_changed` to their
+  `_retheme` — authoritative, one connection per instance. Child widgets
+  created before `_auto_retheme(self)` must be registered by hand or use
+  the shared `IOSNavBar`/`IOSSwitch`/etc. components which self-connect.
+- The whole-window stylesheet is `t("global")`, applied in
+  `MainWindow._apply_global_stylesheet`; it sets `QLabel color` via the
+  `QWidget { color: {text_primary} }` rule, so bare labels inside styled
+  rows pick up the theme without their own `_retheme`.
+- `src/qt/mainwindow_ui.py` is generated from Qt Designer — do not edit;
+  theme the chrome via `_apply_global_stylesheet` instead.
+- Old `src/gui/ios/theme_manager.py` (`CLASSIC`/`IOS`) is layout-only
+  (Classic vs iOS-style chrome) and stays untouched side-by-side.
+- Theme UI lives in Settings → **Appearance** (`src/gui/ios/settings.py`):
+  "Dark Mode" `IOSSwitch` (`set_mode`) and "Accent Color" `AccentPicker`
+  (`set_accent`). The switch's initial `setChecked` uses `is_dark`.
+- System-theme detection is wired in `main_app.py` right after the QApplication
+  is created: `QStyleHints.colorSchemeChanged` drives
+  `apply_system_theme(...)`. The app follows the OS until the user toggles the
+  Dark Mode switch, then the persisted `color_mode` wins and OS changes are
+  ignored.
+
 ## HotLoad Safety Rules (src/controllers/hotload.py)
 
 Remote safety rules (cached from

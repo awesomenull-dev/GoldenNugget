@@ -51,6 +51,7 @@ from src.controllers.web_request_handler import Nugget_Repo, get_latest_version
 
 # App version
 from src.gui.version import App_Version, App_Build
+from src.gui.theme import ColorThemeManager
 
 
 class AboutProgramDialog(QDialog):
@@ -59,19 +60,7 @@ class AboutProgramDialog(QDialog):
         self.setWindowTitle(self.tr("About GoldenNugget"))
         self.setMinimumSize(500, 600)
         self.setModal(True)
-        self.setStyleSheet("""
-            QDialog { background-color: #1e1e1e; }
-            QDialogButtonBox QPushButton {
-                background-color: #007AFF;
-                border-radius: 10px;
-                color: #FFFFFF;
-                font-size: 15px;
-                font-weight: 600;
-                padding: 10px 24px;
-                border: none;
-            }
-            QDialogButtonBox QPushButton:hover { background-color: #0066CC; }
-        """)
+        self._retheme()
         QBtn = QDialogButtonBox.Ok
         self.buttonBox = QDialogButtonBox(QBtn)
         self.buttonBox.accepted.connect(self.accept)
@@ -103,9 +92,10 @@ class AboutProgramDialog(QDialog):
         version_str = f"v{App_Version}"
         if App_Build > 0:
             version_str += f" (beta {App_Build})"
+        c = ColorThemeManager.instance().colors
         version_label = QLabel(version_str)
         version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        version_label.setStyleSheet("color: #8E8E93; font-size: 15px;")
+        version_label.setStyleSheet(f"color: {c.text_secondary}; font-size: 15px;")
         name_layout.addWidget(version_label)
         
         header_layout.addLayout(name_layout)
@@ -114,19 +104,19 @@ class AboutProgramDialog(QDialog):
         # Separator
         separator = QFrame()
         separator.setFrameShape(QFrame.Shape.HLine)
-        separator.setStyleSheet("color: #3A3A3C;")
+        separator.setStyleSheet(f"color: {c.border};")
         layout.addWidget(separator)
         
         # Description
         desc = QLabel(self.tr("Customize your iOS device with animated wallpapers, system tweaks, and more. Built for iOS 26.2+."))
         desc.setWordWrap(True)
         desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        desc.setStyleSheet("color: #EBEBF599; font-size: 15px; padding: 0 20px;")
+        desc.setStyleSheet(f"color: {c.text_secondary}; font-size: 15px; padding: 0 20px;")
         layout.addWidget(desc)
         
         # Credits section
         credits_title = QLabel(self.tr("Credits"))
-        credits_title.setStyleSheet("font-size: 17px; font-weight: 600; color: #FFFFFF; padding-top: 8px;")
+        credits_title.setStyleSheet(f"font-size: 17px; font-weight: 600; color: {c.text_primary}; padding-top: 8px;")
         layout.addWidget(credits_title)
         
         # Scrollable credits
@@ -134,11 +124,11 @@ class AboutProgramDialog(QDialog):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("""
-            QScrollArea { background: transparent; border: none; }
-            QWidget { background: transparent; }
-            QScrollBar:vertical { width: 6px; background: transparent; }
-            QScrollBar::handle { background: #3A3A3C; border-radius: 3px; min-height: 30px; }
+        scroll.setStyleSheet(f"""
+            QScrollArea {{ background: transparent; border: none; }}
+            QWidget {{ background: transparent; }}
+            QScrollBar:vertical {{ width: 6px; background: transparent; }}
+            QScrollBar::handle {{ background: {c.border}; border-radius: 3px; min-height: 30px; }}
         """)
         
         credits_widget = QWidget()
@@ -170,23 +160,23 @@ class AboutProgramDialog(QDialog):
             item_layout.setContentsMargins(0, 0, 0, 0)
             
             title_label = QLabel(f"{title}:")
-            title_label.setStyleSheet("color: #EBEBF599; font-size: 14px; font-weight: 500; min-width: 160px;")
+            title_label.setStyleSheet(f"color: {c.text_secondary}; font-size: 14px; font-weight: 500; min-width: 160px;")
             item_layout.addWidget(title_label)
             
             name_btn = QToolButton()
             name_btn.setText(name)
             name_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
             name_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            name_btn.setStyleSheet("""
-                QToolButton { 
-                    color: #007AFF; 
+            name_btn.setStyleSheet(f"""
+                QToolButton {{ 
+                    color: {c.accent}; 
                     font-size: 14px; 
                     background: none; 
                     border: none; 
                     padding: 0; 
                     text-align: left;
-                }
-                QToolButton:hover { color: #0066CC; text-decoration: underline; }
+                }}
+                QToolButton:hover {{ color: {c.accent_hover}; text-decoration: underline; }}
             """)
             name_btn.clicked.connect(lambda _, u=url: QDesktopServices.openUrl(QUrl(u)))
             item_layout.addWidget(name_btn)
@@ -206,7 +196,7 @@ class AboutProgramDialog(QDialog):
         github_btn.setText("GitHub")
         github_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         github_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        github_btn.setStyleSheet("QToolButton { color: #007AFF; font-size: 14px; font-weight: 500; background: none; border: none; padding: 4px 8px; } QToolButton:hover { text-decoration: underline; }")
+        github_btn.setStyleSheet(f"QToolButton {{ color: {c.accent}; font-size: 14px; font-weight: 500; background: none; border: none; padding: 4px 8px; }} QToolButton:hover {{ text-decoration: underline; }}")
         github_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://github.com/awesomenull-dev/GoldenNugget")))
         links_layout.addWidget(github_btn)
         
@@ -214,7 +204,7 @@ class AboutProgramDialog(QDialog):
         website_btn.setText("Wallpapers")
         website_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         website_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        website_btn.setStyleSheet("QToolButton { color: #007AFF; font-size: 14px; font-weight: 500; background: none; border: none; padding: 4px 8px; } QToolButton:hover { text-decoration: underline; }")
+        website_btn.setStyleSheet(f"QToolButton {{ color: {c.accent}; font-size: 14px; font-weight: 500; background: none; border: none; padding: 4px 8px; }} QToolButton:hover {{ text-decoration: underline; }}")
         website_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://cowabun.ga/wallpapers")))
         links_layout.addWidget(website_btn)
         
@@ -222,13 +212,29 @@ class AboutProgramDialog(QDialog):
         discord_btn.setText("Discord")
         discord_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         discord_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        discord_btn.setStyleSheet("QToolButton { color: #007AFF; font-size: 14px; font-weight: 500; background: none; border: none; padding: 4px 8px; } QToolButton:hover { text-decoration: underline; }")
+        discord_btn.setStyleSheet(f"QToolButton {{ color: {c.accent}; font-size: 14px; font-weight: 500; background: none; border: none; padding: 4px 8px; }} QToolButton:hover {{ text-decoration: underline; }}")
         discord_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://discord.gg/Rm6r4zeE3y")))
         links_layout.addWidget(discord_btn)
         
         layout.addLayout(links_layout)
         layout.addWidget(self.buttonBox)
         self.setLayout(layout)
+
+    def _retheme(self):
+        c = ColorThemeManager.instance().colors
+        self.setStyleSheet(f"""
+            QDialog {{ background-color: {c.bg_elevated}; }}
+            QDialogButtonBox QPushButton {{
+                background-color: {c.accent};
+                border-radius: 10px;
+                color: {c.text_primary};
+                font-size: 15px;
+                font-weight: 600;
+                padding: 10px 24px;
+                border: none;
+            }}
+            QDialogButtonBox QPushButton:hover {{ background-color: {c.accent_hover}; }}
+        """)
 
 
 class UpdateAppDialog(QDialog):

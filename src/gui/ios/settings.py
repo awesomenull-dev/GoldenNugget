@@ -16,6 +16,7 @@ from src.controllers.preset_manager import PresetManager
 from src.controllers.hotload import HotLoad, confirm_flagged
 from src.tweaks.tweaks import tweaks, TweakID
 from src.gui.thread_workers.apply_worker import ResetPairingThread
+from src.gui.theme import ColorThemeManager, AccentPicker
 
 
 class IOSSettingsPage(QWidget):
@@ -25,26 +26,42 @@ class IOSSettingsPage(QWidget):
         self.setObjectName("iosContainer")
         self.lang_indexes = []
         self.preset_manager = PresetManager()
+        self._tm = ColorThemeManager.instance()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("background-color: #1e1e1e; border: none;")
-        self.scroll_area = scroll
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self.scroll_area = self._scroll
         content = QWidget()
-        scroll.setWidget(content)
-        layout.addWidget(scroll)
+        self._scroll.setWidget(content)
+        layout.addWidget(self._scroll)
 
         self.content_layout = QVBoxLayout(content)
         self.content_layout.setContentsMargins(16, 16, 16, 32)
         self.content_layout.setSpacing(8)
 
-        # Appearance
+        # --- Appearance ---
         self.content_layout.addWidget(IOSSectionHeader(QCoreApplication.translate("Nugget", "Appearance")))
+
+        dark_on = self._tm.is_dark
+        self._appearance_switch = self._make_switch(
+            QCoreApplication.translate("Nugget", "Dark Mode"),
+            dark_on,
+            lambda on: self._tm.set_mode("dark" if on else "light"),
+        )
+
+        accent_row_card = QWidget()
+        accent_row = QHBoxLayout(accent_row_card)
+        accent_row.setContentsMargins(16, 10, 16, 10)
+        accent_row.setSpacing(12)
+        accent_label = QLabel(QCoreApplication.translate("Nugget", "Accent Color"))
+        accent_row.addWidget(accent_label, 1)
+        self._accent_picker = AccentPicker()
+        accent_row.addWidget(self._accent_picker)
+        self.content_layout.addWidget(accent_row_card)
 
         theme_on = self.window.theme_manager.current_theme == ThemeManager.IOS
         self.theme_switch = self._make_switch(
@@ -159,16 +176,104 @@ class IOSSettingsPage(QWidget):
         self.refresh_presets()
         self.content_layout.addStretch()
 
+        self._retheme()
+        self._tm.theme_changed.connect(self._retheme)
+
+    def _retheme(self):
+        c = self._tm.colors
+        self._scroll.setStyleSheet(
+            f"background-color: {c.bg_primary}; border: none;"
+        )
+        self._accent_picker.setStyleSheet(
+            f"background-color: {c.bg_primary};"
+        )
+        if hasattr(self, '_lang_drp'):
+            self._retheme_lang_dropdown()
+        if hasattr(self, '_saved_ids_list'):
+            self._retheme_saved_ids_list()
+        if hasattr(self, '_preset_name_txt'):
+            self._retheme_preset_inputs()
+        if hasattr(self, '_preset_list'):
+            self._retheme_preset_list()
+
+    def _retheme_lang_dropdown(self):
+        c = self._tm.colors
+        self._lang_drp.setStyleSheet(f"""
+            QComboBox {{
+                background-color: {c.bg_input};
+                border: none;
+                border-radius: 10px;
+                color: {c.text_primary};
+                font-size: 14px;
+                padding: 8px 12px;
+                min-width: 140px;
+            }}
+            QComboBox::drop-down {{ border: none; width: 24px; }}
+            QComboBox::down-arrow {{ image: none; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid {c.text_secondary}; margin-right: 10px; }}
+            QComboBox QAbstractItemView {{
+                background-color: {c.bg_tertiary};
+                border: 1px solid {c.border};
+                border-radius: 10px;
+                color: {c.text_primary};
+                selection-background-color: {c.accent};
+            }}
+        """)
+
+    def _retheme_saved_ids_list(self):
+        c = self._tm.colors
+        self._saved_ids_list.setStyleSheet(f"""
+            QListWidget {{
+                background-color: {c.bg_input};
+                border: none;
+                border-radius: 8px;
+                color: {c.text_primary};
+                font-size: 13px;
+                padding: 4px;
+            }}
+            QListWidget::item {{ padding: 6px; }}
+            QListWidget::item:selected {{ background-color: {c.scrollbar_pressed}; color: {c.text_primary}; }}
+        """)
+
+    def _retheme_preset_inputs(self):
+        c = self._tm.colors
+        for edit in (self._preset_name_txt, self._preset_desc_txt):
+            edit.setStyleSheet(f"""
+                QLineEdit {{
+                    background-color: {c.bg_input};
+                    border: none;
+                    border-radius: 10px;
+                    color: {c.text_primary};
+                    font-size: 14px;
+                    padding: 10px 14px;
+                }}
+            """)
+
+    def _retheme_preset_list(self):
+        c = self._tm.colors
+        self._preset_list.setStyleSheet(f"""
+            QListWidget {{
+                background-color: {c.bg_input};
+                border: none;
+                border-radius: 8px;
+                color: {c.text_primary};
+                font-size: 13px;
+                padding: 4px;
+            }}
+            QListWidget::item {{ padding: 8px; }}
+            QListWidget::item:selected {{ background-color: {c.scrollbar_pressed}; color: {c.text_primary}; }}
+        """)
+
     # ---------- helpers ----------
 
     def _make_switch(self, title: str, checked: bool, on_toggled) -> IOSSwitch:
+        c = self._tm.colors
         card = QWidget()
         row = QHBoxLayout(card)
         row.setContentsMargins(16, 10, 16, 10)
         row.setSpacing(12)
 
         label = QLabel(title)
-        label.setStyleSheet("color: #FFFFFF; font-size: 15px;")
+        label.setStyleSheet(f"color: {c.text_primary}; font-size: 15px;")
         label.setWordWrap(True)
         row.addWidget(label, 1)
 
@@ -264,21 +369,22 @@ class IOSSettingsPage(QWidget):
         self.window._sync_settings()
 
     def _make_text_row(self, title: str, current: str, on_submit):
+        c = self._tm.colors
         card = QWidget()
         row = QHBoxLayout(card)
         row.setContentsMargins(16, 10, 16, 10)
         row.setSpacing(12)
 
         label = QLabel(title)
-        label.setStyleSheet("color: #FFFFFF; font-size: 15px;")
+        label.setStyleSheet(f"color: {c.text_primary}; font-size: 15px;")
         row.addWidget(label, 1)
 
         self.org_value_lbl = QLabel(current if current else QCoreApplication.translate("MainWindow", "None"))
-        self.org_value_lbl.setStyleSheet("color: #8E8E93; font-size: 14px;")
+        self.org_value_lbl.setStyleSheet(f"color: {c.text_secondary}; font-size: 14px;")
         row.addWidget(self.org_value_lbl)
 
-        edit_btn = QLabel("✎")
-        edit_btn.setStyleSheet("color: #007AFF; font-size: 17px;")
+        edit_btn = QLabel("\u270e")
+        edit_btn.setStyleSheet(f"color: {c.accent}; font-size: 17px;")
         edit_btn.setCursor(Qt.PointingHandCursor)
         edit_btn.mousePressEvent = lambda e: self._on_text_row_edit(title, on_submit)
         row.addWidget(edit_btn)
@@ -286,30 +392,31 @@ class IOSSettingsPage(QWidget):
         self.content_layout.addWidget(card)
 
     def _on_text_row_edit(self, title: str, on_submit):
+        c = self._tm.colors
         dialog = QInputDialog(self)
         dialog.setWindowTitle(title)
         dialog.setLabelText(QCoreApplication.translate("Nugget", "Enter value:"))
         dialog.setTextValue(self.window.device_manager.pref_manager.organization_name)
-        dialog.setStyleSheet("""
-            QDialog, QInputDialog { background-color: #1e1e1e; }
-            QLabel { color: #FFFFFF; font-size: 15px; }
-            QLineEdit {
-                background-color: #1C1C1E;
+        dialog.setStyleSheet(f"""
+            QDialog, QInputDialog {{ background-color: {c.bg_primary}; }}
+            QLabel {{ color: {c.text_primary}; font-size: 15px; }}
+            QLineEdit {{
+                background-color: {c.bg_input};
                 border: none;
                 border-radius: 10px;
-                color: #FFFFFF;
+                color: {c.text_primary};
                 font-size: 15px;
                 padding: 10px 14px;
-            }
-            QPushButton {
-                background-color: #007AFF;
+            }}
+            QPushButton {{
+                background-color: {c.accent};
                 border-radius: 10px;
-                color: #FFFFFF;
+                color: {c.text_primary};
                 font-size: 15px;
                 font-weight: 600;
                 padding: 10px 20px;
                 border: none;
-            }
+            }}
         """)
         if dialog.exec() == QDialog.Accepted:
             text = dialog.textValue()
@@ -323,36 +430,18 @@ class IOSSettingsPage(QWidget):
         self.window._sync_settings()
 
     def _make_language_row(self):
+        c = self._tm.colors
         card = QWidget()
         row = QHBoxLayout(card)
         row.setContentsMargins(16, 10, 16, 10)
         row.setSpacing(12)
 
         label = QLabel(QCoreApplication.translate("Nugget", "App Language"))
-        label.setStyleSheet("color: #FFFFFF; font-size: 15px;")
+        label.setStyleSheet(f"color: {c.text_primary}; font-size: 15px;")
         row.addWidget(label, 1)
 
         self.lang_drp = QComboBox()
-        self.lang_drp.setStyleSheet("""
-            QComboBox {
-                background-color: #1C1C1E;
-                border: none;
-                border-radius: 10px;
-                color: #FFFFFF;
-                font-size: 14px;
-                padding: 8px 12px;
-                min-width: 140px;
-            }
-            QComboBox::drop-down { border: none; width: 24px; }
-            QComboBox::down-arrow { image: none; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid #8E8E93; margin-right: 10px; }
-            QComboBox QAbstractItemView {
-                background-color: #2C2C2E;
-                border: 1px solid #3A3A3C;
-                border-radius: 10px;
-                color: #FFFFFF;
-                selection-background-color: #007AFF;
-            }
-        """)
+        self._lang_drp = self.lang_drp
         for language in available_languages.keys():
             self.lang_indexes.append(available_languages[language])
             self.lang_drp.addItem(language)
@@ -372,12 +461,10 @@ class IOSSettingsPage(QWidget):
             self.window.translator.set_new_language(new_lang, restart=True)
 
     def _make_pb_setup_section(self):
+        c = self._tm.colors
         self.content_layout.addWidget(IOSSectionHeader(
             QCoreApplication.translate("Nugget", "PosterBoard Database")
         ))
-
-        # wallpapers are always applied as configurations (iOS 26+ data store
-        # layout); the descriptors apply method is broken and was removed
 
         self._make_label_row(QCoreApplication.translate("Nugget", "Database"), "sqlite: None")
 
@@ -390,29 +477,16 @@ class IOSSettingsPage(QWidget):
             self._on_pb_select_db,
         )
 
-        # saved ids list
         ids_card = QWidget()
         ids_layout = QVBoxLayout(ids_card)
         ids_layout.setContentsMargins(16, 12, 16, 12)
         ids_layout.setSpacing(8)
         ids_title = QLabel(QCoreApplication.translate("Nugget", "Saved Configuration IDs"))
-        ids_title.setStyleSheet("color: #FFFFFF; font-size: 15px;")
+        ids_title.setStyleSheet(f"color: {c.text_primary}; font-size: 15px;")
         ids_layout.addWidget(ids_title)
 
         self.saved_ids_list = QListWidget()
-        self.saved_ids_list.setStyleSheet("""
-            QListWidget {
-                background-color: #1C1C1E;
-                border: none;
-                border-radius: 8px;
-                color: #e8e8e8;
-                font-size: 13px;
-                padding: 4px;
-            }
-            QListWidget::item { padding: 6px; }
-            QListWidget::item:selected { background-color: #535353; color: #ffffff; }
-        """)
-        self.saved_ids_list.setMinimumHeight(90)
+        self._saved_ids_list = self.saved_ids_list
         ids_layout.addWidget(self.saved_ids_list)
 
         ids_btns = QHBoxLayout()
@@ -428,17 +502,18 @@ class IOSSettingsPage(QWidget):
         self._refresh_saved_ids()
 
     def _make_label_row(self, title: str, value: str):
+        c = self._tm.colors
         card = QWidget()
         row = QHBoxLayout(card)
         row.setContentsMargins(16, 10, 16, 10)
         row.setSpacing(12)
 
         label = QLabel(title)
-        label.setStyleSheet("color: #FFFFFF; font-size: 15px;")
+        label.setStyleSheet(f"color: {c.text_primary}; font-size: 15px;")
         row.addWidget(label, 1)
 
         self.pb_db_lbl = QLabel(value)
-        self.pb_db_lbl.setStyleSheet("color: #8E8E93; font-size: 14px;")
+        self.pb_db_lbl.setStyleSheet(f"color: {c.text_secondary}; font-size: 14px;")
         row.addWidget(self.pb_db_lbl)
         self.content_layout.addWidget(card)
 
@@ -450,18 +525,19 @@ class IOSSettingsPage(QWidget):
 
     def _make_mini_button(self, title: str):
         from PySide6.QtWidgets import QPushButton
+        c = self._tm.colors
         btn = QPushButton(title)
         btn.setCursor(Qt.PointingHandCursor)
-        btn.setStyleSheet("""
-            QPushButton {
-                background-color: #3b3b3b;
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {c.scrollbar};
                 border: none;
                 border-radius: 10px;
-                color: #FFFFFF;
+                color: {c.text_primary};
                 font-size: 13px;
                 padding: 8px 12px;
-            }
-            QPushButton:hover { background-color: #4a4a4a; }
+            }}
+            QPushButton:hover {{ background-color: {c.surface_hover}; }}
         """)
         return btn
 
@@ -521,6 +597,7 @@ class IOSSettingsPage(QWidget):
     # ---------- presets ----------
 
     def _make_presets_section(self):
+        c = self._tm.colors
         self.content_layout.addWidget(IOSSectionHeader(
             QCoreApplication.translate("Nugget", "Presets")
         ))
@@ -532,20 +609,11 @@ class IOSSettingsPage(QWidget):
 
         name_row = QHBoxLayout()
         self.preset_name_txt = QLineEdit()
+        self._preset_name_txt = self.preset_name_txt
         self.preset_name_txt.setPlaceholderText(QCoreApplication.translate("Nugget", "Preset name"))
         self.preset_desc_txt = QLineEdit()
+        self._preset_desc_txt = self.preset_desc_txt
         self.preset_desc_txt.setPlaceholderText(QCoreApplication.translate("Nugget", "Description (optional)"))
-        for edit in (self.preset_name_txt, self.preset_desc_txt):
-            edit.setStyleSheet("""
-                QLineEdit {
-                    background-color: #1C1C1E;
-                    border: none;
-                    border-radius: 10px;
-                    color: #FFFFFF;
-                    font-size: 14px;
-                    padding: 10px 14px;
-                }
-            """)
         name_row.addWidget(self.preset_name_txt, 2)
         name_row.addWidget(self.preset_desc_txt, 3)
         presets_layout.addLayout(name_row)
@@ -555,18 +623,7 @@ class IOSSettingsPage(QWidget):
         presets_layout.addWidget(save_btn)
 
         self.preset_list = QListWidget()
-        self.preset_list.setStyleSheet("""
-            QListWidget {
-                background-color: #1C1C1E;
-                border: none;
-                border-radius: 8px;
-                color: #e8e8e8;
-                font-size: 13px;
-                padding: 4px;
-            }
-            QListWidget::item { padding: 8px; }
-            QListWidget::item:selected { background-color: #535353; color: #ffffff; }
-        """)
+        self._preset_list = self.preset_list
         self.preset_list.setMinimumHeight(120)
         presets_layout.addWidget(self.preset_list)
 
@@ -587,7 +644,6 @@ class IOSSettingsPage(QWidget):
         self.content_layout.addWidget(card)
 
     def scroll_to_presets(self):
-        """Scroll the settings page to the presets section at the bottom."""
         if self.scroll_area is not None:
             QTimer.singleShot(0, self._scroll_to_bottom)
 
@@ -605,9 +661,9 @@ class IOSSettingsPage(QWidget):
             tags = meta.get("tags", [])
             tag_str = "  #" + " #".join(tags) if tags else ""
             if desc:
-                item_text = f"{name}\n  {desc}  ({model} • iOS {ios}){tag_str}"
+                item_text = f"{name}\n  {desc}  ({model} \u2022 iOS {ios}){tag_str}"
             else:
-                item_text = f"{name}  ({model} • iOS {ios}){tag_str}"
+                item_text = f"{name}  ({model} \u2022 iOS {ios}){tag_str}"
             item = QListWidgetItem(item_text)
             self.preset_list.addItem(item)
             item.setData(Qt.UserRole, name)
@@ -648,12 +704,10 @@ class IOSSettingsPage(QWidget):
             self, QCoreApplication.translate("Nugget", "Load Preset"),
             QCoreApplication.translate(
                 "Nugget",
-                "Load preset \"{0}\"?\n\nDescription: {1}\nDevice: {2} • iOS {3}\n\nThis will replace your current configuration."
+                "Load preset \"{0}\"?\n\nDescription: {1}\nDevice: {2} \u2022 iOS {3}\n\nThis will replace your current configuration."
             ).format(name, desc, model, ios))
         if confirm != QMessageBox.StandardButton.Yes:
             return
-        # HotLoad: never let a preset resurrect a feature that is hidden on this
-        # device — those tweaks are stripped during load, so warn what's skipped.
         dm = self.window.device_manager
         hotload = HotLoad(getattr(self.window, "settings", None))
         hidden_feats = self.preset_manager.preset_hidden_feature_names(
@@ -666,9 +720,9 @@ class IOSSettingsPage(QWidget):
                 QCoreApplication.translate(
                     "Nugget",
                     "This preset contains features that are currently hidden by "
-                    "the safety rules for this device:\n\n• {0}\n\n"
+                    "the safety rules for this device:\n\n\u2022 {0}\n\n"
                     "They will NOT be loaded, so applying may not match the "
-                    "preset's intended state.").format("\n• ".join(hidden_feats)))
+                    "preset's intended state.").format("\n\u2022 ".join(hidden_feats)))
         compat_msg = self._daemon_compat_warning(name, meta)
         if compat_msg:
             reply = QMessageBox.warning(
@@ -700,7 +754,6 @@ class IOSSettingsPage(QWidget):
 
     @staticmethod
     def _major_version(ver: str):
-        """Return the iOS major version as an int, or None if not parseable."""
         try:
             return int(str(ver).split(".")[0])
         except (ValueError, TypeError, IndexError):
@@ -716,9 +769,6 @@ class IOSSettingsPage(QWidget):
         return ""
 
     def _daemon_compat_warning(self, name: str, meta) -> Optional[str]:
-        """Return a warning string when the preset's daemon changes were saved
-        for a different iOS major version or device type than the one in use;
-        None when the preset has no daemon changes or we cannot tell."""
         if not self.preset_manager.preset_has_daemon_changes(name):
             return None
         cur_ver = self.window.device_manager.get_current_device_version() or ""
@@ -740,7 +790,7 @@ class IOSSettingsPage(QWidget):
         return (
             "This preset contains daemon modifications that were saved for a "
             "different device:\n\n"
-            + "\n".join("• " + m for m in mismatches)
+            + "\n".join("\u2022 " + m for m in mismatches)
             + "\n\nDaemons are sensitive to the iOS version and device type, and "
               "applying incompatible ones can bootloop your device. "
               "Proceed with caution."
@@ -853,4 +903,3 @@ class IOSSettingsPage(QWidget):
         from src.gui.dialogs import AboutProgramDialog
         dialog = AboutProgramDialog(self.window)
         dialog.exec()
-

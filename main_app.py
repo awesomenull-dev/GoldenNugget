@@ -126,31 +126,26 @@ def main() -> int:
 
     app = CrashHandlerApp([])
 
-    # Force a dark theme matching the Nugget style on every platform, so the
-    # app always renders dark regardless of the OS appearance. The Fusion style
-    # is required for a custom QPalette to take effect on all platforms (native
-    # styles ignore palette tweaks), and the palette covers native widgets,
-    # menus, tooltips, dialogs and any widget without an explicit stylesheet.
+    # Fusion style is required for a custom QPalette to take effect on all
+    # platforms (native styles ignore palette tweaks).  The palette is now
+    # managed by ColorThemeManager so it can switch between dark/light.
     app.setStyle("Fusion")
-    from PySide6.QtGui import QColor, QPalette
-    dark_palette = QPalette()
-    dark_palette.setColor(QPalette.ColorRole.Window, QColor(30, 30, 32))
-    dark_palette.setColor(QPalette.ColorRole.WindowText, QColor(220, 220, 220))
-    dark_palette.setColor(QPalette.ColorRole.Base, QColor(25, 25, 27))
-    dark_palette.setColor(QPalette.ColorRole.AlternateBase, QColor(35, 35, 38))
-    dark_palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(30, 30, 32))
-    dark_palette.setColor(QPalette.ColorRole.ToolTipText, QColor(220, 220, 220))
-    dark_palette.setColor(QPalette.ColorRole.Text, QColor(220, 220, 220))
-    dark_palette.setColor(QPalette.ColorRole.Button, QColor(45, 45, 48))
-    dark_palette.setColor(QPalette.ColorRole.ButtonText, QColor(220, 220, 220))
-    dark_palette.setColor(QPalette.ColorRole.BrightText, QColor(255, 100, 100))
-    dark_palette.setColor(QPalette.ColorRole.Link, QColor(0, 122, 255))
-    dark_palette.setColor(QPalette.ColorRole.Highlight, QColor(0, 122, 255))
-    dark_palette.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
-    dark_palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, QColor(120, 120, 120))
-    dark_palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(120, 120, 120))
-    dark_palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, QColor(120, 120, 120))
-    app.setPalette(dark_palette)
+
+    from src.gui.theme import ColorThemeManager
+    _color_theme = ColorThemeManager.instance()
+    app.setPalette(_color_theme.build_palette())
+
+    # Follow the OS dark/light mode until the user picks one manually in
+    # Settings -> Appearance (that choice persists and takes precedence).
+    from PySide6.QtCore import Qt
+    _style_hints = app.styleHints()
+    try:
+        _current_scheme = _style_hints.colorScheme()
+        _color_theme.apply_system_theme(_current_scheme == Qt.ColorScheme.Dark)
+        _style_hints.colorSchemeChanged.connect(
+            lambda scheme: _color_theme.apply_system_theme(scheme == Qt.ColorScheme.Dark))
+    except Exception:
+        pass
 
     dm = DeviceManager()
 

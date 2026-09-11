@@ -36,7 +36,7 @@ _sc.DEFAULT_SSL_HANDSHAKE_TIMEOUT = 60
 # Temporarily allow writing up to this many PosterBoard tendies in a single
 # restore. Applying more than one tendie at once can race PosterBoard's sqlite
 # regeneration, so the count is capped.
-MAX_TENDIES_PER_RESTORE = 3
+MAX_TENDIES_PER_RESTORE = 5
 
 from src.devicemanagement.constants import Device, Version, is_supported_by_fork
 from src.devicemanagement.data_singleton import DataSingleton

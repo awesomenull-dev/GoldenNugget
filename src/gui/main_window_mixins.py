@@ -247,7 +247,7 @@ class SettingsMixin:
             use_backup_cache = self.settings.value("use_backup_cache", False, type=bool)
 
             skip_setup = self.settings.value("skip_setup", True, type=bool)
-            skip_apple_id_setup = self.settings.value("skip_apple_id_setup", False, type=bool)
+            skip_apple_id_setup = self.settings.value("skip_apple_id_setup", True, type=bool)
             supervised = self.settings.value("supervised", False, type=bool)
             organization_name = self.settings.value("organization_name", "", type=str)
             use_encrypted_backup = self.settings.value("use_encrypted_backup", False, type=bool)

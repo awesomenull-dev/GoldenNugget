@@ -282,11 +282,6 @@ class PBConfigManager:
             # combine the saved items
             self.staged_items = self.saved_items + self.staged_items
             for wallpaper in self.staged_items:
-                seq += 1
-                wallpaper.posterId = seq
-                cursor.execute("INSERT INTO poster (posterId, UUID, providerId) VALUES (?, ?, ?)",
-                               (wallpaper.posterId, wallpaper.uuid, wallpaper.extension))
-                # TODO: Figure out when you need to add PRPosterRoleAmbient
                 wallpaper_payload = json.dumps(
                     {
                         "creationDate": time.time(),
@@ -297,15 +292,60 @@ class PBConfigManager:
                     },
                     separators=(",", ":"),
                 )
+                # A freshly-fetched on-device DB still carries previously
+                # applied tendies (same UUID). Re-applying one must update it
+                # in place, not INSERT duplicates — posterAttributes has a
+                # UNIQUE(posterUUID, roleId, attributeIdentifier) constraint.
+                # Attribute/membership rows may also linger without their
+                # poster row (orphans from earlier failed applies), so every
+                # write below updates first and only inserts when absent.
+                cursor.execute("SELECT posterId FROM poster WHERE UUID = ?",
+                               (wallpaper.uuid,))
+                existing_poster = cursor.fetchone()
+                if existing_poster is not None:
+                    wallpaper.posterId = existing_poster[0]
+                    cursor.execute("UPDATE poster SET providerId = ? WHERE posterId = ?",
+                                   (wallpaper.extension, wallpaper.posterId))
+                else:
+                    seq += 1
+                    wallpaper.posterId = seq
+                    cursor.execute("INSERT INTO poster (posterId, UUID, providerId) VALUES (?, ?, ?)",
+                                   (wallpaper.posterId, wallpaper.uuid, wallpaper.extension))
+                # TODO: Figure out when you need to add PRPosterRoleAmbient
+                cursor.execute(
+                    "UPDATE posterAttributes SET attributePayload = ? "
+                    "WHERE posterUUID = ? AND roleId = ? AND attributeIdentifier = ?",
+                    (wallpaper_payload, wallpaper.uuid,
+                     "PRPosterRoleLockScreen",
+                     "PRPosterRoleAttributeTypeUsageMetadata"))
+                if cursor.rowcount == 0:
+                    cursor.execute(
+                        "INSERT INTO posterAttributes (posterUUID, roleId, attributeIdentifier, attributePayload) "
+                        "VALUES (?, ?, ?, ?)",
+                        (wallpaper.uuid, "PRPosterRoleLockScreen",
+                         "PRPosterRoleAttributeTypeUsageMetadata",
+                         wallpaper_payload))
                 if wallpaper.set_selected:
-                    cursor.execute("INSERT INTO posterAttributes (posterUUID, roleId, attributeIdentifier, attributePayload) VALUES (?, ?, ?, ?)",
-                                (wallpaper.uuid, "PRPosterRoleLockScreen", "SELECTED", 1))
-                cursor.execute("INSERT INTO posterAttributes (posterUUID, roleId, attributeIdentifier, attributePayload) VALUES (?, ?, ?, ?)",
-                               (wallpaper.uuid, "PRPosterRoleLockScreen", "PRPosterRoleAttributeTypeUsageMetadata",
-                                wallpaper_payload))
+                    cursor.execute(
+                        "DELETE FROM posterAttributes "
+                        "WHERE posterUUID = ? AND roleId = ? AND attributeIdentifier = ?",
+                        (wallpaper.uuid, "PRPosterRoleLockScreen", "SELECTED"))
+                    cursor.execute(
+                        "INSERT INTO posterAttributes (posterUUID, roleId, attributeIdentifier, attributePayload) "
+                        "VALUES (?, ?, ?, ?)",
+                        (wallpaper.uuid, "PRPosterRoleLockScreen", "SELECTED", 1))
+                cursor.execute(
+                    "UPDATE posterRoleMembership SET roleSortKey = ? "
+                    "WHERE posterUUID = ? AND roleId = ?",
+                    (curr_role_sort_key + 1, wallpaper.uuid,
+                     "PRPosterRoleLockScreen"))
+                if cursor.rowcount == 0:
+                    cursor.execute(
+                        "INSERT INTO posterRoleMembership (posterUUID, roleId, roleSortKey) "
+                        "VALUES (?, ?, ?)",
+                        (wallpaper.uuid, "PRPosterRoleLockScreen",
+                         curr_role_sort_key + 1))
                 curr_role_sort_key += 1
-                cursor.execute("INSERT INTO posterRoleMembership (posterUUID, roleId, roleSortKey) VALUES (?, ?, ?)",
-                               (wallpaper.uuid, "PRPosterRoleLockScreen", curr_role_sort_key))
             # keep sqlite_sequence in sync; recreate the row if it is missing
             cursor.execute("UPDATE sqlite_sequence SET seq = ? WHERE name = ?",
                            (seq, "poster"))

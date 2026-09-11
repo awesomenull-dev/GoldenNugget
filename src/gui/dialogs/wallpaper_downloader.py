@@ -238,7 +238,7 @@ class WallpaperDownloaderDialog(QDialog):
         self.grid.setAlignment(Qt.AlignTop)
         self.scroll.setWidget(self._grid_host)
         self.scroll.verticalScrollBar().valueChanged.connect(
-            lambda *_: self._load_visible_previews())
+            lambda *_: self._schedule_window_update())
         layout.addWidget(self.scroll, 1)
 
         # Bottom close button
@@ -260,7 +260,8 @@ class WallpaperDownloaderDialog(QDialog):
         layout.addWidget(close_btn)
 
         self._all_wallpapers = []
-        self._cards = []
+        self._visible_wallpapers = []
+        self._cards = {}
         self._grid_cols = 1
         self._catalog_replies = []
         self._catalog_sources = set()
@@ -272,6 +273,10 @@ class WallpaperDownloaderDialog(QDialog):
         self._download_reply = None
         self._download_wallpaper = None
         self._busy = False
+        self._window_state = None
+        self._window_timer = None
+        self._virtualized = True
+        self._grid_total_rows = 0
         # one manager per dialog; alive as long as the dialog is
         self._nam = QNetworkAccessManager(self)
 
@@ -499,109 +504,179 @@ class WallpaperDownloaderDialog(QDialog):
         self._show_error(
             QCoreApplication.translate("Nugget", "Failed to load wallpapers"), message)
 
-    # --- grid ---
+    # --- grid (virtualized) ---
 
     def _clear_cards(self):
         for reply, card, path in self._preview_replies:
             reply.abort()
         self._preview_replies = []
         self._preview_queue = []
-        for card in self._cards:
+        for card in self._cards.values():
             self.grid.removeWidget(card)
             card.deleteLater()
-        self._cards = []
+        self._cards = {}
         self._all_wallpapers = []
+        self._visible_wallpapers = []
+        self._window_state = None
+        self._grid_total_rows = 0
+        self._virtualized = True
 
     def _populate_grid(self, wallpapers):
+        """Adopt a new catalog. Cards spawn progressively as they enter the
+        viewport (+1 buffer row) but then stay materialized forever; only the
+        *playback* of the previews is gated to the viewport window."""
         self._clear_cards()
         self._all_wallpapers = list(wallpapers)
-        cols = max(1, self.width() // (CARD_W + 16))
-        self._grid_cols = cols
-        for i, wp in enumerate(wallpapers):
-            card = _WallpaperCard(wp, self._on_card_clicked, self._grid_host)
-            self.grid.addWidget(card, i // cols, i % cols)
-            self._cards.append(card)
-        # defer one event-loop turn so the freshly added cards finish being
-        # shown (isVisible()) before the viewport window is computed
-        QTimer.singleShot(0, self._load_visible_previews)
         self._apply_search(self.search_box.text())
 
     def _apply_search(self, text):
         term = text.strip().lower()
-        for card in self._cards:
-            matches = (
-                term == ""
-                or term in card.wallpaper.name.lower()
-                or term in card.wallpaper.author.lower()
-            )
-            card.setVisible(matches)
-        # cards brought back into view by clearing the filter need previews
-        QTimer.singleShot(0, self._load_visible_previews)
+        if not term:
+            self._visible_wallpapers = list(self._all_wallpapers)
+        else:
+            self._visible_wallpapers = [
+                w for w in self._all_wallpapers
+                if term in w.name.lower() or term in w.author.lower()]
+        self._rebuild_window()
 
-    # --- previews (async via the same manager) ---
+    def _rebuild_window(self):
+        self._virtualized = True
+        self._window_state = None
+        self._grid_total_rows = 0
+        for card in self._cards.values():
+            self.grid.removeWidget(card)
+            card.deleteLater()
+        self._cards = {}
+        self._update_visible_window()
+        self._sync_playback()
 
-    def _load_visible_previews(self):
-        """Fetch previews only for cards inside (or next to) the viewport,
-        abort in-flight downloads for cards that scrolled far out of view, and
-        cap download concurrency so a fast long scroll can't pile up hundreds
-        of background image requests."""
-        if not self._cards:
+    # --- scroll throttling ---
+
+    def _schedule_window_update(self):
+        """Coalesce the flurry of ``valueChanged`` signals from a fast scroll
+        or glide into a single update once the scrolling settles."""
+        if self._window_timer is None:
+            self._window_timer = QTimer(self)
+            self._window_timer.setSingleShot(True)
+            self._window_timer.setInterval(60)
+            self._window_timer.timeout.connect(self._on_window_update_timer)
+        self._window_timer.start()
+
+    def _on_window_update_timer(self):
+        self._update_visible_window()
+        self._sync_playback()
+
+    def _update_visible_window(self):
+        """Spawn the cards inside the viewport rows plus one spare row above
+        and below. Cards are never torn down afterwards — they stay in place
+        while scrolling through the catalog. Skips work when the row window
+        has not actually moved."""
+        if not self._virtualized:
             return
+        wallpapers = self._visible_wallpapers
+        if not wallpapers:
+            self._grid_host.setMinimumHeight(0)
+            self._window_state = None
+            self._grid_total_rows = 0
+            return
+        total = len(wallpapers)
+        cols = max(1, self.width() // (CARD_W + 16))
+        self._grid_cols = cols
+        row_h = CARD_H + self.grid.spacing()
+        total_rows = (total + cols - 1) // cols
+
+        # Pin the scrollable height up-front so the scrollbar range never
+        # jumps while rows materialize during a scroll.
+        host_h = total_rows * row_h + 4
+        if self._grid_host.minimumHeight() != host_h:
+            self._grid_host.setMinimumHeight(host_h)
+
+        # Give every row a fixed height regardless of whether its cards are
+        # materialized yet — otherwise the empty rows collapse and the grid
+        # shows gaps/misaligned cards while scrolling.
+        if self._grid_total_rows != total_rows:
+            for r in range(self._grid_total_rows, total_rows):
+                self.grid.setRowMinimumHeight(r, row_h)
+            for r in range(total_rows, self._grid_total_rows):
+                self.grid.setRowMinimumHeight(r, 0)
+            self._grid_total_rows = total_rows
+
         vbar = self.scroll.verticalScrollBar()
         value = vbar.value()
-        view_h = self.scroll.viewport().height()
+        view_h = max(1, self.scroll.viewport().height())
+        # The scrollbar may still hold a stale high value right after the
+        # content shrank (search/reset); clamp it before computing the window.
+        maximum = max(0, host_h - view_h)
+        if value > maximum:
+            value = maximum
+        top_row = max(0, value // row_h - 1)
+        bottom_row = min(total_rows - 1, (value + view_h) // row_h + 1)
+        if top_row > bottom_row:
+            top_row = bottom_row
+
+        state = (top_row, bottom_row)
+        if state == self._window_state:
+            return
+        self._window_state = state
+
+        try:
+            for row in range(top_row, bottom_row + 1):
+                for col in range(cols):
+                    idx = row * cols + col
+                    if idx >= total:
+                        break
+                    if idx in self._cards:
+                        continue
+                    card = _WallpaperCard(wallpapers[idx],
+                                          self._on_card_clicked, self._grid_host)
+                    self.grid.addWidget(card, row, col)
+                    self._cards[idx] = card
+        except Exception:
+            # Never let a transient layout error freeze the grid: degrade to
+            # the classic full materialization so the dialog keeps working.
+            self._fallback_full_grid()
+
+    def _fallback_full_grid(self):
+        self._virtualized = False
+        for card in self._cards.values():
+            self.grid.removeWidget(card)
+            card.deleteLater()
+        self._cards = {}
+        cols = max(1, self._grid_cols)
+        for i, wp in enumerate(self._visible_wallpapers):
+            card = _WallpaperCard(wp, self._on_card_clicked, self._grid_host)
+            self.grid.addWidget(card, i // cols, i % cols)
+            self._cards[i] = card
+
+    def _sync_playback(self):
+        """Start/stop animation solely from the viewport: only the visible
+        rows plus one spare row above and below play their preview; every
+        card past that is fully stopped the moment it leaves the window.
+        Cards stay materialized — only playback is gated."""
+        wallpapers = self._visible_wallpapers
+        if not wallpapers:
+            return
+        cols = self._grid_cols
+        if cols <= 0:
+            cols = max(1, self.width() // (CARD_W + 16))
         row_h = CARD_H + self.grid.spacing()
-        cols = self._grid_cols
-        top_row = max(0, (value - row_h) // row_h)
-        bottom_row = min(len(self._cards) // cols, (value + view_h + row_h) // row_h)
-        self._abort_offscreen_previews(top_row, bottom_row)
-        if len(self._preview_replies) >= PREVIEW_CONCURRENCY:
-            return
-        for row in range(top_row, bottom_row + 1):
-            for col in range(cols):
-                idx = row * cols + col
-                if idx >= len(self._cards):
-                    break
-                card = self._cards[idx]
-                if card.isVisible():
-                    self._request_preview(card)
-
-    def _abort_offscreen_previews(self, top_row, bottom_row):
-        """Cancel preview downloads (and dequeue queued ones) for cards that
-        are far outside the viewport, so off-screen previews stop hogging the
-        network and the CPU/GIF decode loop stays quiet."""
-        if not self._preview_replies and not self._preview_queue:
-            return
-        cols = self._grid_cols
-
-        def _in_window(card):
-            try:
-                row = self._cards.index(card) // cols
-            except ValueError:
-                return False
-            return top_row - 1 <= row <= bottom_row + 1
-
-        kept = []
-        for reply, card, path in self._preview_replies:
-            if not self._card_is_valid(card):
-                reply.abort()
-                continue
-            if _in_window(card):
-                kept.append((reply, card, path))
+        total_rows = (len(wallpapers) + cols - 1) // cols
+        vbar = self.scroll.verticalScrollBar()
+        view_h = max(1, self.scroll.viewport().height())
+        maximum = max(0, total_rows * row_h - view_h)
+        value = min(vbar.value(), maximum)
+        top = max(0, value // row_h - 1)
+        bottom = min(total_rows - 1, (value + view_h) // row_h + 1)
+        for idx, card in list(self._cards.items()):
+            row = idx // cols
+            if top <= row <= bottom:
+                card._playback_suppressed = self._busy
+                card.start_playback()
+                self._request_preview(card)
             else:
-                reply.abort()
-                card.preview_state = "none"
-        self._preview_replies = kept
+                card.stop_playback()
 
-        kept_queue = []
-        for card in self._preview_queue:
-            if not self._card_is_valid(card):
-                continue
-            if _in_window(card):
-                kept_queue.append(card)
-            else:
-                card.preview_state = "none"
-        self._preview_queue = kept_queue
+    # --- previews (async via the same manager) ---
 
     def _request_preview(self, card):
         if card.preview_state != "none":
@@ -629,9 +704,6 @@ class WallpaperDownloaderDialog(QDialog):
             if not self._card_is_valid(card):
                 continue
             if card.preview_state != "queued":
-                continue
-            if not card.isVisible():
-                card.preview_state = "none"
                 continue
             path = self._preview_cache_path(card.wallpaper.preview_url)
             if os.path.exists(path):
@@ -676,18 +748,20 @@ class WallpaperDownloaderDialog(QDialog):
             self._kick_preview_queue()
             return
         card.set_preview_file(path)
+        # A reply can land after the card already scrolled out of the window;
+        # re-enforce the playback gate so it does not keep animating off-screen.
+        self._sync_playback()
         self._kick_preview_queue()
 
     def _pause_previews(self):
-        for card in self._cards:
+        for card in self._cards.values():
             card._playback_suppressed = True
             card.stop_playback()
 
     def _resume_previews(self):
-        for card in self._cards:
+        for card in self._cards.values():
             card._playback_suppressed = False
-            if card.isVisible():
-                card.start_playback()
+        self._sync_playback()
 
     def _card_is_valid(self, card) -> bool:
         import shiboken6
@@ -816,10 +890,12 @@ class WallpaperDownloaderDialog(QDialog):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if self._all_wallpapers:
-            self._populate_grid(self._all_wallpapers)
+            # re-derive column count / window for the new size
             self._apply_search(self.search_box.text())
 
     def closeEvent(self, event):
+        if self._window_timer is not None:
+            self._window_timer.stop()
         self._abort_inflight()
         if self._download_reply is not None:
             self._download_reply.abort()

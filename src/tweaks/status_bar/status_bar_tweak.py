@@ -1,7 +1,6 @@
 from .status_setter import Setter, StatusBarItem
 from ..tweak_classes import Tweak
-from src.devicemanagement.constants import Version
-from src.restore.restore import FileToRestore
+from src.utils.file_to_restore import FileToRestore
 
 from cffi import FFI
 ffi = FFI()
@@ -11,21 +10,16 @@ class StatusBarTweak(Tweak):
         super().__init__(key=None)
         self.setter = Setter()
 
-    # iOS 27: the status bar is Speakeasy, a SpringBoard feature flag — 
-    # but writing the SpeakeasyNewStatusBar flag fails due to no write permissions.
-    # The feature is disabled on iOS 27+.
+    # iOS 27+: the status bar is Speakeasy, a SpringBoard feature flag, but
+    # writing SpeakeasyNewStatusBar fails due to no write permissions, so the
+    # feature is disabled. device_manager only calls apply_tweak for iOS >= 27;
+    # the old <27 Speakeasy write was unreachable dead code and is gone.
     def apply_tweak(self, flag_plist: dict = None, version: str = "27.0") -> dict:
-        if not self.enabled or flag_plist is None:
-            return flag_plist
-        if Version(version) >= Version("27.0"):
-            return flag_plist
-        category = flag_plist.setdefault("SpringBoard", {})
-        category["SpeakeasyNewStatusBar"] = self.get_speakeasy_payload()
         return flag_plist
 
-    # iOS 26 and below: classic binary statusBarOverrides in HomeDomain.
+    # iOS 26.x (pre-27): classic binary statusBarOverrides in HomeDomain.
     def apply_classic_tweak(self, files_to_restore: list) -> None:
-        """Stage the classic binary status bar override file (iOS < 27)."""
+        """Stage the classic binary status bar override file (iOS 26.x)."""
         if not self.enabled:
             return
         files_to_restore.append(FileToRestore(
@@ -33,59 +27,6 @@ class StatusBarTweak(Tweak):
             restore_path="/Library/SpringBoard/statusBarOverrides",
             domain="HomeDomain"
         ))
-
-    def get_speakeasy_payload(self) -> dict:
-        """Translate the StatusBarOverrideData struct into the Speakeasy flag value.
-
-        TODO(ios27): the actual dict schema is not confirmed — the keys below
-        are guesses mirroring the classic statusBarOverrides plist format
-        (override* bools + nested values dict). They must be verified on-device
-        once the real keys are extracted from SpringBoard (speakeasy strings
-        in the dyld shared cache).
-        """
-        overrides = self.setter.get_overrides_with_silly_mode()
-
-        override: dict = {}
-        values: dict = {}
-        if any(overrides.overrideItemIsEnabled[i] != 0 for i in range(46)):
-            override["overrideItemIsEnabled"] = [
-                int(overrides.overrideItemIsEnabled[i]) for i in range(46)]
-            values["itemIsEnabled"] = [
-                int(overrides.values.itemIsEnabled[i]) for i in range(46)]
-
-        for flag, field in (
-            ("overrideTimeString", "timeString"),
-            ("overrideDateString", "dateString"),
-            ("overrideServiceString", "serviceString"),
-            ("overrideSecondaryServiceString", "secondaryServiceString"),
-            ("overridePrimaryServiceBadgeString", "primaryServiceBadgeString"),
-            ("overrideSecondaryServiceBadgeString", "secondaryServiceBadgeString"),
-            ("overrideBatteryDetailString", "batteryDetailString"),
-            ("overrideBreadcrumb", "breadcrumbTitle"),
-        ):
-            if getattr(overrides, flag) != 0:
-                override[flag] = 1
-                values[field] = ffi.string(getattr(overrides.values, field)).decode()
-
-        for flag, field in (
-            ("overrideGSMSignalStrengthBars", "GSMSignalStrengthBars"),
-            ("overrideSecondaryGSMSignalStrengthBars", "secondaryGSMSignalStrengthBars"),
-            ("overrideWifiSignalStrengthBars", "wifiSignalStrengthBars"),
-            ("overrideDataNetworkType", "dataNetworkType"),
-            ("overrideSecondaryDataNetworkType", "secondaryDataNetworkType"),
-            ("overrideBatteryCapacity", "batteryCapacity"),
-            ("overrideDisplayRawGSMSignal", "displayRawGSMSignal"),
-            ("overrideDisplayRawWifiSignal", "displayRawWifiSignal"),
-        ):
-            if getattr(overrides, flag) != 0:
-                override[flag] = 1
-                values[field] = getattr(overrides.values, field)
-
-        payload: dict = {"Enabled": True}
-        payload.update(override)
-        if values:
-            payload["values"] = values
-        return payload
 
     # --- generic helpers over the StatusBarOverrideData struct ---
 

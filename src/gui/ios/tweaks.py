@@ -8,10 +8,11 @@ from src.gui.ios.components import (
     IOSSwitch, TextInputDialog, NumberInputDialog
 )
 from src.gui.ios.compat import is_tweak_compatible
+from src.gui.theme import ColorThemeManager
 from src.tweaks.tweaks import tweaks, TweakID
 from src.tweaks.registry import SPECS_BY_SECTION, SECTION_FEATURES, Kind, Section
 from src.tweaks.tweak_loader import load_plist_tweaks
-from src.controllers.hotload import HotLoad
+from src.tweaks.hidden import current_hidden_feature_names, current_hidden_tweak_names
 
 # Feature (page) name -> registry Section it maps to in the iOS tweaks UI.
 # A HotLoad-hidden feature loses its whole section here (and the Sidebar/Home
@@ -19,35 +20,15 @@ from src.controllers.hotload import HotLoad
 _SECTION_FEATURES = SECTION_FEATURES
 
 
-def _hotload() -> HotLoad:
-    try:
-        app = QCoreApplication.instance()
-        window = getattr(app, "main_window", None)
-        settings = getattr(window, "settings", None) if window is not None else None
-    except Exception:
-        settings = None
-    return HotLoad(settings)
-
-
 def _hidden_feature_names() -> set:
     """Names of HotLoad-hidden features for the current setup, as a set."""
-    from src.devicemanagement.data_singleton import DataSingleton
-    current = DataSingleton().current_device
-    version = current.version if current is not None else ""
-    model = current.model if current is not None else ""
-    return _hotload().hidden_features(device_version=version,
-                                      device_model=model)
+    return current_hidden_feature_names()
 
 
 def _hidden_tweak_names() -> set:
     """Names of the tweaks that belong to HotLoad-hidden features for the
     current setup. Used by the preset loader to strip them during load."""
-    from src.devicemanagement.data_singleton import DataSingleton
-    current = DataSingleton().current_device
-    version = current.version if current is not None else ""
-    model = current.model if current is not None else ""
-    return _hotload().hidden_tweak_names(device_version=version,
-                                         device_model=model)
+    return current_hidden_tweak_names()
 
 
 def _hidden_sections() -> set:
@@ -66,6 +47,7 @@ class IOSSectionContent(QWidget):
         super().__init__(parent)
         self.window = window
         self.sections = sections
+        self._switch_labels = []
 
         # Load tweaks (idempotent) so the sections below actually populate
         load_plist_tweaks()
@@ -103,8 +85,10 @@ class IOSSectionContent(QWidget):
             row_layout.setContentsMargins(0, 0, 0, 0)
             row_layout.setSpacing(12)
 
+            c = ColorThemeManager.instance().colors
             label = QLabel(title)
-            label.setStyleSheet("color: #FFFFFF; font-size: 15px;")
+            label.setStyleSheet(f"color: {c.text_primary}; font-size: 15px;")
+            self._switch_labels.append(label)
             row_layout.addWidget(label, 1)
 
             switch = IOSSwitch(tweak.enabled)
@@ -197,6 +181,11 @@ class IOSSectionContent(QWidget):
         if self.force_solarium_fallback_card is not None:
             self.force_solarium_fallback_card.setVisible(visible)
 
+    def _retheme(self):
+        c = ColorThemeManager.instance().colors
+        for lbl in self._switch_labels:
+            lbl.setStyleSheet(f"color: {c.text_primary}; font-size: 15px;")
+
     def _show_text_input_dialog(self, tweak_id: TweakID, title: str, current: str, row: IOSSettingsRow):
         dialog = TextInputDialog(title, current, self)
         if dialog.exec() == QDialog.Accepted:
@@ -225,10 +214,18 @@ class IOSTweaksPage(QWidget):
 
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("background-color: #1e1e1e; border: none;")
+        self._scroll = scroll
         self.content = IOSSectionContent(window, list(Section), self)
         scroll.setWidget(self.content)
         layout.addWidget(scroll)
+
+        self._retheme()
+        ColorThemeManager.instance().theme_changed.connect(self._retheme)
+
+    def _retheme(self):
+        c = ColorThemeManager.instance().colors
+        self._scroll.setStyleSheet(f"background-color: {c.bg_primary}; border: none;")
+        self.content._retheme()
 
     def set_force_solarium_fallback_visible(self, visible: bool):
         self.content.set_force_solarium_fallback_visible(visible)
@@ -249,10 +246,18 @@ class IOSSectionPage(QWidget):
 
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("background-color: #1e1e1e; border: none;")
+        self._scroll = scroll
         self.content = IOSSectionContent(window, [section], self)
         scroll.setWidget(self.content)
         layout.addWidget(scroll)
+
+        self._retheme()
+        ColorThemeManager.instance().theme_changed.connect(self._retheme)
+
+    def _retheme(self):
+        c = ColorThemeManager.instance().colors
+        self._scroll.setStyleSheet(f"background-color: {c.bg_primary}; border: none;")
+        self.content._retheme()
 
     def set_force_solarium_fallback_visible(self, visible: bool):
         self.content.set_force_solarium_fallback_visible(visible)

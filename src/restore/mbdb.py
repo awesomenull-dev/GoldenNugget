@@ -1,36 +1,9 @@
 from dataclasses import dataclass
 from io import BytesIO
 
-# Mode bitfield
-from enum import IntFlag
-class _FileMode(IntFlag):
-    S_IFMT   = 0o0170000
-    S_IFIFO  = 0o0010000
-    S_IFCHR  = 0o0020000
-    S_IFDIR  = 0o0040000
-    S_IFBLK  = 0o0060000
-    S_IFREG  = 0o0100000
-    S_IFLNK  = 0o0120000
-    S_IFSOCK = 0o0140000
-
-    #S_IRWXU  = 0o0000700
-    S_IRUSR  = 0o0000400
-    S_IWUSR  = 0o0000200
-    S_IXUSR  = 0o0000100
-
-    #S_IRWXG  = 0o0000070
-    S_IRGRP  = 0o0000040
-    S_IWGRP  = 0o0000020
-    S_IXGRP  = 0o0000010
-
-    #S_IRWXO  = 0o0000007
-    S_IROTH  = 0o0000004
-    S_IWOTH  = 0o0000002
-    S_IXOTH  = 0o0000001
-
-    S_ISUID  = 0o0004000
-    S_ISGID  = 0o0002000
-    S_ISVTX  = 0o0001000
+# Mode bitfield (re-exported from the shared light module so src.utils
+# stays the single definition site; anything here is already heavy anyway)
+from src.utils.file_to_restore import _FileMode
 
 @dataclass
 class MbdbRecord:

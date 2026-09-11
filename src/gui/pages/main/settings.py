@@ -1,4 +1,5 @@
 available_languages = {
+    "System": "",
     "English": "en",
     "Español": "es",
     "Español (México)": "es_MX",

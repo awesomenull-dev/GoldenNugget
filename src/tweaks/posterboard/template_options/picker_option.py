@@ -5,7 +5,7 @@ from typing import Optional
 from shutil import rmtree, move
 from PySide6.QtWidgets import QWidget, QLabel, QVBoxLayout, QHBoxLayout, QComboBox
 
-from src.gui.custom_qt_elements.multicombobox import MultiComboBox
+from src.qt.custom_elements.multicombobox import MultiComboBox
 
 class PickerElement:
     label: str # label to show for the picker

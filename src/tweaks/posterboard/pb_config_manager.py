@@ -9,7 +9,7 @@ from typing import Optional
 from src.exceptions.nugget_exception import NuggetException
 from src.controllers.files_handler import get_bundle_files
 from src.devicemanagement.preference_manager import PreferenceManager
-from src.restore.protective import log_warn
+from src.utils.log_util import log_warn
 from .pb_config_item import PBConfigItem
 
 

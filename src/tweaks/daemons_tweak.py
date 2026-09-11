@@ -138,6 +138,32 @@ class Daemon(Enum):
     Translate = ["com.apple.translated"]
     MockLocation = ["com.apple.mocksynclocationd"]
     DeviceCheck = ["com.apple.devicecheckd"]
+    # --- Safe analytics/telemetry additions (from MiniVoidyy/GoldenNugget-) ---
+    # Telemetry/analytics daemons ONLY. Nothing boot-critical, no core
+    # wireless/cellular/auth services. These mirror the fork's curated
+    # "Recommended" analytics set, whose disable is confirmed safe.
+    WifiAnalytics = ["com.apple.wifianalyticsd"]
+    AnalyticsHelper = [
+        "com.apple.analyticsd",
+        "com.apple.analyticsd.admin",
+        "com.apple.analyticsd.events"
+    ]
+    CallAnalytics = ["com.apple.rtcreportingd"]
+    CoreDuet = ["com.apple.coreduetd"]
+    Insight = ["com.apple.insightd"]
+    Metrics = ["com.apple.metricsd"]
+    MediaExperience = ["com.apple.mediaremoted"]
+    Symptomsd = ["com.apple.symptomsd", "com.apple.symptomsd-app"]
+    StatisticalDiagnostic = ["com.apple.StatisticalDiagnosticService"]
+    WirelessDiagnostics = ["com.apple.wirelessdiagnostics"]
+    DuetHeuristic = [
+        "com.apple.DuetHeuristic-BM",
+        "com.apple.DuetHeuristic-BM.Baseband"
+    ]
+    DuetExpert = ["com.apple.duetexpertd"]
+    Decisiond = ["com.apple.decisiond"]
+    Triald = ["com.apple.triald"]
+    Sociald = ["com.apple.sociald"]
 
 
 # Danger list fills in now that the class is defined.
@@ -147,3 +173,15 @@ DANGEROUS_KEYS = frozenset(k for d in DANGEROUS_DAEMONS for k in d.value)
 # Interface-visible daemon keys: everything a user can toggle in the UI.
 # Any key outside this set is stripped from presets / the apply pass.
 INTERFACE_KEYS = frozenset(k for d in Daemon for k in d.value)
+
+# Safe one-tap analytics/telemetry disable set — the "Recommended" switch in
+# the daemons UI. Analytics/tracking/logging only; verified safe to disable.
+RECOMMENDED_ANALYTICS = [
+    Daemon.CrashReports, Daemon.Diagnostics, Daemon.UsageTrackingAgent,
+    Daemon.AppleAds, Daemon.FollowUp, Daemon.Feedback, Daemon.Shazam,
+    Daemon.SettingsStats, Daemon.WifiAnalytics, Daemon.AnalyticsHelper,
+    Daemon.CallAnalytics, Daemon.CoreDuet, Daemon.Insight, Daemon.Metrics,
+    Daemon.MediaExperience, Daemon.Symptomsd, Daemon.StatisticalDiagnostic,
+    Daemon.WirelessDiagnostics, Daemon.DuetHeuristic, Daemon.DuetExpert,
+    Daemon.Decisiond, Daemon.Triald, Daemon.Sociald,
+]

@@ -166,24 +166,7 @@ async def check_disk_space_for_backup(lockdown_client=None, path: str = None,
 # Importing this module applies it process-wide.
 _sc.DEFAULT_SSL_HANDSHAKE_TIMEOUT = 60
 
-import logging
-
-_logger = logging.getLogger("GoldenNugget.protective")
-
-
-def log_info(msg: str) -> None:
-    """Log an info message through the session logger."""
-    _logger.info(msg)
-
-
-def log_warn(msg: str) -> None:
-    """Log a warning through the session logger."""
-    _logger.warning(msg)
-
-
-def log_error(msg: str) -> None:
-    """Log an error through the session logger."""
-    _logger.error(msg)
+from src.utils.log_util import log_info, log_warn, log_error
 
 # --- DeviceLink protocol constants (from pymobiledevice3.services.device_link) ---
 
@@ -274,6 +257,14 @@ WEBKIT_WEBSITE_DATA_PATH_PREFIXES = (
     "Library/WebKit/WebsiteData",
 )
 
+# Path prefixes within HomeDomain holding the contacts database
+# (Library/AddressBook/AddressBook.sqlitedb + -wal/-shm and
+# AddressBookImages.sqlitedb). The iOS 27 "safe state recovery" wipe would
+# otherwise discard every contact.
+ADDRESS_BOOK_PATH_PREFIXES = (
+    "Library/AddressBook",
+)
+
 # Files/dirs inside the protective HomeDomain scope that tweaks write
 # themselves — restoring the stale copies would undo the applied tweaks.
 _SKIP_PATH_PREFIXES = (
@@ -318,7 +309,8 @@ def _is_protective_file(domain: str, relative_path: str, include_photos: bool = 
                 or relative_path.startswith(SHORTCUTS_PATH_PREFIXES)
                 or relative_path.startswith(WEB_CLIPS_PATH_PREFIXES)
                 or relative_path.startswith(WEB_APP_PATH_PREFIXES)
-                or relative_path.startswith(WEBKIT_WEBSITE_DATA_PATH_PREFIXES))
+                or relative_path.startswith(WEBKIT_WEBSITE_DATA_PATH_PREFIXES)
+                or relative_path.startswith(ADDRESS_BOOK_PATH_PREFIXES))
     if include_photos and domain in PROTECTIVE_DOMAINS:
         return True
     if include_keychain and domain == KEYCHAIN_DOMAIN:
@@ -359,7 +351,8 @@ def is_protective_device_file(device_name: str, include_photos: bool = True,
     for prefix in (APPLE_ID_PATH_PREFIXES + SPRINGBOARD_PATH_PREFIXES
                + CONTROL_CENTER_PATH_PREFIXES + SHORTCUTS_PATH_PREFIXES
                + WEB_CLIPS_PATH_PREFIXES + WEB_APP_PATH_PREFIXES
-               + WEBKIT_WEBSITE_DATA_PATH_PREFIXES):
+               + WEBKIT_WEBSITE_DATA_PATH_PREFIXES
+               + ADDRESS_BOOK_PATH_PREFIXES):
         if _path_match(device_name, f"HomeDomain/{prefix}") or _path_match(device_name, prefix):
             return True
     if include_posterboard:
@@ -467,7 +460,7 @@ async def perform_protective_backup(
     progress_callback=None,
     include_photos: bool = True,
     include_posterboard: bool = False,
-    include_keychain: bool = False,
+    include_keychain: Optional[bool] = None,
     incremental_ok: bool = False,
 ) -> bool:
     if not incremental_ok:
@@ -486,6 +479,12 @@ async def perform_protective_backup(
             is_encrypted = await mb.get_will_encrypt()
         except Exception:
             pass
+        # Keychain inclusion follows the device's real encryption state unless
+        # the caller pinned it explicitly — saves a redundant round-trip before
+        # this call. The filter callback above reads ``include_keychain`` by
+        # reference, so it picks up the resolved value.
+        if include_keychain is None:
+            include_keychain = is_encrypted
         if is_encrypted:
             log_info("Backup encryption already enabled on device.")
             progress_callback("Using existing backup encryption...")

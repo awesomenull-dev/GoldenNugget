@@ -5,17 +5,9 @@ import queue
 import traceback
 import threading
 
-
-class ApplyAlertMessage:
-    def __init__(self, txt: str, title: str = "Error!", icon=QMessageBox.Critical, detailed_txt: str = None, backup_path: str = None,
-                 exc_type: type = None, exc_value: BaseException = None):
-        self.txt = txt
-        self.title = title
-        self.icon = icon
-        self.detailed_txt = detailed_txt
-        self.backup_path = backup_path
-        self.exc_type = exc_type
-        self.exc_value = exc_value
+# Qt-free shared type (kept here for backwards-compatible import paths forwards
+# to the same class the backend uses).
+from src.utils.alerts import ApplyAlertMessage
 
 
 class _SudoState:

@@ -139,7 +139,7 @@ def log_banner(logger_name: str = "GoldenNugget") -> None:
     """Log environment/version info at session start."""
     import platform
     try:
-        from src.gui.version import App_Version
+        from src.version import App_Version
         version = str(App_Version)
     except Exception:
         version = "unknown"

@@ -18,7 +18,7 @@ import urllib.request
 
 from PySide6.QtCore import QStandardPaths
 
-from src.gui.version import App_Version as _APP_VERSION
+from src.version import App_Version as _APP_VERSION
 from src.tweaks.registry import SPECS_BY_SECTION, SECTION_FEATURES
 
 RULES_URL = ("https://raw.githubusercontent.com/awesomenull-dev/"

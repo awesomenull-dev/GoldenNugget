@@ -28,7 +28,7 @@ import pymobiledevice3.service_connection as _sc
 from src.devicemanagement.session import lockdown_session
 from src.exceptions.device_errors import is_device_locked_error as _is_device_locked_error
 from src.controllers.hotload import HotLoad
-from src.restore.skip_setup27 import SKIP_ALL_PANES
+from src.restore.skip_setup27 import skip_setup_panes
 
 # Bump SSL handshake timeout from 10s to 60s for all lockdown services.
 _sc.DEFAULT_SSL_HANDSHAKE_TIMEOUT = 60
@@ -42,8 +42,8 @@ from src.devicemanagement.constants import Device, Version, is_supported_by_fork
 from src.devicemanagement.data_singleton import DataSingleton
 from .preference_manager import PreferenceManager
 
-from src.gui.thread_workers.apply_worker import ApplyAlertMessage
-from src.gui.pages.pages_list import Page
+from src.utils.alerts import ApplyAlertMessage
+from src.utils.pages import Page
 from src.controllers.path_handler import fix_windows_path
 
 from src.exceptions.nugget_exception import NuggetException
@@ -122,6 +122,11 @@ class DeviceManager:
         
         # Backup password (for encrypted backups)
         self._backup_password: Optional[str] = None
+
+        # Encryption state as last seen by Phase 0's backup (None = not yet
+        # known). Lets _apply_tweak_pass skip its own lockdown round-trip on
+        # most applies — Phase 0 already paid for the check.
+        self._known_backup_encryption: Optional[bool] = None
 
         # Set when the user chose to continue without data protection (e.g.
         # out of disk space) — Phase 1 must not re-run the protective backup.
@@ -314,6 +319,10 @@ class DeviceManager:
             await ld.unpair()
             # next, pair it again
             await ld.pair()
+        QMessageBox.information(
+            None,
+            QCoreApplication.tr("Pairing Reset"),
+            QCoreApplication.tr("Your device's pairing was successfully reset. Refresh the device list before applying."))
 
     async def add_skip_setup(self, files_to_restore: list[FileToRestore], restoring_domains: bool):
         # TODO: Probably should move this to its own file
@@ -323,7 +332,8 @@ class DeviceManager:
                 async with MobileConfigService(lockdown=ld) as mcs:
                     cloud_config_plist = await mcs.get_cloud_configuration()
             # add the 2 skip setup files
-            cloud_config_plist["SkipSetup"] = list(SKIP_ALL_PANES)
+            cloud_config_plist["SkipSetup"] = skip_setup_panes(
+                self.pref_manager.skip_apple_id_setup)
             cloud_config_plist["AllowPairing"] = True
             cloud_config_plist["ConfigurationWasApplied"] = True
             cloud_config_plist["CloudConfigurationUIComplete"] = True
@@ -411,6 +421,7 @@ class DeviceManager:
                 progress_callback=self.progress_callback,
                 backup_password=backup_password,
                 prepared_backup_root=prepared_backup_root,
+                skip_apple_id_setup=self.pref_manager.skip_apple_id_setup,
                 skip_protective_backup=skip_protective_backup,
                 include_keychain=include_keychain,
                 prompt_choice=prompt_choice,
@@ -458,6 +469,7 @@ class DeviceManager:
             self._raise_if_unsupported()
             update_label(QCoreApplication.tr("Applying changes to files..."))
             self._protective_backup_skipped = False
+            self._known_backup_encryption = None  # re-established by Phase 0
 
             # iOS 26.2+ (iOS 27 era) uses the heavy three-phase protective restore
             pb.tendies = original_tendies[:MAX_TENDIES_PER_RESTORE]
@@ -651,7 +663,7 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
                     return False
             return True
     
-        async def _live_backup(lc, encrypted: bool) -> tuple:
+        async def _live_backup(lc) -> tuple:
             """Fresh protective backup (no cache) with the PosterBoard container
             riding along whenever wallpapers are about to be applied."""
             # Persistent, one directory per run. Once Phase 2 wipes the device
@@ -662,15 +674,18 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
             backup_root = new_protective_backup_dir(udid)
             prune_protective_backups(udid)
             update_label(QCoreApplication.tr("Backing up device..."))
-            await perform_protective_backup(
+            # include_keychain is left None (auto) so it follows the device's
+            # live encryption state — one less round-trip before the backup.
+            is_encrypted = await perform_protective_backup(
                 lc, backup_root, progress_callback=self._backup_progress(update_label),
                 include_photos=True, include_posterboard=needs_posterboard,
-                include_keychain=encrypted)
+                include_keychain=None)
+            self._known_backup_encryption = is_encrypted
             log_info(f"Phase 0: live protective backup ready (always fresh; "
                      f"PosterBoard container {'included' if needs_posterboard else 'not needed'}; "
-                     f"keychain {'included' if encrypted else 'excluded (backup not encrypted)'})")
+                     f"keychain {'included' if is_encrypted else 'excluded (backup not encrypted)'})")
             prepared = PreparedBackup(root=backup_root, manifest_password="")
-            if needs_posterboard and encrypted:
+            if needs_posterboard and is_encrypted:
                 log_warn("Encrypted backup cannot yield a readable PosterBoard DB — "
                          "falling back to a separate backup")
                 return prepared, False
@@ -684,22 +699,23 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
             if not cache_enabled:
                 log_info("Protective backup cache is an experimental feature and is "
                          "off — running a fresh live protective backup instead")
-                return await _live_backup(lc, await is_backup_encrypted(lc))
-    
+                return await _live_backup(lc)
+
             # --- EXPERIMENTAL cache path ---
             encrypted = await is_backup_encrypted(lc)
+            self._known_backup_encryption = encrypted
             manifest_password = ""
             if encrypted:
                 if prompt_password is None:
                     log_info("No password prompt available — bypassing the protective backup cache")
-                    return await _live_backup(lc, encrypted)
+                    return await _live_backup(lc)
                 update_label(QCoreApplication.tr("Backup encryption is enabled. Enter your backup password to use the fast cached backup:"))
                 password = prompt_password(
                     QCoreApplication.tr("Backup Encryption Password"),
                     QCoreApplication.tr("Enter your iTunes/Finder backup password (used locally to prepare the cached backup):"))
                 if not password:
                     log_info("No backup password provided — bypassing the protective backup cache")
-                    return await _live_backup(lc, encrypted)
+                    return await _live_backup(lc)
                 manifest_password = password
                 self._backup_password = password  # reuse it for the Phase 3 restore prompt
             from src.restore.protective import CACHE_REFRESH_SECS, ProtectiveBackupCache
@@ -736,7 +752,7 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
         a fresh one isn't required (``force=False``).
 
         Uses the same mechanism as the "Fetch Database File" wizard
-        (``backup_posterboard_database`` in ``src/gui/dialogs/pb_dialog.py``),
+        (``backup_posterboard_database`` in ``src/restore/posterboard_backup.py``),
         i.e. a full mobilebackup2 backup + Manifest.db lookup. Failure is
         non-fatal: the apply continues and config mode surfaces its own clear
         error later.
@@ -754,7 +770,7 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
             return
 
         update_label(QCoreApplication.tr("Fetching PosterBoard database..."))
-        from src.gui.dialogs.pb_dialog import backup_posterboard_database
+        from src.restore.posterboard_backup import backup_posterboard_database
         try:
             db_file_path = await backup_posterboard_database(udid, update_label)
             if not db_file_path or not os.path.exists(db_file_path):
@@ -933,47 +949,56 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
             # Check if backup encryption is enabled and handle it
             backup_password = ""
             if Version(self.get_current_device_version()) >= Version("27.0"):
-                # Check if backup encryption is enabled on device
-                async with lockdown_session(self.get_current_device_udid()) as check_ld:
-                    try:
-                        async with Mobilebackup2Service(check_ld) as mb:
-                            is_encrypted = await mb.get_will_encrypt()
-                        if is_encrypted:
-                            if self.pref_manager.use_encrypted_backup:
-                                # reuse the password entered for the cached backup, if any
-                                backup_password = self._get_backup_password()
-                                if backup_password:
-                                    log_info("Using existing backup encryption with provided password")
-                                    update_label(QCoreApplication.tr("Password accepted. Proceeding with encrypted restore..."))
-                                else:
-                                    # User wants to keep encryption - ask for password to use it
-                                    update_label(QCoreApplication.tr("Backup encryption is enabled. We'll use it for the restore."))
-                                    update_label(QCoreApplication.tr("Please enter your iTunes/Finder backup password:"))
-                                    if prompt_password is None:
-                                        raise NuggetException(QCoreApplication.tr("Backup password is required for encrypted restore. Please provide the password or disable encryption in iTunes/Finder."))
-                                    password = prompt_password(
-                                        QCoreApplication.tr("Backup Encryption Password"),
-                                        QCoreApplication.tr("Enter your iTunes/Finder backup password (required for encrypted restore):"))
-                                    if password:
-                                        backup_password = password
-                                        log_info("Using existing backup encryption with provided password")
-                                        update_label(QCoreApplication.tr("Password accepted. Proceeding with encrypted restore..."))
-                                    else:
-                                        raise NuggetException(QCoreApplication.tr("Backup password is required for encrypted restore. Please provide the password or disable encryption in iTunes/Finder."))
+                # Phase 0's protective backup already established the
+                # encryption state (and may have captured a password). Reusing
+                # it avoids a whole extra lockdown session on every apply; only
+                # when Phase 0 did not run (raw sparse / nothing to prepare)
+                # do we pay for a real check here.
+                known = self._known_backup_encryption
+                if known is None:
+                    async with lockdown_session(self.get_current_device_udid()) as check_ld:
+                        try:
+                            async with Mobilebackup2Service(check_ld) as mb:
+                                is_encrypted = await mb.get_will_encrypt()
+                        except Exception as e:
+                            if isinstance(e, NuggetException):
+                                raise
+                            log_warn(f"Failed to check backup encryption status: {e}")
+                            is_encrypted = False
+                else:
+                    is_encrypted = known
+                if is_encrypted:
+                    if self.pref_manager.use_encrypted_backup:
+                        # reuse the password entered for the cached backup, if any
+                        backup_password = self._get_backup_password()
+                        if backup_password:
+                            log_info("Using existing backup encryption with provided password")
+                            update_label(QCoreApplication.tr("Password accepted. Proceeding with encrypted restore..."))
+                        else:
+                            # User wants to keep encryption - ask for password to use it
+                            update_label(QCoreApplication.tr("Backup encryption is enabled. We'll use it for the restore."))
+                            update_label(QCoreApplication.tr("Please enter your iTunes/Finder backup password:"))
+                            if prompt_password is None:
+                                raise NuggetException(QCoreApplication.tr("Backup password is required for encrypted restore. Please provide the password or disable encryption in iTunes/Finder."))
+                            password = prompt_password(
+                                QCoreApplication.tr("Backup Encryption Password"),
+                                QCoreApplication.tr("Enter your iTunes/Finder backup password (required for encrypted restore):"))
+                            if password:
+                                backup_password = password
+                                log_info("Using existing backup encryption with provided password")
+                                update_label(QCoreApplication.tr("Password accepted. Proceeding with encrypted restore..."))
                             else:
-                                # User doesn't want encryption - show friendly error
-                                raise NuggetException(QCoreApplication.tr(
-                                    "Backup encryption is enabled on your iPhone.\n\n"
-                                    "GoldenNugget needs to temporarily disable it to apply tweaks safely.\n\n"
-                                    "Please choose one:\n"
-                                    "1. Disable encryption on your iPhone: Settings → General → Transfer or Reset iPhone → Backup Password → Turn Off\n"
-                                    "2. Or enable \"Use Encrypted Backups (Experimental)\" in GoldenNugget Settings → enter your backup password when prompted.\n\n"
-                                    "Tip: Option 1 is simpler if you don't know your backup password."
-                                ))
-                    except Exception as e:
-                        if isinstance(e, NuggetException):
-                            raise
-                        log_warn(f"Failed to check backup encryption status: {e}")
+                                raise NuggetException(QCoreApplication.tr("Backup password is required for encrypted restore. Please provide the password or disable encryption in iTunes/Finder."))
+                    else:
+                        # User doesn't want encryption - show friendly error
+                        raise NuggetException(QCoreApplication.tr(
+                            "Backup encryption is enabled on your iPhone.\n\n"
+                            "GoldenNugget needs to temporarily disable it to apply tweaks safely.\n\n"
+                            "Please choose one:\n"
+                            "1. Disable encryption on your iPhone: Settings → General → Transfer or Reset iPhone → Backup Password → Turn Off\n"
+                            "2. Or enable \"Use Encrypted Backups (Experimental)\" in GoldenNugget Settings → enter your backup password when prompted.\n\n"
+                            "Tip: Option 1 is simpler if you don't know your backup password."
+                        ))
 
             # restore to the device
             # include_keychain only when backup encryption is active — iOS rejects

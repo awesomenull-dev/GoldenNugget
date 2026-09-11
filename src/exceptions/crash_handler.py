@@ -145,7 +145,7 @@ def _build_issue_body(info: dict, summary: str, traceback_text: str,
                       include_log: bool = True) -> str:
     """Assemble the text pasted into the prefilled GitHub issue."""
     try:
-        from src.gui.version import App_Version
+        from src.version import App_Version
         version = str(App_Version)
     except Exception:
         version = "unknown"
@@ -209,9 +209,8 @@ class CrashDialog(QDialog):
         layout = QVBoxLayout(self)
 
         heading = QLabel(
-            "GoldenNugget detected an error. Here's what we know — you can "
-            "report it to us, copy the details (with the session log), or "
-            "continue working.")
+            "GoldenNugget detected an error. Here's what we know - report it to "
+            "us or copy the details (with the session log) before restarting.")
         heading.setWordWrap(True)
         heading.setStyleSheet("font-size: 16px; font-weight: 600;")
         layout.addWidget(heading)
@@ -274,7 +273,8 @@ class CrashDialog(QDialog):
         open_log_btn.clicked.connect(self._open_log)
         buttons.addWidget(open_log_btn)
 
-        continue_btn = QPushButton("Continue")
+        continue_btn = QPushButton("Restart App")
+        continue_btn.setToolTip("Close the error report and relaunch GoldenNugget.")
         continue_btn.setDefault(True)
         continue_btn.clicked.connect(self.accept)
         buttons.addWidget(continue_btn)
@@ -334,6 +334,24 @@ def _show_crash_dialog(summary: str, traceback_text: str, exc_type=None, exc_val
     dialog.exec()
 
 
+def _restart_app():
+    """Relaunch GoldenNugget from the crash handler so the session keeps
+    working after an unexpected error. Uses the same args the process was
+    started with; falls back to a plain re-exec if anything fails."""
+    try:
+        if getattr(sys, "frozen", False):
+            # PyInstaller: sys.argv[0] is already the exe path.
+            target = sys.argv if len(sys.argv) > 1 else [sys.executable]
+            os.execv(sys.executable, target)
+        else:
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+    except Exception:
+        try:
+            os.execl(sys.executable, sys.executable, *sys.argv)
+        except Exception:
+            pass
+
+
 def _handle_crash(exc_type, exc_value, exc_tb):
     summary, tb = _format_error(exc_type, exc_value, exc_tb)
     if exc_type is not KeyboardInterrupt:
@@ -343,6 +361,9 @@ def _handle_crash(exc_type, exc_value, exc_tb):
     except Exception:
         # Never let the crash handler itself crash the app.
         print(f"CRASH: {summary}\n{tb}", file=sys.stderr)
+        _restart_app()
+        return
+    _restart_app()
 
 
 def _excepthook(exc_type, exc_value, exc_tb):
@@ -386,7 +407,7 @@ def _detect_desktop() -> str:
 def print_startup_banner() -> None:
     """Print a startup info banner to the terminal."""
     try:
-        from src.gui.version import App_Version, App_Build
+        from src.version import App_Version, App_Build
         version_str = str(App_Version)
         beta_build = int(App_Build)
     except Exception:
@@ -416,14 +437,72 @@ def print_startup_banner() -> None:
     print(f"Off-Build?: {off_build}")
 
 
+def _install_faulthandler():
+    """Route native crashes (segfault / stack overflow / fatal abort) to a
+    dedicated dump file. Python exceptions are handled by the crash dialog, but
+    a native fault kills the process before the interpreter can react - this
+    captures whatever stack is left so the bug can be diagnosed."""
+    try:
+        import faulthandler
+        from src.controllers.nugget_logger import get_log_dir
+        dump_path = os.path.join(get_log_dir(), "nugget_crash_backtrace.log")
+        dump_file = open(dump_path, "ab", buffering=0)
+        faulthandler.enable(all_threads=True, file=dump_file)
+        print(f"[init] Native-crash backtraces -> {dump_path}", file=sys.stderr)
+    except Exception:
+        pass
+
+
+_qt_last_message = ["", 0]
+
+
+def _qt_message_handler(msg_type, context, message):
+    """Forward Qt framework messages (qWarning/qCritical/qFatal, including the
+    QFont diagnostics and any crash forewarning) into the session log and, for
+    warnings+, duplicate them on stderr exactly like Qt's default handler."""
+    try:
+        from PySide6.QtCore import QtMsgType
+        level = {
+            QtMsgType.QtDebugMsg: logging.DEBUG,
+            QtMsgType.QtInfoMsg: logging.INFO,
+            QtMsgType.QtWarningMsg: logging.WARNING,
+            QtMsgType.QtCriticalMsg: logging.ERROR,
+            QtMsgType.QtFatalMsg: logging.CRITICAL,
+        }.get(msg_type, logging.WARNING)
+        if message == _qt_last_message[0]:
+            _qt_last_message[1] += 1
+            return
+        last, count = _qt_last_message
+        if count > 1:
+            logger.log(level, "[Qt] %s (x%d)", last, count)
+        _qt_last_message[0] = message
+        _qt_last_message[1] = 1
+        logger.log(level, "[Qt] %s", message)
+        if level >= logging.WARNING:
+            print(message, file=sys.stderr)
+    except Exception:
+        pass
+
+
+def _install_qt_message_handler():
+    try:
+        from PySide6.QtCore import qInstallMessageHandler
+        qInstallMessageHandler(_qt_message_handler)
+    except Exception:
+        pass
+
+
 def install_crash_handler():
     """Install the global uncaught-exception handler.
 
     Call once before ``QApplication`` is created. The dialog is only shown once
     an application instance exists; exceptions raised before then are logged
-    and printed.
+    and printed. Native crashes (which never raise a Python exception) are
+    captured into a dedicated backtrace dump instead.
     """
     print_startup_banner()
+    _install_faulthandler()
+    _install_qt_message_handler()
     sys.excepthook = _excepthook
     # Sys.unraisablehook catches errors in __del__ / finalizers, which would
     # otherwise be reported to stderr and might quietly abort cleanup.

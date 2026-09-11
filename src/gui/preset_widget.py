@@ -10,6 +10,8 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame,
 )
 
+from src.gui.theme import ColorThemeManager
+
 
 class PresetBanner(QFrame):
     """A card that displays the active preset and a manage shortcut."""
@@ -18,29 +20,7 @@ class PresetBanner(QFrame):
         super().__init__(parent)
         self.setObjectName("presetBanner")
         self.setFrameShape(QFrame.StyledPanel)
-
-        if ios_style:
-            self.setStyleSheet("""
-                PresetBanner {
-                    background-color: #1C1C1E;
-                    border-radius: 12px;
-                    border: none;
-                }
-            """)
-            text_color = "#FFFFFF"
-            sub_color = "#8E8E93"
-            accent = "#007AFF"
-        else:
-            self.setStyleSheet("""
-                PresetBanner {
-                    background-color: #2C2C2E;
-                    border-radius: 10px;
-                    border: none;
-                }
-            """)
-            text_color = "#FFFFFF"
-            sub_color = "#8E8E93"
-            accent = "#0A84FF"
+        self._ios_style = ios_style
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(16, 12, 16, 12)
@@ -51,29 +31,51 @@ class PresetBanner(QFrame):
 
         self.caption_lbl = QLabel(QCoreApplication.translate(
             "Nugget", "Active preset"))
-        self.caption_lbl.setStyleSheet(f"font-size: 12px; color: {sub_color};")
         text_col.addWidget(self.caption_lbl)
 
         self.active_lbl = QLabel(QCoreApplication.translate("Nugget", "AutoSave"))
-        self.active_lbl.setStyleSheet(f"font-size: 17px; font-weight: 600; color: {text_color};")
         text_col.addWidget(self.active_lbl)
 
         layout.addLayout(text_col, 1)
 
         self.manage_btn = QPushButton(QCoreApplication.translate("Nugget", "Manage"), self)
         self.manage_btn.setCursor(Qt.PointingHandCursor)
+        layout.addWidget(self.manage_btn)
+
+        self._retheme()
+        ColorThemeManager.instance().theme_changed.connect(self._retheme)
+
+    def _retheme(self):
+        c = ColorThemeManager.instance().colors
+        if self._ios_style:
+            self.setStyleSheet(f"""
+                PresetBanner {{
+                    background-color: {c.bg_secondary};
+                    border-radius: 12px;
+                    border: none;
+                }}
+            """)
+        else:
+            self.setStyleSheet(f"""
+                PresetBanner {{
+                    background-color: {c.surface_hover};
+                    border-radius: 10px;
+                    border: none;
+                }}
+            """)
+        self.caption_lbl.setStyleSheet(f"font-size: 12px; color: {c.text_secondary};")
+        self.active_lbl.setStyleSheet(f"font-size: 17px; font-weight: 600; color: {c.text_primary};")
         self.manage_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: transparent;
-                color: {accent};
+                color: {c.accent};
                 font-size: 15px;
                 font-weight: 600;
                 border: none;
                 padding: 8px 12px;
             }}
-            QPushButton:hover {{ color: #0066CC; }}
+            QPushButton:hover {{ color: {c.accent_hover}; }}
         """)
-        layout.addWidget(self.manage_btn)
 
     def set_active_preset(self, name: str):
         self.active_lbl.setText(name or QCoreApplication.translate("Nugget", "AutoSave"))
@@ -91,25 +93,33 @@ class PresetWidget(QWidget):
         super().__init__(parent)
         self.window = window
         self._on_manage = on_manage
+        self._ios_style = ios_style
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
 
-        header = QLabel()
-        if ios_style:
-            header.setText(QCoreApplication.translate("Nugget", "PRESETS"))
-            header.setStyleSheet(
-                "font-size: 13px; font-weight: 600; color: #8E8E93;"
-                "letter-spacing: 0.5px; padding-left: 4px;")
-        else:
-            header.setText(QCoreApplication.translate("Nugget", "Presets"))
-            header.setStyleSheet("font-size: 16px; font-weight: 600; color: #FFFFFF;")
-        layout.addWidget(header)
+        self._header = QLabel()
+        layout.addWidget(self._header)
 
         self.banner = PresetBanner(ios_style=ios_style)
         self.banner.manage_btn.clicked.connect(self._on_manage_pressed)
         layout.addWidget(self.banner)
+
+        self._retheme()
+        ColorThemeManager.instance().theme_changed.connect(self._retheme)
+
+    def _retheme(self):
+        c = ColorThemeManager.instance().colors
+        if self._ios_style:
+            self._header.setText(QCoreApplication.translate("Nugget", "PRESETS"))
+            self._header.setStyleSheet(
+                f"font-size: 13px; font-weight: 600; color: {c.text_secondary};"
+                "letter-spacing: 0.5px; padding-left: 4px;")
+        else:
+            self._header.setText(QCoreApplication.translate("Nugget", "Presets"))
+            self._header.setStyleSheet(f"font-size: 16px; font-weight: 600; color: {c.text_primary};")
+        self.banner._retheme()
 
     def _on_manage_pressed(self):
         if self._on_manage is not None:

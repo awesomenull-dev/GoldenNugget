@@ -6,7 +6,7 @@ There are 2 formats for these:
   - This restores directly to the app container inside of /var/mobile/Containers/Applications/PosterBoard.app and will keep that file structure.
   - Descriptor UUIDs and wallpaper IDs will not be randomized using this format.
 2. Descriptor format: a containing folder has the name "descriptor" or "descriptors"
-  - This restores to descriptors inside the container. Currently, it restores to the 61 folder if on iOS 17.0+ or 59 on iOS 16. If the structure also changes, this may be automatically handled by Nugget in future versions.
+  - This restores to descriptors inside the container. It always restores to the 61 folder (structure version 61; the iOS-16 era value 59 is gone — this fork only supports iOS 26.2+). If the structure also changes, this may be automatically handled by Nugget in future versions.
   - Descriptor UUIDs and wallpaper IDs will be randomized, preventing overlapping.
     - You can add the word "ordered" to the folder to have the UUIDs ordered in collections.
   - Nugget v7.0 can restore to different extensions based on the folder name:

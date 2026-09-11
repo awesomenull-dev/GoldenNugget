@@ -271,11 +271,14 @@ working copies, prune/dedupe, clean-for-restore); the backup-file injector
 was split out to `inject.py` (blob builders + `inject_file_into_backup`) and
 the `ProtectiveBackupCache` to `protective_cache.py` (both re-exported from
 `protective.py`):
-- `ProtectiveBackupCache` — per-device master copy in
-  `<temp>/goldennugget_protective_cache/master/<udid>`. The master keeps a
-  FULL Manifest.db (rows for drained payloads stay) so mobilebackup2 can run
-  true incremental refreshes; invalidated by UDID/iOS-version change or by
-  the encryption state flipping; a reboot wipes it naturally.
+- `ProtectiveBackupCache` — per-device master copy in the persistent app-data
+  store (`<AppData>/GoldenNugget/backup_cache/master/<udid>`). The master keeps
+  a FULL Manifest.db (rows for drained payloads stay) so mobilebackup2 can run
+  true incremental refreshes; invalidated by UDID/iOS-version change or by the
+  encryption state flipping. It ALWAYS lives in the persistent store — it is
+  the only copy of user data between Phase 2 (wipe) and Phase 3 (restore), so
+  a temp placement is permanent-loss-on-reboot. A legacy temp base is still
+  scanned by `locate()` for migration.
 - `perform_protective_backup(..., incremental_ok)` — selective backup:
   pymobiledevice3's native `filter_callback` drains non-protective uploads
   mid-stream while their manifest rows survive (that is what makes the next
@@ -312,8 +315,7 @@ the `ProtectiveBackupCache` to `protective_cache.py` (both re-exported from
   disk immediately while still resolving for rollback.
 - `check_disk_space_for_backup()` — sizes the requirement from the device's
   real used storage; `GOLDENNUGGET_MIN_FREE_GB` overrides the floor and
-  `GOLDENNUGGET_CACHE_PERSIST_MIN_GB`/`GOLDENNUGGET_CACHE_REFRESH_SECS`
-  tune the cache placement/refresh.
+  `GOLDENNUGGET_CACHE_REFRESH_SECS` tunes the cache refresh interval.
 
 ### `original_plist.py`
 `psysbackup()` — full capture of the plists listed by `FileLocation` so
@@ -355,6 +357,10 @@ and is not the live navigator. Real navigation uses:
     `request_text`, with a 10-minute timeout.
   - `RestoreCacheThread` — standalone Phase-1+3 recovery (working copy → prune →
     verify → `_restore_protective_backup`, `reboot=False, skip_apps=True`).
+    Reachable both from a failed-apply error dialog and from the
+    Settings → Backup "Restore Data From Backup" button, which re-runs the
+    phase-3 data restore without re-applying tweaks (`skip_apps=True` keeps the
+    PosterBoard container and thus the applied wallpapers).
   - `RefreshDevicesThread` — device refresh.
 
 ## src/controllers/ — support services
@@ -393,7 +399,7 @@ and is not the live navigator. Real navigation uses:
   be unchecked out locally).
 - **Kill switches / env**: `GOLDENNUGGET_NO_BACKUP_CACHE`,
   `GOLDENNUGGET_SKIP_PB_BACKUP`, `GOLDENNUGGET_MIN_FREE_GB`,
-  `GOLDENNUGGET_CACHE_PERSIST_MIN_GB`, `GOLDENNUGGET_CACHE_REFRESH_SECS`,
+  `GOLDENNUGGET_CACHE_REFRESH_SECS`,
   `GOLDENNUGGET_PB_SPARSE`, `GOLDENNUGGET_KEEP_SPARSE`, `GOLDENNUGGET_LOG_FILE`.
 - **Testing**: offline regression for the backup cache in
   `tools/test_protective_cache.py` and cache placement in

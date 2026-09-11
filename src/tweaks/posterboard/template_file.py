@@ -13,7 +13,7 @@ from PySide6 import QtWidgets, QtCore, QtGui
 from .tendie_file import TendieFile
 from .template_options import OptionType, TemplateOption, ReplaceOption, RemoveOption, SetOption, PickerOption
 from src.exceptions.posterboard_exceptions import PBTemplateException
-from src.gui.custom_qt_elements.resizable_image_label import ResizableImageLabel
+from src.qt.custom_elements.resizable_image_label import ResizableImageLabel
 from src.devicemanagement.constants import Version
 
 CURRENT_FORMAT = 2

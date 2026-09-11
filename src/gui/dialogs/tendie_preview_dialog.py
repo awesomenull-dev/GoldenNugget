@@ -18,6 +18,7 @@ from PySide6.QtWidgets import QDialog, QLabel, QPushButton, QVBoxLayout
 from src.gui.ios.phone_frame import (
     DEVICE_PT_H, DEVICE_PT_W, PhoneFrame,
 )
+from src.gui.theme import ColorThemeManager
 
 _MAX_EDGE = 2556  # downscale wallpapers to the iPhone 15 native long edge
 
@@ -51,21 +52,22 @@ class TendiePreviewDialog(QDialog):
         self._frame.setFixedSize(frame_w, frame_h)
         layout.addWidget(self._frame, 0, Qt.AlignmentFlag.AlignHCenter)
 
+        c = ColorThemeManager.instance().colors
         self._hint = QLabel(QCoreApplication.translate(
             "Nugget", "Loading preview..."))
         self._hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._hint.setWordWrap(True)
         self._hint.setStyleSheet(
-            "color: #8E8E93; font-size: 12px; background: transparent;")
+            f"color: {c.text_secondary}; font-size: 12px; background: transparent;")
         layout.addWidget(self._hint)
 
         self._variant_btn = QPushButton()
         self._variant_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._variant_btn.setStyleSheet(
-            "QPushButton { background-color: #3A3A3C; color: white; "
+            f"QPushButton {{ background-color: {c.border}; color: {c.text_inverse}; "
             "border: none; border-radius: 12px; padding: 10px 24px; "
             "font-size: 14px; }"
-            "QPushButton:hover { background-color: #48484A; }")
+            f"QPushButton:hover {{ background-color: {c.scrollbar_pressed}; }}")
         self._variant_btn.clicked.connect(self._toggle_appearance)
         self._variant_btn.hide()
         layout.addWidget(self._variant_btn, 0, Qt.AlignmentFlag.AlignHCenter)
@@ -73,14 +75,25 @@ class TendiePreviewDialog(QDialog):
         close_btn = QPushButton(QCoreApplication.translate("Nugget", "Close"))
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_btn.setStyleSheet(
-            "QPushButton { background-color: #3A3A3C; color: white; "
+            f"QPushButton {{ background-color: {c.border}; color: {c.text_inverse}; "
             "border: none; border-radius: 12px; padding: 10px 24px; "
             "font-size: 14px; }"
-            "QPushButton:hover { background-color: #48484A; }")
+            f"QPushButton:hover {{ background-color: {c.scrollbar_pressed}; }}")
         close_btn.clicked.connect(self.reject)
         layout.addWidget(close_btn, 0, Qt.AlignmentFlag.AlignHCenter)
 
         self._load()
+
+    def _retheme(self):
+        c = ColorThemeManager.instance().colors
+        self._hint.setStyleSheet(
+            f"color: {c.text_secondary}; font-size: 12px; background: transparent;")
+        btn_style = (
+            f"QPushButton {{ background-color: {c.border}; color: {c.text_inverse}; "
+            "border: none; border-radius: 12px; padding: 10px 24px; "
+            "font-size: 14px; }"
+            f"QPushButton:hover {{ background-color: {c.scrollbar_pressed}; }}")
+        self._variant_btn.setStyleSheet(btn_style)
 
     # ---- loading -------------------------------------------------------
 

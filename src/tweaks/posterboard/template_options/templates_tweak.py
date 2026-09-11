@@ -8,7 +8,7 @@ from PySide6.QtCore import QCoreApplication
 from ...tweak_classes import Tweak
 from ..template_file import TemplateFile
 
-from src.restore.restore import FileToRestore
+from src.utils.file_to_restore import FileToRestore
 
 class TemplatesTweak(Tweak):
     def __init__(self):

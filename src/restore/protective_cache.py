@@ -6,7 +6,9 @@ first apply, each next apply only uploads what actually changed on the
 device. Restores never touch the master — ``make_working_copy`` builds a
 throwaway hardlink copy that gets pruned and tweak-injected instead.
 
-Lives in the system temp dir, so a reboot naturally invalidates it.
+The master always lives in the persistent app-data store (never the system
+temp dir): it is the sole copy of user data between Phase 2 (device wipe)
+and Phase 3 (restore), so it must survive reboots and crashes.
 """
 
 import json
@@ -25,25 +27,14 @@ from src.restore.inject import _validate_sqlite_db
 
 _logger = logging.getLogger("GoldenNugget.cache")
 
-# Cache placement: masters smaller than this stay in the system temp dir;
-# anything bigger moves to the persistent GoldenNugget app-data folder (a
-# tmpfs-backed /tmp has both a RAM cost and a hard size ceiling).
+# The master always lives in the persistent app-data store — a temp-based
+# master is the sole copy of user data between Phase 2 (wipe) and Phase 3
+# (restore), and a reboot would destroy it.
 CACHE_PERSIST_MIN_GB = float(os.environ.get("GOLDENNUGGET_CACHE_PERSIST_MIN_GB", "1"))
 # A cache younger than this is reused without touching the device at all
 # (only when no PosterBoard work is pending); past it, an incremental
 # refresh session keeps the master in sync.
 CACHE_REFRESH_SECS = int(os.environ.get("GOLDENNUGGET_CACHE_REFRESH_SECS", "1800"))
-
-
-def _dir_size_bytes(path: Path) -> int:
-    total = 0
-    for dirpath, _dirnames, filenames in os.walk(path):
-        for name in filenames:
-            try:
-                total += os.path.getsize(os.path.join(dirpath, name))
-            except OSError:
-                pass
-    return total
 
 
 class ProtectiveBackupCache:
@@ -54,8 +45,6 @@ class ProtectiveBackupCache:
     first apply, each next apply only uploads what actually changed on the
     device. Restores never touch the master — ``make_working_copy`` builds a
     throwaway hardlink copy that gets pruned and tweak-injected instead.
-
-    Lives in the system temp dir, so a reboot naturally invalidates it.
     """
 
     def __init__(self, udid: str, product_version: str, encrypted: bool = False):
@@ -65,7 +54,12 @@ class ProtectiveBackupCache:
         self._temp_base = Path(tempfile.gettempdir()) / "goldennugget_protective_cache"
         self._persist_base = Path(QStandardPaths.writableLocation(
             QStandardPaths.AppDataLocation)) / "GoldenNugget" / "backup_cache"
-        self.base = self._temp_base
+        # Always use the persistent store: the master is the sole copy of the
+        # user's data between Phase 2 (device wipe) and Phase 3 (restore).  A
+        # reboot would destroy a temp-based master, turning a recoverable
+        # failure into permanent data loss.  The old temp-based location is
+        # still searched by ``locate()`` for migration of existing caches.
+        self.base = self._persist_base
         self.master_root = self.base / "master"
         self.device_dir = self.master_root / self.udid
         self.info_path = self.base / f"{self.udid}.json"
@@ -115,22 +109,13 @@ class ProtectiveBackupCache:
         self.info_path = base / f"{self.udid}.json"
 
     def relocate_by_size(self):
-        """Move the master to the persistent base once it crosses the size cap."""
-        limit = CACHE_PERSIST_MIN_GB * (1024 ** 3)
-        size = _dir_size_bytes(self.master_root)
-        desired = self._persist_base if size >= limit else self._temp_base
-        if desired == self.base:
-            return
-        desired.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(self.master_root), str(desired / "master"))
-        if self.info_path.exists():
-            shutil.move(str(self.info_path), str(desired / self.info_path.name))
-        # drop any leftover tree at the old home
-        try:
-            self.base.rmdir()
-        except OSError:
-            pass
-        self._set_home(desired)
+        """Legacy no-op (kept for the placement test tool).
+
+        The master always lives in the persistent app-data store — moving it
+        to the system temp on size grounds made the sole copy of user data
+        volatile: a reboot between Phase 2 (wipe) and Phase 3 (restore) lost
+        it forever.  There is nothing to relocate anymore.
+        """
 
     def has_valid_master(self) -> bool:
         return self.locate() is not None
@@ -154,10 +139,6 @@ class ProtectiveBackupCache:
             include_photos=include_photos, include_posterboard=include_posterboard,
             include_keychain=include_keychain,
             incremental_ok=valid)
-
-        # placement by size: big masters move to the persistent app-data
-        # folder (a tmpfs /tmp costs RAM and caps their size)
-        self.relocate_by_size()
 
         self.base.mkdir(parents=True, exist_ok=True)
         with open(self.info_path, "w", encoding="utf-8") as f:

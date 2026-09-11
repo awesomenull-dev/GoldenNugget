@@ -10,6 +10,7 @@ from PySide6.QtGui import QPixmap, QIcon, QImageReader
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 
 from src.gui.ios.components import IOSCard, IOSPrimaryButton
+from src.gui.theme import ColorThemeManager
 from src.tweaks.tweaks import tweaks, TweakID
 
 
@@ -20,12 +21,16 @@ class TemplatePreviewCard(QLabel):
         self.setAlignment(Qt.AlignCenter)
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedSize(200, 200)
-        self.setStyleSheet(
-            "QLabel { background-color: #1C1C1E; border-radius: 12px; border: 1px solid #3A3A3C; }"
-        )
         self._original_pixmap = pixmap
         self._preview_name = preview_name
+        self._retheme()
         self.setPixmap(pixmap.scaled(190, 190, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+    def _retheme(self):
+        c = ColorThemeManager.instance().colors
+        self.setStyleSheet(
+            f"QLabel {{ background-color: {c.bg_secondary}; border-radius: 12px; border: 1px solid {c.border}; }}"
+        )
 
 
 class IOSPosterboardPage(QWidget):
@@ -38,40 +43,24 @@ class IOSPosterboardPage(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # the "+ Add Tendies" action lives in the shared header (main window)
-
-        # Reset PosterBoard card — emergency exit for a misbehaving or
-        # malformed PosterBoard database (see regression found in 8.3).
+        # Reset PosterBoard card
         reset_card = IOSCard()
         reset_layout = QVBoxLayout(reset_card)
         reset_layout.setContentsMargins(16, 12, 16, 12)
         reset_layout.setSpacing(8)
 
-        reset_btn = QPushButton(QCoreApplication.translate("Nugget", "Reset PosterBoard"))
-        reset_btn.setCursor(Qt.PointingHandCursor)
-        reset_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #3b3b3b;
-                border: none;
-                border-radius: 10px;
-                color: #FF453A;
-                font-size: 15px;
-                font-weight: 600;
-                padding: 12px;
-            }
-            QPushButton:hover { background-color: #4a4a4a; }
-        """)
-        reset_btn.clicked.connect(self._reset_posterboard)
-        reset_layout.addWidget(reset_btn)
+        self._reset_btn = QPushButton(QCoreApplication.translate("Nugget", "Reset PosterBoard"))
+        self._reset_btn.setCursor(Qt.PointingHandCursor)
+        self._reset_btn.clicked.connect(self._reset_posterboard)
+        reset_layout.addWidget(self._reset_btn)
 
-        reset_caption = QLabel(QCoreApplication.translate(
+        self._reset_caption = QLabel(QCoreApplication.translate(
             "Nugget",
             "Emergency reset for when PosterBoard behaves strangely or the "
             "database won't load after a restore. Resets on the next apply."
         ))
-        reset_caption.setWordWrap(True)
-        reset_caption.setStyleSheet("color: #8E8E93; font-size: 12px;")
-        reset_layout.addWidget(reset_caption)
+        self._reset_caption.setWordWrap(True)
+        reset_layout.addWidget(self._reset_caption)
 
         layout.addWidget(reset_card)
 
@@ -92,10 +81,9 @@ class IOSPosterboardPage(QWidget):
         self.tab_stack.addWidget(self.video_page)
 
         # Bottom tab bar
-        tab_bar = QWidget()
-        tab_bar.setFixedHeight(56)
-        tab_bar.setStyleSheet("background-color: #1e1e1e; border-top: 1px solid #1C1C1E;")
-        tab_layout = QHBoxLayout(tab_bar)
+        self._tab_bar = QWidget()
+        self._tab_bar.setFixedHeight(56)
+        tab_layout = QHBoxLayout(self._tab_bar)
         tab_layout.setContentsMargins(0, 0, 0, 0)
         tab_layout.setSpacing(0)
 
@@ -107,18 +95,138 @@ class IOSPosterboardPage(QWidget):
         tab_layout.addWidget(self.templates_tab_btn, 1)
         tab_layout.addWidget(self.video_tab_btn, 1)
 
-        layout.addWidget(tab_bar)
+        layout.addWidget(self._tab_bar)
 
-        # Set initial tab
-        self._switch_tab(0)
-
-        # Async preview-by-name loader for tendie cards (mirrors the
-        # wallpaper downloader: fetch -> cached file -> QImageReader frame).
         self._tendie_nam = QNetworkAccessManager(self)
         self._tendie_preview_replies = []
 
-        # Load existing tendies
+        self._retheme()
+        self._switch_tab(0)
         self.refresh_tendies()
+
+        ColorThemeManager.instance().theme_changed.connect(self._retheme)
+
+    def _retheme(self):
+        c = ColorThemeManager.instance().colors
+        self._reset_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {c.scrollbar};
+                border: none;
+                border-radius: 10px;
+                color: {c.error};
+                font-size: 15px;
+                font-weight: 600;
+                padding: 12px;
+            }}
+            QPushButton:hover {{ background-color: {c.surface_hover}; }}
+        """)
+        self._reset_caption.setStyleSheet(f"color: {c.text_secondary}; font-size: 12px;")
+        self._tab_bar.setStyleSheet(
+            f"background-color: {c.bg_primary}; border-top: 1px solid {c.bg_secondary};"
+        )
+        for btn in (self.tendies_tab_btn, self.templates_tab_btn, self.video_tab_btn):
+            btn.setStyleSheet(f"""
+                QToolButton {{
+                    background: transparent;
+                    color: {c.text_secondary};
+                    font-size: 11px;
+                    padding: 8px 0;
+                    border: none;
+                }}
+                QToolButton:checked {{
+                    color: {c.accent};
+                }}
+            """)
+        self._retheme_tendies_tab()
+        self._retheme_templates_tab()
+        self._retheme_video_tab()
+
+    def _retheme_tendies_tab(self):
+        c = ColorThemeManager.instance().colors
+        if hasattr(self, '_tendies_scroll'):
+            self._tendies_scroll.setStyleSheet(
+                f"background-color: {c.bg_primary}; border: none;"
+            )
+        if hasattr(self, '_download_icon'):
+            self._download_icon.setStyleSheet(
+                f"QLabel {{ background-color: {c.accent}; border-radius: 12px; font-size: 24px; color: {c.text_inverse}; }}"
+            )
+        if hasattr(self, '_download_title'):
+            self._download_title.setStyleSheet(
+                f"font-size: 16px; font-weight: 600; color: {c.text_primary};"
+            )
+        if hasattr(self, '_download_subtitle'):
+            self._download_subtitle.setStyleSheet(
+                f"font-size: 12px; color: {c.text_secondary};"
+            )
+        if hasattr(self, '_download_chevron'):
+            self._download_chevron.setStyleSheet(
+                f"font-size: 26px; color: {c.text_secondary};"
+            )
+        if hasattr(self, '_add_icon'):
+            self._add_icon.setStyleSheet(
+                f"QLabel {{ background-color: {c.bg_secondary}; border-radius: 12px; border: 2px dashed {c.border}; font-size: 36px; color: {c.accent}; }}"
+            )
+        if hasattr(self, '_add_label'):
+            self._add_label.setStyleSheet(
+                f"font-size: 14px; color: {c.text_secondary}; text-align: center;"
+            )
+
+    def _retheme_templates_tab(self):
+        c = ColorThemeManager.instance().colors
+        if hasattr(self, '_templates_scroll'):
+            self._templates_scroll.setStyleSheet(
+                f"background-color: {c.bg_primary}; border: none;"
+            )
+        if hasattr(self, 'templates_placeholder'):
+            self.templates_placeholder.setStyleSheet(
+                f"font-size: 15px; color: {c.text_secondary};"
+            )
+
+    def _retheme_video_tab(self):
+        c = ColorThemeManager.instance().colors
+        if hasattr(self, '_video_scroll'):
+            self._video_scroll.setStyleSheet(
+                f"background-color: {c.bg_primary}; border: none;"
+            )
+        for lbl in getattr(self, '_video_labels', []):
+            lbl.setStyleSheet(f"font-size: 15px; color: {c.text_primary}; min-width: 100px;")
+        for btn in (getattr(self, 'thumb_btn', None), getattr(self, 'video_btn', None)):
+            if btn is not None:
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: {c.bg_secondary};
+                        border-radius: 10px;
+                        color: {c.accent};
+                        font-size: 15px;
+                        padding: 12px 24px;
+                        border: none;
+                    }}
+                    QPushButton:hover {{ background-color: {c.surface_hover}; }}
+                """)
+        for chk in (getattr(self, 'loop_chk', None), getattr(self, 'reverse_chk', None),
+                     getattr(self, 'foreground_chk', None)):
+            if chk is not None:
+                chk.setStyleSheet(f"color: {c.text_primary}; font-size: 15px;")
+        if hasattr(self, 'calc_mode_drp'):
+            self.calc_mode_drp.setStyleSheet(f"""
+                QComboBox {{
+                    background-color: {c.bg_secondary};
+                    border: none;
+                    border-radius: 10px;
+                    color: {c.text_primary};
+                    font-size: 10.5pt;
+                    padding: 8px 12px;
+                }}
+                QComboBox::drop-down {{ border: none; width: 24px; }}
+                QComboBox QAbstractItemView {{
+                    background-color: {c.surface_hover};
+                    border: 1px solid {c.border};
+                    border-radius: 10px;
+                    color: {c.text_primary};
+                    selection-background-color: {c.accent};
+                }}
+            """)
 
     def _make_tab_button(self, text: str, icon_path: str, index: int) -> QToolButton:
         btn = QToolButton()
@@ -130,18 +238,6 @@ class IOSPosterboardPage(QWidget):
         btn.setCheckable(True)
         btn.setAutoExclusive(True)
         btn.setCursor(Qt.PointingHandCursor)
-        btn.setStyleSheet("""
-            QToolButton {
-                background: transparent;
-                color: #8E8E93;
-                font-size: 11px;
-                padding: 8px 0;
-                border: none;
-            }
-            QToolButton:checked {
-                color: #007AFF;
-            }
-        """)
         btn.clicked.connect(lambda: self._switch_tab(index))
         return btn
 
@@ -152,28 +248,26 @@ class IOSPosterboardPage(QWidget):
         self.video_tab_btn.setChecked(index == 2)
 
     def _create_tendies_tab(self) -> QWidget:
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("background-color: #1e1e1e; border: none;")
+        self._tendies_scroll = QScrollArea()
+        self._tendies_scroll.setWidgetResizable(True)
         content = QWidget()
-        scroll.setWidget(content)
+        self._tendies_scroll.setWidget(content)
 
         self.tendies_grid = QGridLayout(content)
         self.tendies_grid.setContentsMargins(16, 16, 16, 32)
         self.tendies_grid.setSpacing(12)
         self.tendies_grid.setAlignment(Qt.AlignTop)
 
-        # Download wallpapers banner (Cowabunga / CaPlayground)
         self.download_card = self._create_download_card()
         self.tendies_grid.addWidget(self.download_card, 0, 0, 1, 2)
 
-        # Add tendies button
         self.add_tendies_card = self._create_add_tendies_card()
         self.tendies_grid.addWidget(self.add_tendies_card, 1, 0)
 
-        return scroll
+        return self._tendies_scroll
 
     def _create_download_card(self) -> QWidget:
+        c = ColorThemeManager.instance().colors
         card = IOSCard()
         card.setCursor(Qt.PointingHandCursor)
         card.setMinimumHeight(88)
@@ -183,34 +277,29 @@ class IOSPosterboardPage(QWidget):
         inner.setContentsMargins(16, 12, 16, 12)
         inner.setSpacing(12)
 
-        icon = QLabel()
-        icon.setFixedSize(48, 48)
-        icon.setAlignment(Qt.AlignCenter)
-        icon.setStyleSheet(
-            "QLabel { background-color: #007AFF; border-radius: 12px; font-size: 24px; color: white; }"
-        )
-        icon.setText("\u2193")
-        inner.addWidget(icon)
+        self._download_icon = QLabel()
+        self._download_icon.setFixedSize(48, 48)
+        self._download_icon.setAlignment(Qt.AlignCenter)
+        self._download_icon.setText("\u2193")
+        inner.addWidget(self._download_icon)
 
         text_col = QVBoxLayout()
         text_col.setSpacing(2)
-        title = QLabel(QCoreApplication.translate("Nugget", "Download Wallpapers"))
-        title.setStyleSheet("font-size: 16px; font-weight: 600; color: #FFFFFF;")
-        text_col.addWidget(title)
-        subtitle = QLabel(QCoreApplication.translate(
+        self._download_title = QLabel(QCoreApplication.translate("Nugget", "Download Wallpapers"))
+        text_col.addWidget(self._download_title)
+        self._download_subtitle = QLabel(QCoreApplication.translate(
             "Nugget",
             "Browse and import wallpapers from Cowabunga and CaPlayground"))
-        subtitle.setStyleSheet("font-size: 12px; color: #8E8E93;")
-        text_col.addWidget(subtitle)
+        text_col.addWidget(self._download_subtitle)
         inner.addLayout(text_col, 1)
 
-        chevron = QLabel("\u203A")
-        chevron.setStyleSheet("font-size: 26px; color: #8E8E93;")
-        inner.addWidget(chevron)
+        self._download_chevron = QLabel("\u203A")
+        inner.addWidget(self._download_chevron)
 
         return card
 
     def _create_add_tendies_card(self) -> QWidget:
+        c = ColorThemeManager.instance().colors
         card = IOSCard()
         card.setFixedSize(140, 160)
         card.setCursor(Qt.PointingHandCursor)
@@ -221,55 +310,44 @@ class IOSPosterboardPage(QWidget):
         inner.setSpacing(12)
         inner.setAlignment(Qt.AlignCenter)
 
-        plus_icon = QLabel()
-        plus_icon.setFixedSize(64, 64)
-        plus_icon.setAlignment(Qt.AlignCenter)
-        plus_icon.setStyleSheet(
-            "QLabel { background-color: #1C1C1E; border-radius: 12px; border: 2px dashed #3A3A3C; }"
-        )
-        plus_icon.setText("+")
-        plus_icon.setStyleSheet(plus_icon.styleSheet() + "font-size: 36px; color: #007AFF;")
-        inner.addWidget(plus_icon, 0, Qt.AlignCenter)
+        self._add_icon = QLabel()
+        self._add_icon.setFixedSize(64, 64)
+        self._add_icon.setAlignment(Qt.AlignCenter)
+        self._add_icon.setText("+")
+        inner.addWidget(self._add_icon, 0, Qt.AlignCenter)
 
-        label = QLabel(QCoreApplication.translate("Nugget", "  Import Files (.tendies)"))
-        label.setStyleSheet("font-size: 14px; color: #8E8E93; text-align: center;")
-        label.setAlignment(Qt.AlignCenter)
-        inner.addWidget(label)
+        self._add_label = QLabel(QCoreApplication.translate("Nugget", "  Import Files (.tendies)"))
+        self._add_label.setAlignment(Qt.AlignCenter)
+        inner.addWidget(self._add_label)
 
         return card
 
     def _create_templates_tab(self) -> QWidget:
-        """Port of classic templates page - uses template.create_ui() for full functionality"""
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("background-color: #1e1e1e; border: none;")
-        scroll.setFrameStyle(QScrollArea.NoFrame)
-        
+        self._templates_scroll = QScrollArea()
+        self._templates_scroll.setWidgetResizable(True)
+        self._templates_scroll.setFrameStyle(QScrollArea.NoFrame)
+
         content = QWidget()
         self.templates_layout = QVBoxLayout(content)
         self.templates_layout.setContentsMargins(16, 16, 16, 32)
         self.templates_layout.setSpacing(12)
         self.templates_layout.setAlignment(Qt.AlignTop)
-        scroll.setWidget(content)
+        self._templates_scroll.setWidget(content)
 
-        # Import button (classic style)
         import_btn = IOSPrimaryButton(QCoreApplication.translate("Nugget", "  Import Templates (.batter)"))
         import_btn.clicked.connect(self.show_add_templates_dialog)
         self.templates_import_btn = import_btn
         self.templates_layout.addWidget(import_btn)
 
         self.templates_placeholder = QLabel(QCoreApplication.translate("Nugget", "No templates added yet"))
-        self.templates_placeholder.setStyleSheet("font-size: 15px; color: #8E8E93;")
         self.templates_placeholder.setAlignment(Qt.AlignCenter)
         self.templates_layout.addWidget(self.templates_placeholder)
 
-        # Load existing templates using classic create_ui()
         self._load_templates_list()
 
-        return scroll
+        return self._templates_scroll
 
     def show_add_templates_dialog(self):
-        """Port of classic on_importTemplatesBtn_clicked"""
         from PySide6.QtWidgets import QFileDialog, QMessageBox
         selected_files, _ = QFileDialog.getOpenFileNames(
             self.window, QCoreApplication.translate("Nugget", "Select Nugget Template Files"), "", "Zip Files (*.batter)"
@@ -288,7 +366,6 @@ class IOSPosterboardPage(QWidget):
             self._load_templates_list()
 
     def _load_templates_list(self):
-        """Port of classic load_templates_list / load_pb_templates - uses template.create_ui()"""
         from src.tweaks.tweaks import tweaks, TweakID
         templates = tweaks[TweakID.Templates].templates
         if not templates:
@@ -296,130 +373,80 @@ class IOSPosterboardPage(QWidget):
             return
         self.templates_placeholder.hide()
 
-        # Clear existing template widgets (keep import button and placeholder)
         for i in reversed(range(self.templates_layout.count())):
             widget = self.templates_layout.itemAt(i).widget()
             if widget is not None and widget not in (self.templates_placeholder, self.templates_import_btn):
                 widget.deleteLater()
 
-        # Classic approach: call template.create_ui() for each template
-        # This creates the full UI with previews, pickers, bundle ID, etc.
         widgets = {}
         for template in templates:
             template.create_ui(self.window, tweaks[TweakID.Templates], widgets, self.templates_layout)
 
     def _create_video_tab(self) -> QWidget:
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("background-color: #1e1e1e; border: none;")
+        c = ColorThemeManager.instance().colors
+        self._video_scroll = QScrollArea()
+        self._video_scroll.setWidgetResizable(True)
         content = QWidget()
-        scroll.setWidget(content)
+        self._video_scroll.setWidget(content)
 
         v_layout = QVBoxLayout(content)
         v_layout.setContentsMargins(16, 16, 16, 32)
         v_layout.setSpacing(16)
 
-        # Thumbnail
+        self._video_labels = []
+
         thumb_row = QHBoxLayout()
         thumb_label = QLabel(QCoreApplication.translate("Nugget", "Thumbnail"))
-        thumb_label.setStyleSheet("font-size: 15px; color: #FFFFFF; min-width: 100px;")
+        self._video_labels.append(thumb_label)
         self.thumb_btn = QPushButton(QCoreApplication.translate("Nugget", "Choose Freeze Frame (.HEIC)"))
         self.thumb_btn.setCursor(Qt.PointingHandCursor)
-        self.thumb_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #1C1C1E;
-                border-radius: 10px;
-                color: #007AFF;
-                font-size: 15px;
-                padding: 12px 24px;
-                border: none;
-            }
-            QPushButton:hover { background-color: #2C2C2E; }
-        """)
         self.thumb_btn.clicked.connect(self.on_choose_thumb_clicked)
         thumb_row.addWidget(thumb_label)
         thumb_row.addWidget(self.thumb_btn, 1)
         v_layout.addLayout(thumb_row)
 
-        # Video
         video_row = QHBoxLayout()
         video_label = QLabel(QCoreApplication.translate("Nugget", "Video"))
-        video_label.setStyleSheet("font-size: 15px; color: #FFFFFF; min-width: 100px;")
+        self._video_labels.append(video_label)
         self.video_btn = QPushButton(QCoreApplication.translate("Nugget", "Choose Video"))
         self.video_btn.setCursor(Qt.PointingHandCursor)
-        self.video_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #1C1C1E;
-                border-radius: 10px;
-                color: #007AFF;
-                font-size: 15px;
-                padding: 12px 24px;
-                border: none;
-            }
-            QPushButton:hover { background-color: #2C2C2E; }
-        """)
         self.video_btn.clicked.connect(self.on_choose_video_clicked)
         video_row.addWidget(video_label)
         video_row.addWidget(self.video_btn, 1)
         v_layout.addLayout(video_row)
 
-        # Options
         v_layout.addWidget(QLabel(QCoreApplication.translate("Nugget", "Options")))
         self.loop_chk = QCheckBox(QCoreApplication.translate("Nugget", "Loop (use CoreAnimation method)"))
-        self.loop_chk.setStyleSheet("color: #FFFFFF; font-size: 15px;")
         self.loop_chk.setChecked(tweaks[TweakID.PosterBoard].loop_video)
         self.loop_chk.toggled.connect(self.on_loop_toggled)
         v_layout.addWidget(self.loop_chk)
 
         self.reverse_chk = QCheckBox(QCoreApplication.translate("Nugget", "Reverse on Loop"))
-        self.reverse_chk.setStyleSheet("color: #FFFFFF; font-size: 15px;")
         self.reverse_chk.setChecked(tweaks[TweakID.PosterBoard].reverse_video)
         self.reverse_chk.toggled.connect(self.on_reverse_toggled)
         v_layout.addWidget(self.reverse_chk)
 
         self.foreground_chk = QCheckBox(QCoreApplication.translate("Nugget", "Make Foreground (hides clock)"))
-        self.foreground_chk.setStyleSheet("color: #FFFFFF; font-size: 15px;")
         self.foreground_chk.setChecked(tweaks[TweakID.PosterBoard].use_foreground)
         self.foreground_chk.toggled.connect(self.on_foreground_toggled)
         v_layout.addWidget(self.foreground_chk)
 
-        # Calculation mode
         calc_row = QHBoxLayout()
         calc_label = QLabel(QCoreApplication.translate("Nugget", "Calculation Mode"))
-        calc_label.setStyleSheet("font-size: 15px; color: #FFFFFF; min-width: 100px;")
+        self._video_labels.append(calc_label)
         self.calc_mode_drp = QComboBox()
         self.calc_mode_drp.addItem(QCoreApplication.translate("Nugget", "Linear"))
         self.calc_mode_drp.addItem(QCoreApplication.translate("Nugget", "Discrete"))
         self.calc_mode_drp.setCurrentIndex(0 if tweaks[TweakID.PosterBoard].calculationMode == 'linear' else 1)
         self.calc_mode_drp.activated.connect(self.on_calc_mode_selected)
-        self.calc_mode_drp.setStyleSheet("""
-            QComboBox {
-                background-color: #1C1C1E;
-                border: none;
-                border-radius: 10px;
-                color: #FFFFFF;
-                font-size: 14px;
-                padding: 8px 12px;
-            }
-            QComboBox::drop-down { border: none; width: 24px; }
-            QComboBox QAbstractItemView {
-                background-color: #2C2C2E;
-                border: 1px solid #3A3A3C;
-                border-radius: 10px;
-                color: #FFFFFF;
-                selection-background-color: #007AFF;
-            }
-        """)
         calc_row.addWidget(calc_label)
         calc_row.addWidget(self.calc_mode_drp, 1)
         v_layout.addLayout(calc_row)
 
-        # Export video loop
         export_btn = IOSPrimaryButton(QCoreApplication.translate("Nugget", "Export Video Loop (.tendies)"))
         export_btn.clicked.connect(self.on_export_video_clicked)
         v_layout.addWidget(export_btn)
 
-        # Discover wallpapers + help
         ext_row = QHBoxLayout()
         discover_btn = IOSPrimaryButton(QCoreApplication.translate("Nugget", "Discover Wallpapers"))
         discover_btn.clicked.connect(self.on_discover_wallpapers)
@@ -433,7 +460,7 @@ class IOSPosterboardPage(QWidget):
 
         self._update_video_labels()
 
-        return scroll
+        return self._video_scroll
 
     def _update_video_labels(self):
         pb = tweaks[TweakID.PosterBoard]
@@ -483,7 +510,6 @@ class IOSPosterboardPage(QWidget):
         tweaks[TweakID.PosterBoard].calculationMode = 'linear' if index == 0 else 'discrete'
 
     def on_export_video_clicked(self):
-        import os
         import uuid
         import subprocess
         from shutil import make_archive, rmtree
@@ -514,7 +540,6 @@ class IOSPosterboardPage(QWidget):
         self.open_wallpaper_downloader()
 
     def open_wallpaper_downloader(self):
-        """Open the in-app wallpaper downloader (Cowabunga + CaPlayground)."""
         from src.gui.dialogs.wallpaper_downloader import WallpaperDownloaderDialog
         dialog = WallpaperDownloaderDialog(self.window, self)
         dialog.exec()
@@ -536,12 +561,10 @@ class IOSPosterboardPage(QWidget):
             self.refresh_tendies()
 
     def refresh_tendies(self):
-        # stop preview downloads for the cards we are about to destroy
         for reply, *_ in self._tendie_preview_replies:
             reply.abort()
         self._tendie_preview_replies = []
 
-        # Clear existing grid except download and add cards
         keep = (self.add_tendies_card, self.download_card)
         for i in reversed(range(self.tendies_grid.count())):
             widget = self.tendies_grid.itemAt(i).widget()
@@ -550,7 +573,6 @@ class IOSPosterboardPage(QWidget):
 
         tendies = tweaks[TweakID.PosterBoard].tendies
         if not tendies:
-            # Ensure download card + add card are the only items
             self.tendies_grid.addWidget(self.download_card, 0, 0, 1, 2)
             self.tendies_grid.addWidget(self.add_tendies_card, 1, 0)
             return
@@ -565,10 +587,10 @@ class IOSPosterboardPage(QWidget):
                 col = 0
                 row += 1
 
-        # Add the add card at the end
         self.tendies_grid.addWidget(self.add_tendies_card, row, col)
 
     def _create_tendie_card(self, tendie) -> QWidget:
+        c = ColorThemeManager.instance().colors
         card = IOSCard()
         card.setFixedSize(140, 160)
         card.setCursor(Qt.PointingHandCursor)
@@ -578,7 +600,6 @@ class IOSPosterboardPage(QWidget):
         inner.setSpacing(8)
         inner.setAlignment(Qt.AlignTop)
 
-        # Icon from tendie
         icon = QLabel()
         icon.setFixedSize(80, 80)
         icon.setAlignment(Qt.AlignCenter)
@@ -588,23 +609,19 @@ class IOSPosterboardPage(QWidget):
             if not pixmap.isNull():
                 icon.setPixmap(pixmap.scaled(80, 80, Qt.KeepAspectRatio, Qt.SmoothTransformation))
             else:
-                icon.setStyleSheet("background-color: #2C2C2E; border-radius: 10px;")
+                icon.setStyleSheet(f"background-color: {c.surface_hover}; border-radius: 10px;")
         except Exception:
-            icon.setStyleSheet("background-color: #2C2C2E; border-radius: 10px;")
+            icon.setStyleSheet(f"background-color: {c.surface_hover}; border-radius: 10px;")
         inner.addWidget(icon, 0, Qt.AlignCenter)
 
-        # Load real preview image by matching the tendie's name against the
-        # cached wallpaper catalogs (falls back to the generic icon above).
         self._load_tendie_preview_by_name(card, icon, tendie.name)
 
-        # Name
         name = QLabel(tendie.name.replace(".tendies", ""))
-        name.setStyleSheet("font-size: 13px; color: #8E8E93; text-align: center;")
+        name.setStyleSheet(f"font-size: 13px; color: {c.text_secondary}; text-align: center;")
         name.setAlignment(Qt.AlignCenter)
         name.setWordWrap(True)
         inner.addWidget(name)
 
-        # Preview + Delete buttons side by side
         actions = QHBoxLayout()
         actions.setSpacing(6)
         actions.setContentsMargins(0, 0, 0, 0)
@@ -616,9 +633,9 @@ class IOSPosterboardPage(QWidget):
             "Nugget", "Lock screen preview"))
         preview_btn.setCursor(Qt.PointingHandCursor)
         preview_btn.setStyleSheet(
-            "QToolButton { background-color: #1C1C1E; color: #0A84FF; "
-            "border: 1px solid #3A3A3C; border-radius: 12px; padding: 7px; }"
-            "QToolButton:hover { background-color: #48484A; }"
+            f"QToolButton {{ background-color: {c.bg_secondary}; color: {c.accent}; "
+            f"border: 1px solid {c.border}; border-radius: 12px; padding: 7px; }}"
+            f"QToolButton:hover {{ background-color: {c.scrollbar_pressed}; }}"
         )
         preview_btn.clicked.connect(
             lambda: self._show_tendie_preview(tendie))
@@ -629,9 +646,9 @@ class IOSPosterboardPage(QWidget):
         from PySide6.QtGui import QIcon as _QIcon
         del_btn.setIcon(_QIcon(":/icon/trash.svg"))
         del_btn.setStyleSheet(
-            "QToolButton { background-color: #1C1C1E; color: #FF3B30; "
-            "border: 1px solid #3A3A3C; border-radius: 12px; padding: 7px; }"
-            "QToolButton:hover { background-color: #FF3B30; color: white; }"
+            f"QToolButton {{ background-color: {c.bg_secondary}; color: {c.error}; "
+            f"border: 1px solid {c.border}; border-radius: 12px; padding: 7px; }}"
+            f"QToolButton:hover {{ background-color: {c.error}; color: {c.text_inverse}; }}"
         )
         del_btn.setCursor(Qt.PointingHandCursor)
         del_btn.clicked.connect(lambda: self._delete_tendie(tendie))
@@ -643,8 +660,6 @@ class IOSPosterboardPage(QWidget):
     def _show_tendie_preview(self, tendie):
         from src.gui.dialogs.tendie_preview_dialog import TendiePreviewDialog
         TendiePreviewDialog(tendie, self).exec()
-
-    # --- tendie preview by name ---
 
     def _load_tendie_preview_by_name(self, card, icon_lbl, file_name):
         try:
@@ -691,7 +706,6 @@ class IOSPosterboardPage(QWidget):
             pixmap = QPixmap.fromImage(image) if not image.isNull() else QPixmap(path)
             if pixmap.isNull():
                 return
-            # square cover: expand to fill 80x80, then center-crop
             scaled = pixmap.scaled(
                 80, 80, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
             x = (scaled.width() - 80) // 2
@@ -714,12 +728,7 @@ class IOSPosterboardPage(QWidget):
         self.refresh_tendies()
 
     def _reset_posterboard(self):
-        """Show dialog to schedule a PosterBoard reset.
-
-        Reuses the existing reset mechanism (tweaks[PosterBoard].resetModes)
-        that the classic UI's Reset dropdown drives — this only adds the
-        iOS-style dialog, it does not duplicate the reset logic itself.
-        """
+        c = ColorThemeManager.instance().colors
         from PySide6.QtWidgets import (
             QDialog, QVBoxLayout, QLabel, QCheckBox, QDialogButtonBox, QMessageBox,
         )
@@ -727,22 +736,22 @@ class IOSPosterboardPage(QWidget):
         dialog = QDialog(self.window)
         dialog.setWindowTitle(QCoreApplication.translate("Nugget", "Reset PosterBoard"))
         dialog.setMinimumWidth(350)
-        dialog.setStyleSheet("""
-            QDialog { background-color: #1e1e1e; }
-            QLabel { color: #FFFFFF; font-size: 15px; }
-            QCheckBox { color: #FFFFFF; font-size: 14px; spacing: 8px; }
-            QCheckBox::indicator { width: 20px; height: 20px; }
-            QDialogButtonBox QPushButton {
-                background-color: #007AFF;
+        dialog.setStyleSheet(f"""
+            QDialog {{ background-color: {c.bg_primary}; }}
+            QLabel {{ color: {c.text_primary}; font-size: 15px; }}
+            QCheckBox {{ color: {c.text_primary}; font-size: 14px; spacing: 8px; }}
+            QCheckBox::indicator {{ width: 20px; height: 20px; }}
+            QDialogButtonBox QPushButton {{
+                background-color: {c.accent};
                 border-radius: 10px;
-                color: #FFFFFF;
+                color: {c.text_primary};
                 font-size: 14px;
                 font-weight: 600;
                 padding: 10px 20px;
                 border: none;
                 min-width: 80px;
-            }
-            QDialogButtonBox QPushButton:hover { background-color: #0056CC; }
+            }}
+            QDialogButtonBox QPushButton:hover {{ background-color: {c.accent_hover}; }}
         """)
 
         layout = QVBoxLayout(dialog)
@@ -755,7 +764,7 @@ class IOSPosterboardPage(QWidget):
             "strangely or the database is corrupted (malformed) after a restore."
         ))
         desc.setWordWrap(True)
-        desc.setStyleSheet("color: #8E8E93; font-size: 13px;")
+        desc.setStyleSheet(f"color: {c.text_secondary}; font-size: 13px;")
         layout.addWidget(desc)
 
         reset_collections = QCheckBox(QCoreApplication.translate("Nugget", "Collections"))

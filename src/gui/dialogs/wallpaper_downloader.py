@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.tweaks.tweaks import tweaks, TweakID
+from src.gui.theme import ColorThemeManager
 
 
 CARD_W = 150
@@ -32,6 +33,10 @@ CARD_H = 300
 PREVIEW_H = 200
 
 CATALOG_TTL = 15 * 60
+
+# max concurrent preview downloads; everything past this waits in a queue so
+# fast long scrolls can't pile up hundreds of background image requests
+PREVIEW_CONCURRENCY = 10
 
 
 class _WallpaperCard(QFrame):
@@ -43,17 +48,7 @@ class _WallpaperCard(QFrame):
         self._on_click_cb = on_click
         self.setCursor(Qt.PointingHandCursor)
         self.setObjectName("wallpaperCard")
-        self.setStyleSheet("""
-            QFrame#wallpaperCard {
-                background-color: #1C1C1E;
-                border-radius: 12px;
-                border: none;
-            }
-            QFrame#wallpaperCard:hover { background-color: #2C2C2E; }
-            QLabel#wpName { color: #FFFFFF; font-size: 13px; font-weight: 600; }
-            QLabel#wpAuthor { color: #8E8E93; font-size: 11px; }
-            QLabel#wpPreview { background-color: #26262A; border-radius: 8px; }
-        """)
+        self._retheme()
         self.setFixedSize(CARD_W, CARD_H)
 
         layout = QVBoxLayout(self)
@@ -87,18 +82,34 @@ class _WallpaperCard(QFrame):
 
         layout.addStretch()
 
+    def _retheme(self):
+        c = ColorThemeManager.instance().colors
+        self.setStyleSheet(f"""
+            QFrame#wallpaperCard {{
+                background-color: {c.bg_secondary};
+                border-radius: 12px;
+                border: none;
+            }}
+            QFrame#wallpaperCard:hover {{ background-color: {c.surface_hover}; }}
+            QLabel#wpName {{ color: {c.text_primary}; font-size: 13px; font-weight: 600; }}
+            QLabel#wpAuthor {{ color: {c.text_secondary}; font-size: 11px; }}
+            QLabel#wpPreview {{ background-color: {c.bg_tertiary}; border-radius: 8px; }}
+        """)
+
     def _set_loading(self):
+        c = ColorThemeManager.instance().colors
         self.preview_lbl.setText(QCoreApplication.translate("Nugget", "Loading..."))
         self.preview_lbl.setStyleSheet(
-            "background-color: #26262A; border-radius: 8px;"
-            "font-size: 13px; color: #6E6E73;"
+            f"background-color: {c.bg_tertiary}; border-radius: 8px;"
+            f"font-size: 13px; color: {c.text_disabled};"
         )
 
     def _set_placeholder(self):
+        c = ColorThemeManager.instance().colors
         self.preview_lbl.setText("\U0001F5BC\ufe0f")
         self.preview_lbl.setStyleSheet(
-            "background-color: #26262A; border-radius: 8px;"
-            "font-size: 34px; color: #3A3A3C;"
+            f"background-color: {c.bg_tertiary}; border-radius: 8px;"
+            f"font-size: 34px; color: {c.border};"
         )
 
     def set_preview_file(self, path):
@@ -177,44 +188,7 @@ class WallpaperDownloaderDialog(QDialog):
         self.setWindowTitle(QCoreApplication.translate("Nugget", "Download Wallpapers"))
         self.setModal(True)
         self.setFixedSize(760, 780)
-        self.setStyleSheet("""
-            QDialog { background-color: #1e1e1e; }
-            QLabel { color: #FFFFFF; }
-            QComboBox {
-                background-color: #1C1C1E;
-                border: none;
-                border-radius: 10px;
-                color: #FFFFFF;
-                font-size: 14px;
-                padding: 8px 12px;
-                min-height: 24px;
-            }
-            QComboBox::drop-down { border: none; width: 24px; }
-            QComboBox QAbstractItemView {
-                background-color: #2C2C2E;
-                border: 1px solid #3A3A3C;
-                border-radius: 10px;
-                color: #FFFFFF;
-                selection-background-color: #007AFF;
-            }
-            QLineEdit {
-                background-color: #1C1C1E;
-                border: none;
-                border-radius: 10px;
-                color: #FFFFFF;
-                font-size: 14px;
-                padding: 8px 12px;
-            }
-            QScrollArea { background: transparent; border: none; }
-            QProgressBar {
-                background-color: #1C1C1E;
-                border-radius: 4px;
-                border: none;
-                height: 7px;
-                text-align: center;
-            }
-            QProgressBar::chunk { background-color: #007AFF; border-radius: 4px; }
-        """)
+        self._retheme()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
@@ -244,8 +218,9 @@ class WallpaperDownloaderDialog(QDialog):
         layout.addLayout(top)
 
         # Status / progress area
+        c = ColorThemeManager.instance().colors
         self.status_lbl = QLabel(QCoreApplication.translate("Nugget", "Loading..."))
-        self.status_lbl.setStyleSheet("color: #8E8E93; font-size: 13px;")
+        self.status_lbl.setStyleSheet(f"color: {c.text_secondary}; font-size: 13px;")
         layout.addWidget(self.status_lbl)
 
         self.progress = QProgressBar()
@@ -269,17 +244,17 @@ class WallpaperDownloaderDialog(QDialog):
         # Bottom close button
         close_btn = QPushButton(QCoreApplication.translate("Nugget", "Close"))
         close_btn.setCursor(Qt.PointingHandCursor)
-        close_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #007AFF;
+        close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {c.accent};
                 border-radius: 12px;
-                color: #FFFFFF;
+                color: {c.text_primary};
                 font-size: 16px;
                 font-weight: 600;
                 padding: 12px;
                 border: none;
-            }
-            QPushButton:hover { background-color: #0066CC; }
+            }}
+            QPushButton:hover {{ background-color: {c.accent_hover}; }}
         """)
         close_btn.clicked.connect(self.accept)
         layout.addWidget(close_btn)
@@ -293,6 +268,7 @@ class WallpaperDownloaderDialog(QDialog):
         self._catalog_failed = {}
         self._fetch_gen = 0
         self._preview_replies = []
+        self._preview_queue = []
         self._download_reply = None
         self._download_wallpaper = None
         self._busy = False
@@ -311,6 +287,47 @@ class WallpaperDownloaderDialog(QDialog):
 
         self._populate_categories()
         self._fetch_wallpapers()
+
+    def _retheme(self):
+        c = ColorThemeManager.instance().colors
+        self.setStyleSheet(f"""
+            QDialog {{ background-color: {c.bg_elevated}; }}
+            QLabel {{ color: {c.text_primary}; }}
+            QComboBox {{
+                background-color: {c.bg_secondary};
+                border: none;
+                border-radius: 10px;
+                color: {c.text_primary};
+                font-size: 10.5pt;
+                padding: 8px 12px;
+                min-height: 24px;
+            }}
+            QComboBox::drop-down {{ border: none; width: 24px; }}
+            QComboBox QAbstractItemView {{
+                background-color: {c.surface_hover};
+                border: 1px solid {c.border};
+                border-radius: 10px;
+                color: {c.text_primary};
+                selection-background-color: {c.accent};
+            }}
+            QLineEdit {{
+                background-color: {c.bg_secondary};
+                border: none;
+                border-radius: 10px;
+                color: {c.text_primary};
+                font-size: 14px;
+                padding: 8px 12px;
+            }}
+            QScrollArea {{ background: transparent; border: none; }}
+            QProgressBar {{
+                background-color: {c.bg_secondary};
+                border-radius: 4px;
+                border: none;
+                height: 7px;
+                text-align: center;
+            }}
+            QProgressBar::chunk {{ background-color: {c.accent}; border-radius: 4px; }}
+        """)
 
     # --- source / category handling ---
 
@@ -485,6 +502,10 @@ class WallpaperDownloaderDialog(QDialog):
     # --- grid ---
 
     def _clear_cards(self):
+        for reply, card, path in self._preview_replies:
+            reply.abort()
+        self._preview_replies = []
+        self._preview_queue = []
         for card in self._cards:
             self.grid.removeWidget(card)
             card.deleteLater()
@@ -520,9 +541,10 @@ class WallpaperDownloaderDialog(QDialog):
     # --- previews (async via the same manager) ---
 
     def _load_visible_previews(self):
-        """Fetch previews only for cards inside (or next to) the viewport.
-        Previews are cached to disk; GIFs stream from the file via QMovie, so
-        off-screen cards never decode frames."""
+        """Fetch previews only for cards inside (or next to) the viewport,
+        abort in-flight downloads for cards that scrolled far out of view, and
+        cap download concurrency so a fast long scroll can't pile up hundreds
+        of background image requests."""
         if not self._cards:
             return
         vbar = self.scroll.verticalScrollBar()
@@ -532,6 +554,9 @@ class WallpaperDownloaderDialog(QDialog):
         cols = self._grid_cols
         top_row = max(0, (value - row_h) // row_h)
         bottom_row = min(len(self._cards) // cols, (value + view_h + row_h) // row_h)
+        self._abort_offscreen_previews(top_row, bottom_row)
+        if len(self._preview_replies) >= PREVIEW_CONCURRENCY:
+            return
         for row in range(top_row, bottom_row + 1):
             for col in range(cols):
                 idx = row * cols + col
@@ -540,6 +565,43 @@ class WallpaperDownloaderDialog(QDialog):
                 card = self._cards[idx]
                 if card.isVisible():
                     self._request_preview(card)
+
+    def _abort_offscreen_previews(self, top_row, bottom_row):
+        """Cancel preview downloads (and dequeue queued ones) for cards that
+        are far outside the viewport, so off-screen previews stop hogging the
+        network and the CPU/GIF decode loop stays quiet."""
+        if not self._preview_replies and not self._preview_queue:
+            return
+        cols = self._grid_cols
+
+        def _in_window(card):
+            try:
+                row = self._cards.index(card) // cols
+            except ValueError:
+                return False
+            return top_row - 1 <= row <= bottom_row + 1
+
+        kept = []
+        for reply, card, path in self._preview_replies:
+            if not self._card_is_valid(card):
+                reply.abort()
+                continue
+            if _in_window(card):
+                kept.append((reply, card, path))
+            else:
+                reply.abort()
+                card.preview_state = "none"
+        self._preview_replies = kept
+
+        kept_queue = []
+        for card in self._preview_queue:
+            if not self._card_is_valid(card):
+                continue
+            if _in_window(card):
+                kept_queue.append(card)
+            else:
+                card.preview_state = "none"
+        self._preview_queue = kept_queue
 
     def _request_preview(self, card):
         if card.preview_state != "none":
@@ -550,11 +612,36 @@ class WallpaperDownloaderDialog(QDialog):
         if os.path.exists(path):
             card.set_preview_file(path)
             return
+        if len(self._preview_replies) >= PREVIEW_CONCURRENCY:
+            card.preview_state = "queued"
+            self._preview_queue.append(card)
+            return
         card.preview_state = "loading"
         reply = self._nam.get(QNetworkRequest(QUrl(card.wallpaper.preview_url)))
         self._preview_replies.append((reply, card, path))
         reply.finished.connect(
             lambda r=reply, c=card, p=path: self._on_preview_reply(r, c, p))
+
+    def _kick_preview_queue(self):
+        """Start queued preview downloads as soon as a slot frees up."""
+        while self._preview_queue and len(self._preview_replies) < PREVIEW_CONCURRENCY:
+            card = self._preview_queue.pop(0)
+            if not self._card_is_valid(card):
+                continue
+            if card.preview_state != "queued":
+                continue
+            if not card.isVisible():
+                card.preview_state = "none"
+                continue
+            path = self._preview_cache_path(card.wallpaper.preview_url)
+            if os.path.exists(path):
+                card.set_preview_file(path)
+                continue
+            card.preview_state = "loading"
+            reply = self._nam.get(QNetworkRequest(QUrl(card.wallpaper.preview_url)))
+            self._preview_replies.append((reply, card, path))
+            reply.finished.connect(
+                lambda r=reply, c=card, p=path: self._on_preview_reply(r, c, p))
 
     def _on_preview_reply(self, reply, card, path):
         if reply in [r for r, _, _ in self._preview_replies]:
@@ -562,13 +649,23 @@ class WallpaperDownloaderDialog(QDialog):
                 (r, c, p) for (r, c, p) in self._preview_replies if r is not reply]
         data = bytes(reply.readAll())
         reply.deleteLater()
+        if reply.error() == QNetworkReply.NetworkError.OperationCanceledError:
+            # we aborted it because the card scrolled out of view; reset to
+            # "none" so scrolling back in retries cleanly instead of showing
+            # a permanent "failed" placeholder
+            if self._card_is_valid(card) and card.preview_state == "loading":
+                card.preview_state = "none"
+            self._kick_preview_queue()
+            return
         if reply.error() != QNetworkReply.NetworkError.NoError or not data:
             if self._card_is_valid(card):
                 card.preview_state = "failed"
                 card._set_placeholder()
+            self._kick_preview_queue()
             return
         # card could have been removed (deleteLater processed) during a refetch
         if not self._card_is_valid(card):
+            self._kick_preview_queue()
             return
         try:
             with open(path, "wb") as f:
@@ -576,8 +673,10 @@ class WallpaperDownloaderDialog(QDialog):
         except OSError:
             card.preview_state = "failed"
             card._set_placeholder()
+            self._kick_preview_queue()
             return
         card.set_preview_file(path)
+        self._kick_preview_queue()
 
     def _pause_previews(self):
         for card in self._cards:

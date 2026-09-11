@@ -1,10 +1,13 @@
 import os
 import sys
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QTranslator, QLibraryInfo, QLocale, QSettings
 from PySide6.QtWidgets import QApplication
 
-from src.qt.mainwindow_ui import Ui_Nugget
+if TYPE_CHECKING:
+    from src.qt.mainwindow_ui import Ui_Nugget
+
 
 class Translator:
     def __init__(self, app: QApplication, settings: QSettings):
@@ -12,25 +15,74 @@ class Translator:
         self.settings = settings
 
     def get_saved_locale_code(self) -> str:
-        return self.settings.value("locale_code", QLocale.system().languageToCode(QLocale.system().language()), type=str)
+        saved = self.settings.value("locale_code", "", type=str)
+        return saved if saved else self.system_locale_code()
+    def system_locale_code(self) -> str:
+        """Best matching app-locale code for the OS language (e.g. 'ru',
+        'es_MX', 'zh_CN'); falls back to 'en'."""
+        from src.gui.pages.main.settings import available_languages
+        codes = set(available_languages.values())
+        sys_locale = QLocale.system()
+        name = sys_locale.name()  # e.g. "ru_RU", "es_MX", "zh_CN"
+        if name in codes:
+            return name
+        base = sys_locale.languageToCode(sys_locale.language())
+        if base in codes:
+            return base
+        return "en"
     def set_default_locale(self, code: str):
         QLocale.setDefault(QLocale(code))
     def set_new_language(self, code: str, restart: bool = False):
-        self.settings.setValue("locale_code", code)
+        if not code:
+            self.settings.remove("locale_code")
+            code = self.system_locale_code()
+        else:
+            self.settings.setValue("locale_code", code)
         self.set_default_locale(code)
         self.load_translations()
         if restart:
             os.execl(sys.executable, sys.executable, *sys.argv)
-    
+
     def load_translations(self):
-        path = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
+        qt_path = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
+        qt_base = QTranslator(self.app)
+        if qt_base.load(QLocale(), 'qtbase', '_', qt_path):
+            self.app.installTranslator(qt_base)
+
+        app_tr = self._load_app_translations()
+        if app_tr is not None:
+            self.app.installTranslator(app_tr)
+
+    def _load_app_translations(self) -> "QTranslator":
+        """Load the app's own ``translations/Nugget_<locale>.qm``.
+
+        Tries the on-disk translations folder first (bundled by PyInstaller
+        via ``--add-data=src/qt:src/qt`` or present in the source tree on
+        Windows dev runs), then falls back to the compiled-in Qt resource
+        (``:/translations``). Returns the live translator or None.
+        """
         translator = QTranslator(self.app)
-        if translator.load(QLocale(), 'qtbase', '_', path):
-            self.app.installTranslator(translator)
-        translator = QTranslator(self.app)
-        path = ':/translations'
-        if translator.load(QLocale(), 'translations/Nugget', '_', path):
-            self.app.installTranslator(translator)
+        disk = self._disk_translations_path()
+        if os.path.isdir(disk):
+            try:
+                # Files live as ``Nugget_<locale>.qm`` directly inside the
+                # directory (no extra "translations/" prefix component).
+                if translator.load(QLocale(), 'Nugget', '_', disk):
+                    return translator
+            except Exception:
+                pass
+        try:
+            # Compiled-in resource: ``:/translations/translations/Nugget_<loc>.qm``
+            if translator.load(QLocale(), 'translations/Nugget', '_', ':/translations'):
+                return translator
+        except Exception:
+            pass
+        return None
+
+    def _disk_translations_path(self) -> str:
+        """Directory holding the app's .qm files on disk (bundled or source)."""
+        base = getattr(sys, "_MEIPASS", os.path.join(os.path.dirname(__file__), "..", ".."))
+        return os.path.join(base, "src", "qt", "translations")
 
     def fix_ui_for_rtl(self, ui: Ui_Nugget):
         curr_locale = self.get_saved_locale_code()

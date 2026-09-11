@@ -4,6 +4,60 @@
 
 This document describes the background threads, async backup/restore operations, and error handling used in GoldenNugget.
 
+## Color Theme System (src/gui/theme/)
+
+Dark/light mode + accent color customization for the whole GUI.
+
+- `colors.py` — frozen dataclass `ThemeColors` with `DARK` and `LIGHT` palettes
+  (named slots: `bg_primary`, `bg_secondary`, `bg_input`, `text_primary`,
+  `text_secondary`, `accent`, `divider`, `error`, `success`, ...). `ACCENT_PRESETS`
+  holds 8 accent hex colors (blue/purple/pink/red/orange/yellow/green/teal).
+- `theme_manager.py` — `ColorThemeManager` singleton (`instance()`): `mode`
+  (`"dark"`/`"light"`), `accent_hex()`, `is_dark`, `set_mode()`, `set_accent()`,
+  `set_system_theme(mode)`, `apply_system_theme(dark)` (follows the OS but never
+  overrides a user choice — `_has_explicit_mode` becomes set the moment the
+  Settings switch saves a mode), `c(slot)` (color accessor), `build_palette()`
+  (QPalette for native widgets). Persisted via QSettings (`color_mode`,
+  `accent_color`). Emits `theme_changed` (no payload) on any color change.
+- `styles.py` — `STYLES` dict of Qt stylesheet templates using `{slot}` named
+  placeholders (literal braces are doubled `{{`/`}}`).
+- `accent_picker.py` — `AccentPicker` widget: row of circular preset buttons,
+  self-connects to `theme_changed` to repaint its selection border.
+- `__init__.py` — exports the above plus `t(style_key) -> str`.
+
+### Styling contract (IMPORTANT)
+
+- `t(key)` is the **only** way widgets read theme colors; it renders the
+  template with the current palette **internally** (`format_map`). Callers must
+  use `widget.setStyleSheet(t("key"))` and **must NOT** call `.format_map()`
+  again on top of `t(...)` (double-formatting breaks on the `{{` escapes).
+- Any widget/page that draws theme colors implements `_retheme(self)` which
+  re-applies all its stylesheets from `ColorThemeManager.instance().colors`.
+  It is called by `MainWindow._on_color_theme_changed` for every `ios_pages`
+  entry (line 224 of `src/gui/main_window.py`) AND by self-connections.
+- Reused components in `src/gui/ios/components.py` call
+  `_auto_retheme(self)` from their `__init__` (defined at module level),
+  which connects `ColorThemeManager.instance().theme_changed` to their
+  `_retheme` — authoritative, one connection per instance. Child widgets
+  created before `_auto_retheme(self)` must be registered by hand or use
+  the shared `IOSNavBar`/`IOSSwitch`/etc. components which self-connect.
+- The whole-window stylesheet is `t("global")`, applied in
+  `MainWindow._apply_global_stylesheet`; it sets `QLabel color` via the
+  `QWidget { color: {text_primary} }` rule, so bare labels inside styled
+  rows pick up the theme without their own `_retheme`.
+- `src/qt/mainwindow_ui.py` is generated from Qt Designer — do not edit;
+  theme the chrome via `_apply_global_stylesheet` instead.
+- Old `src/gui/ios/theme_manager.py` (`CLASSIC`/`IOS`) is layout-only
+  (Classic vs iOS-style chrome) and stays untouched side-by-side.
+- Theme UI lives in Settings → **Appearance** (`src/gui/ios/settings.py`):
+  "Dark Mode" `IOSSwitch` (`set_mode`) and "Accent Color" `AccentPicker`
+  (`set_accent`). The switch's initial `setChecked` uses `is_dark`.
+- System-theme detection is wired in `main_app.py` right after the QApplication
+  is created: `QStyleHints.colorSchemeChanged` drives
+  `apply_system_theme(...)`. The app follows the OS until the user toggles the
+  Dark Mode switch, then the persisted `color_mode` wins and OS changes are
+  ignored.
+
 ## HotLoad Safety Rules (src/controllers/hotload.py)
 
 Remote safety rules (cached from
@@ -81,7 +135,8 @@ Main entry point for applying tweaks. Order:
 
 ### Protective Backup Cache (src/restore/protective_cache.py)
 `ProtectiveBackupCache` keeps a per-device master copy of the protective
-backup in `<temp>/goldennugget_protective_cache/master/<udid>`:
+backup in the persistent app-data store
+(`<AppData>/GoldenNugget/backup_cache/master/<udid>`):
 - **EXPERIMENTAL, OFF BY DEFAULT** — the cache only engages when the user
   enables "Use Fast Backup Cache (Experimental)" in Settings
   (`pref.use_backup_cache`). Cache off → the classic live
@@ -94,7 +149,11 @@ backup in `<temp>/goldennugget_protective_cache/master/<udid>`:
 - Restores never touch the master: `make_protective_working_copy()` builds a
   throwaway hardlink copy (metadata files are real copies — pruning rewrites
   Manifest.db and a hardlink would corrupt the master).
-- Invalidated by UDID/iOS-version change; a PC reboot wipes it naturally.
+- Invalidated by UDID/iOS-version change. The master ALWAYS lives in the
+  persistent store (never temp): it is the only copy of user data between
+  Phase 2 (device wipe) and Phase 3 (restore), so a temp placement would
+  permanently lose it on a reboot. The legacy temp-based base is still
+  searched by `locate()` for migration of pre-existing caches.
 - PosterBoard DB: kept mid-stream into the master when wallpapers are applied
   (`include_posterboard`; container included via a stock-format factory-info
   entry — verified working on iOS 27 db5) and extracted after the refresh
@@ -193,7 +252,7 @@ backup in `<temp>/goldennugget_protective_cache/master/<udid>`:
   `clean_backup_for_restore`); the injection helpers live in
   `src/restore/inject.py` and the cache in `src/restore/protective_cache.py`
   (both re-exported from `protective.py`).
-- Filters: keeps HomeDomain (Accounts, ConfigurationProfiles, Preferences, SpringBoard, ControlCenter, Shortcuts, WebClips — including each `.webclip/Storage` PWA payload — plus WebApp and WebKit/WebsiteData web-app data), CameraRoll/Media (photos), SystemPreferencesDomain
+- Filters: keeps HomeDomain (Accounts, ConfigurationProfiles, Preferences, SpringBoard, ControlCenter, Shortcuts, WebClips — including each `.webclip/Storage` PWA payload — plus WebApp and WebKit/WebsiteData web-app data) and AddressBook (contacts: `Library/AddressBook/AddressBook.sqlitedb` + `-wal`/`-shm`, `AddressBookImages.sqlitedb`), CameraRoll/Media (photos), MessagesDomain (iMessage/SMS/MMS), SystemPreferencesDomain
 - Skips: AppDomain-* containers (empty `Applications` in factory info), KeychainDomain
 - Encryption: uses existing encryption if enabled, otherwise unencrypted
 - Connection handling: the only retry is `ProtectiveBackupService.connect()`
@@ -276,7 +335,11 @@ backup in `<temp>/goldennugget_protective_cache/master/<udid>`:
   `QApplication` exists yet.
 
 ### Backup Encryption Handling
-- Checks `get_will_encrypt()` before operations
+- Checks `get_will_encrypt()` before operations — but only ONCE per apply on the
+  normal path: Phase 0's backup establishes the state, `_apply_tweak_pass`
+  reuses `_known_backup_encryption` instead of opening a second lockdown
+  session, and `perform_protective_backup` auto-resolves `include_keychain`
+  from the same query unless it is pinned explicitly.
 - iOS 27+ apply: prompts for password via QInputDialog if encryption is enabled and `use_encrypted_backup` is set
 - Phase 3 passes the password to `mb.restore(password=backup_password)`
 - `psysbackup` capture is skipped if encrypted **without a password** (cannot read manifest)

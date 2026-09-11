@@ -121,7 +121,7 @@ Registered in `src/gui/pages/__init__.py` (9 exports). Verified classes:
 - `HomePage` (`pages/main/home.py`): loads discord link + phone version label
   toggle.
 - `PosterboardPage` (`pages/tools/posterboard.py:17+`): uses `MultiComboBox`
-  (`custom_qt_elements/multicombobox.py`, 72 lines — checkable combo) for reset
+  (`src/qt/custom_elements/multicombobox.py`, 72 lines — checkable combo) for reset
   modes; writes `tweaks[TweakID.PosterBoard].resetModes` (:41-42).
 - `StatusBarPage` (`pages/tools/status_bar.py`): wraps
   `tweaks[TweakID.StatusBar]` as `status_manager`.
@@ -255,7 +255,7 @@ All device work runs in `QThread` subclasses that emit signals for the UI.
 | `plist_handler.py` | Plist merge | `recursive_set`/`write_plist_value` helpers. |
 
 Note: `MultiComboBox` is a GUI element, not a controller
-(`src/gui/custom_qt_elements/multicombobox.py`, 72 lines).
+(`src/qt/custom_elements/multicombobox.py`, 72 lines).
 
 ---
 

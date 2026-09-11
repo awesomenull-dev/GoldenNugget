@@ -247,6 +247,7 @@ class SettingsMixin:
             use_backup_cache = self.settings.value("use_backup_cache", False, type=bool)
 
             skip_setup = self.settings.value("skip_setup", True, type=bool)
+            skip_apple_id_setup = self.settings.value("skip_apple_id_setup", False, type=bool)
             supervised = self.settings.value("supervised", False, type=bool)
             organization_name = self.settings.value("organization_name", "", type=str)
             use_encrypted_backup = self.settings.value("use_encrypted_backup", False, type=bool)
@@ -258,6 +259,7 @@ class SettingsMixin:
             self.device_manager.pref_manager.use_backup_cache = use_backup_cache
             self.device_manager.pref_manager.use_encrypted_backup = use_encrypted_backup
             self.device_manager.pref_manager.skip_setup = skip_setup
+            self.device_manager.pref_manager.skip_apple_id_setup = skip_apple_id_setup
             self.device_manager.pref_manager.supervised = supervised
             self.device_manager.pref_manager.organization_name = organization_name
         except Exception:
@@ -598,17 +600,20 @@ class ApplyMixin:
             return
         if log_to_console:
             print(alert.txt)
+        # Backend messages that did not pick an explicit icon default to
+        # the error renderer (QMessageBox.Critical).
+        icon = alert.icon if alert.icon is not None else QtWidgets.QMessageBox.Critical
         # Apply/reset failures carry a traceback: route them through the same
         # parsed crash dialog (severity/likely cause + Copy Error + Report on
         # GitHub + Open Log), instead of a raw QMessageBox.
-        if (alert.icon == QtWidgets.QMessageBox.Critical
+        if (icon == QtWidgets.QMessageBox.Critical
                 and alert.exc_type is not None and alert.detailed_txt):
             from src.exceptions.crash_handler import show_error_dialog, _classify
             info = _classify(alert.exc_type, alert.exc_value)
             self._embedded_alert_error(alert, info)
             return
         detailsBox = QtWidgets.QMessageBox()
-        detailsBox.setIcon(alert.icon)
+        detailsBox.setIcon(icon)
         detailsBox.setWindowTitle(alert.title)
         detailsBox.setText(alert.txt)
         if alert.detailed_txt != None:

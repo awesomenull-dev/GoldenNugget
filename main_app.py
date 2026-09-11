@@ -15,14 +15,8 @@ warnings.filterwarnings("ignore")
 # Silence noisy Qt Wayland textinput logs (zwp_text_input_v3_leave spam)
 os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.wayland.textinput=false")
 
-from PySide6 import QtGui, QtWidgets
 from PySide6.QtCore import QCoreApplication
 
-from src.controllers.translator import Translator
-from src.controllers.settings import Settings
-from src.gui.main_window import MainWindow
-from src.devicemanagement.device_manager import DeviceManager
-from src.tweaks.tweaks import tweaks, TweakID
 from src.gui.logger import setup_logging, get_logger
 from src.exceptions.crash_handler import install_crash_handler, CrashHandlerApp
 
@@ -124,34 +118,98 @@ def main() -> int:
     init_logging()
     log_banner()
 
-    app = CrashHandlerApp([])
+    # Preload the device-manager module (pymobiledevice3 and its service deps
+    # are the single most expensive import in the app) on a worker thread so it
+    # races with the GUI setup below instead of blocking startup. If it is still
+    # running or failed, the main-thread import later behaves exactly as it did
+    # before — waiting on the module lock or re-raising the error on the main
+    # thread. Qt objects are only ever created on the main thread.
+    import threading
+    _dm_preload_error: list = []
+    _dm_preload_done = threading.Event()
 
-    # Force a dark theme matching the Nugget style on every platform, so the
-    # app always renders dark regardless of the OS appearance. The Fusion style
-    # is required for a custom QPalette to take effect on all platforms (native
-    # styles ignore palette tweaks), and the palette covers native widgets,
-    # menus, tooltips, dialogs and any widget without an explicit stylesheet.
+    def _preload_device_manager():
+        try:
+            # Import ONLY the pure-Python pymobiledevice3 backend here. The
+            # device-manager module also imports PySide6.QtWidgets at the top,
+            # and a Qt import on a non-main thread would leak QThreadStorage
+            # entries that Qt complains about at exit. The main-thread import
+            # later still has to load that Qt surface, but the pmd3 services
+            # (the single most expensive part) are already in sys.modules.
+            from pymobiledevice3 import usbmux, ca  # noqa: F401
+            from pymobiledevice3.lockdown import create_using_usbmux  # noqa: F401
+            from pymobiledevice3.services.mobilebackup2 import Mobilebackup2Service  # noqa: F401
+            from pymobiledevice3.services.mobile_config import MobileConfigService  # noqa: F401
+            from pymobiledevice3.services.diagnostics import DiagnosticsService  # noqa: F401
+            from pymobiledevice3.services.installation_proxy import InstallationProxyService  # noqa: F401
+            import pymobiledevice3.service_connection  # noqa: F401
+            import pymobiledevice3.exceptions  # noqa: F401
+        except BaseException as e:  # surfaced on the main thread below
+            _dm_preload_error.append(e)
+        finally:
+            _dm_preload_done.set()
+
+    threading.Thread(target=_preload_device_manager, name="device-manager-preload", daemon=True).start()
+
+    app = CrashHandlerApp(sys.argv)
+
+    # Fusion style is required for a custom QPalette to take effect on all
+    # platforms (native styles ignore palette tweaks).  The palette is now
+    # managed by ColorThemeManager so it can switch between dark/light.
     app.setStyle("Fusion")
-    from PySide6.QtGui import QColor, QPalette
-    dark_palette = QPalette()
-    dark_palette.setColor(QPalette.ColorRole.Window, QColor(30, 30, 32))
-    dark_palette.setColor(QPalette.ColorRole.WindowText, QColor(220, 220, 220))
-    dark_palette.setColor(QPalette.ColorRole.Base, QColor(25, 25, 27))
-    dark_palette.setColor(QPalette.ColorRole.AlternateBase, QColor(35, 35, 38))
-    dark_palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(30, 30, 32))
-    dark_palette.setColor(QPalette.ColorRole.ToolTipText, QColor(220, 220, 220))
-    dark_palette.setColor(QPalette.ColorRole.Text, QColor(220, 220, 220))
-    dark_palette.setColor(QPalette.ColorRole.Button, QColor(45, 45, 48))
-    dark_palette.setColor(QPalette.ColorRole.ButtonText, QColor(220, 220, 220))
-    dark_palette.setColor(QPalette.ColorRole.BrightText, QColor(255, 100, 100))
-    dark_palette.setColor(QPalette.ColorRole.Link, QColor(0, 122, 255))
-    dark_palette.setColor(QPalette.ColorRole.Highlight, QColor(0, 122, 255))
-    dark_palette.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
-    dark_palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, QColor(120, 120, 120))
-    dark_palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(120, 120, 120))
-    dark_palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, QColor(120, 120, 120))
-    app.setPalette(dark_palette)
 
+    from src.gui.theme import ColorThemeManager
+    _color_theme = ColorThemeManager.instance()
+    app.setPalette(_color_theme.build_palette())
+
+    print(f"[init] Qt style: {app.style().objectName()}")
+
+    QCoreApplication.setOrganizationDomain("com.leemin")
+    QCoreApplication.setApplicationName("GoldenNugget")
+    from src.controllers.settings import Settings
+    settings = Settings("settings")
+
+    from src.controllers.hotload import HotLoad
+    hotload = HotLoad(settings)
+    print("[init] HotLoad: checking safety rules...")
+
+    from src.controllers.translator import Translator
+    translator = Translator(app, settings)
+    translator.set_default_locale(translator.get_saved_locale_code())
+    translator.load_translations()
+
+    from PySide6.QtGui import QIcon
+    icon_path = os.path.join(getattr(sys, "_MEIPASS", os.path.dirname(__file__)), "nugget.ico")
+    app.setWindowIcon(QIcon(icon_path))
+
+    # Restore the preset that was loaded right before the app restarted (pages
+    # read the tweak state only once on startup, so the preset must be applied
+    # before the window is created). The marker is cleared once applied.
+    last_loaded_preset = settings.value("last_loaded_preset", "", type=str)
+    if last_loaded_preset:
+        try:
+            from src.controllers.preset_manager import PresetManager
+            if PresetManager().load_preset(last_loaded_preset):
+                logger.info("Restored preset: %s", last_loaded_preset)
+        except Exception as e:
+            logger.error("Failed to restore preset '%s': %s", last_loaded_preset, e)
+        finally:
+            settings.setValue("last_loaded_preset", "")
+            settings.sync()
+
+    # Import the main window module while the device-manager preload is still
+    # running: the GUI import graph no longer pulls in pymobiledevice3, so the
+    # two heaviest imports overlap instead of running back-to-back.
+    from src.gui.main_window import MainWindow
+
+    # Device manager: the background preload is usually long finished by now
+    # (it races with the setup above); waiting here is a no-op in that case.
+    # If it failed, the error is re-raised on the main thread exactly as if the
+    # import had run here directly.
+    _dm_preload_done.wait()
+    if _dm_preload_error:
+        raise _dm_preload_error[0]
+    from src.devicemanagement.device_manager import DeviceManager
     dm = DeviceManager()
 
     # Test mode: create mock device
@@ -186,45 +244,14 @@ def main() -> int:
         dm.current_device_index = 0
         logger.info("Test mode: Mock devices created")
 
-    QCoreApplication.setOrganizationDomain("com.leemin")
-    QCoreApplication.setApplicationName("GoldenNugget")
-    settings = Settings("settings")
-
-    # Init chain: CrashHandler -> HotLoad -> GoldenNugget.
-    # HotLoad is consulted right here, using the cached local rules, BEFORE the
-    # GUI is built. If a remote rule kills the app on this iOS version, we do
-    # NOT initialize the window at all — GoldenNugget refuses to start.
-    from src.controllers.hotload import HotLoad
-    hotload = HotLoad(settings)
-    print("[init] HotLoad: checking safety rules...")
+    # HotLoad: the kill rule is checked BEFORE the GUI is built. If it fires
+    # the app refuses to start.
     kill = _hotload_kill_or_none(dm, hotload)
     if kill:
         logger.warning("GoldenNugget disabled by HotLoad rules: %s", kill.get("reason"))
         _show_kill_message(kill)
         return 0
     print("[init] HotLoad ok")
-
-    translator = Translator(app, settings)
-    translator.set_default_locale(translator.get_saved_locale_code())
-    translator.load_translations()
-
-    icon_path = os.path.join(getattr(sys, "_MEIPASS", os.path.dirname(__file__)), "nugget.ico")
-    app.setWindowIcon(QtGui.QIcon(icon_path))
-
-    # Restore the preset that was loaded right before the app restarted (pages
-    # read the tweak state only once on startup, so the preset must be applied
-    # before the window is created). The marker is cleared once applied.
-    last_loaded_preset = settings.value("last_loaded_preset", "", type=str)
-    if last_loaded_preset:
-        try:
-            from src.controllers.preset_manager import PresetManager
-            if PresetManager().load_preset(last_loaded_preset):
-                logger.info("Restored preset: %s", last_loaded_preset)
-        except Exception as e:
-            logger.error("Failed to restore preset '%s': %s", last_loaded_preset, e)
-        finally:
-            settings.setValue("last_loaded_preset", "")
-            settings.sync()
 
     widget = MainWindow(device_manager=dm, translator=translator)
     translator.fix_ui_for_rtl(widget.ui)
@@ -305,6 +332,7 @@ def main() -> int:
     except Exception as e:
         logger.debug("HotLoad startup check skipped: %s", e)
 
+    from src.tweaks.tweaks import tweaks, TweakID
     for arg in sys.argv:
         if arg.endswith('.tendies'):
             tweaks[TweakID.PosterBoard].add_tendie(arg)

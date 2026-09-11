@@ -2,9 +2,10 @@ from PySide6.QtCore import QCoreApplication
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QScrollArea, QHBoxLayout, QLabel, QMessageBox
 
 from src.gui.ios.components import IOSSectionHeader, IOSSwitch
+from src.gui.theme import ColorThemeManager
 from src.tweaks.tweaks import tweaks, TweakID
 from src.tweaks.tweak_loader import load_daemons
-from src.tweaks.daemons_tweak import Daemon
+from src.tweaks.daemons_tweak import Daemon, RECOMMENDED_ANALYTICS
 from src.controllers.hotload import HotLoad, confirm_flagged
 
 
@@ -33,16 +34,37 @@ class IOSDaemonsContent(QWidget):
         master_row = QHBoxLayout(master_card)
         master_row.setContentsMargins(16, 10, 16, 10)
         master_row.setSpacing(12)
+        c = ColorThemeManager.instance().colors
         master_label = QLabel(QCoreApplication.translate("Nugget", "Enable Daemon Modifications"))
-        master_label.setStyleSheet("color: #FFFFFF; font-size: 15px;")
+        master_label.setStyleSheet(f"color: {c.text_primary}; font-size: 15px;")
+        self._master_label = master_label
         master_row.addWidget(master_label, 1)
         self.master_switch = IOSSwitch(self.daemons_tweak.enabled)
         self.master_switch.toggled.connect(self._on_master_toggled)
         master_row.addWidget(self.master_switch)
         layout.addWidget(master_card)
 
+        # Recommended: one tap to disable every safe analytics/telemetry daemon.
+        # Pure analytics/tracking/logging — nothing boot-critical, so this set
+        # is confirmed safe to disable (mirrors MiniVoidyy/GoldenNugget-).
+        self.recommended_card = QWidget()
+        recommended_row = QHBoxLayout(self.recommended_card)
+        recommended_row.setContentsMargins(16, 10, 16, 10)
+        recommended_row.setSpacing(12)
+        self._recommended_label = QLabel(QCoreApplication.translate(
+            "Nugget", "Recommended (analytics, tracking & logging)"))
+        self._recommended_label.setStyleSheet(
+            f"color: {c.text_primary}; font-size: 15px; font-weight: 600;")
+        recommended_row.addWidget(self._recommended_label, 1)
+        self.recommended_switch = IOSSwitch(self._recommended_all_on())
+        self.recommended_switch.toggled.connect(self._on_recommended_toggled)
+        recommended_row.addWidget(self.recommended_switch)
+        layout.addWidget(self.recommended_card)
+
         self.daemon_cards = []
         self.daemon_switches = []
+        self._daemon_labels = []
+        self._forced_notes = []
         self._confirming = False
         self._hotload_acked = False
 
@@ -80,6 +102,32 @@ class IOSDaemonsContent(QWidget):
             self.daemon_cards.append(card)
             self.daemon_switches.append((daemon, switch))
 
+        # Analytics, data tracking & logging toggles (from MiniVoidyy/GoldenNugget-)
+        # Safe telemetry/analytics daemons — nothing boot-critical.
+        layout.addWidget(IOSSectionHeader(
+            QCoreApplication.translate("Nugget", "Analytics, Data Tracking & Logging")
+        ))
+        for title, daemon in [
+            (QCoreApplication.translate("Nugget", "Disable Wi-Fi Analytics"), Daemon.WifiAnalytics),
+            (QCoreApplication.translate("Nugget", "Disable System Analytics"), Daemon.AnalyticsHelper),
+            (QCoreApplication.translate("Nugget", "Disable Call Analytics (RTC Reporting)"), Daemon.CallAnalytics),
+            (QCoreApplication.translate("Nugget", "Disable CoreDuet (Battery/Usage Statistics)"), Daemon.CoreDuet),
+            (QCoreApplication.translate("Nugget", "Disable Insight"), Daemon.Insight),
+            (QCoreApplication.translate("Nugget", "Disable Metrics"), Daemon.Metrics),
+            (QCoreApplication.translate("Nugget", "Disable Media Experience Analytics"), Daemon.MediaExperience),
+            (QCoreApplication.translate("Nugget", "Disable Symptom Diagnostics"), Daemon.Symptomsd),
+            (QCoreApplication.translate("Nugget", "Disable Statistical Diagnostics"), Daemon.StatisticalDiagnostic),
+            (QCoreApplication.translate("Nugget", "Disable Wireless Diagnostics"), Daemon.WirelessDiagnostics),
+            (QCoreApplication.translate("Nugget", "Disable Duet Heuristic"), Daemon.DuetHeuristic),
+            (QCoreApplication.translate("Nugget", "Disable Duet Expert"), Daemon.DuetExpert),
+            (QCoreApplication.translate("Nugget", "Disable Decisiond"), Daemon.Decisiond),
+            (QCoreApplication.translate("Nugget", "Disable Triald (A/B Experiment Telemetry)"), Daemon.Triald),
+            (QCoreApplication.translate("Nugget", "Disable Sociald"), Daemon.Sociald),
+        ]:
+            card, switch = self._make_daemon_switch(layout, title, daemon)
+            self.daemon_cards.append(card)
+            self.daemon_switches.append((daemon, switch))
+
         # Screen Time
         layout.addWidget(IOSSectionHeader(
             QCoreApplication.translate("Nugget", "Disable Screen Time Agent")
@@ -90,7 +138,8 @@ class IOSDaemonsContent(QWidget):
             row_layout.setContentsMargins(16, 10, 16, 10)
             row_layout.setSpacing(12)
             label = QLabel(QCoreApplication.translate("Nugget", "Clear ScreenTimeAgent.plist file"))
-            label.setStyleSheet("color: #FFFFFF; font-size: 15px;")
+            label.setStyleSheet(f"color: {c.text_primary}; font-size: 15px;")
+            self._screen_time_label = label
             row_layout.addWidget(label, 1)
             self.screen_time_switch = IOSSwitch(self.screen_time_tweak.enabled)
             self.screen_time_switch.toggled.connect(self.screen_time_tweak.set_enabled)
@@ -106,8 +155,10 @@ class IOSDaemonsContent(QWidget):
         row_layout.setContentsMargins(16, 10, 16, 10)
         row_layout.setSpacing(12)
 
+        c = ColorThemeManager.instance().colors
         label = QLabel(title)
-        label.setStyleSheet("color: #FFFFFF; font-size: 15px;")
+        label.setStyleSheet(f"color: {c.text_primary}; font-size: 15px;")
+        self._daemon_labels.append(label)
         row_layout.addWidget(label, 1)
 
         value = self.daemons_tweak.value.get(daemon.value[0], False) if self.daemons_tweak.value else False
@@ -124,7 +175,8 @@ class IOSDaemonsContent(QWidget):
             switch.setEnabled(False)
             self._forced_switches.append(switch)
             note = QLabel(QCoreApplication.translate("Nugget", "safety rules"))
-            note.setStyleSheet("color: #ff6b6b; font-size: 12px;")
+            note.setStyleSheet(f"color: {c.error}; font-size: 12px;")
+            self._forced_notes.append(note)
             row_layout.addWidget(note)
 
         layout.addWidget(card)
@@ -139,6 +191,29 @@ class IOSDaemonsContent(QWidget):
             return
         self.daemons_tweak.set_enabled(checked)
         self._update_daemons_enabled()
+
+    def _recommended_all_on(self) -> bool:
+        """True when every daemon in RECOMMENDED_ANALYTICS is already active."""
+        value = self.daemons_tweak.value
+        if not value:
+            return False
+        return all(value.get(d.value[0], False) for d in RECOMMENDED_ANALYTICS)
+
+    def _on_recommended_toggled(self, checked: bool):
+        """Toggle every safe analytics/telemetry daemon at once."""
+        if checked:
+            if not self._confirm_daemon_enable():
+                self.recommended_switch.blockSignals(True)
+                self.recommended_switch.setChecked(False)
+                self.recommended_switch.blockSignals(False)
+                return
+            self.master_switch.setChecked(True)
+        for daemon in RECOMMENDED_ANALYTICS:
+            if getattr(daemon, "name", "") in self._forced_daemons:
+                # HotLoad safety rules force this daemon on — never untoggle it.
+                continue
+            self.daemons_tweak.set_multiple_values(daemon.value, value=checked)
+            self._set_switch(daemon, checked)
 
     def _on_daemon_toggled(self, daemon: Daemon, checked: bool):
         forced_name = getattr(daemon, "name", "")
@@ -248,6 +323,8 @@ class IOSDaemonsContent(QWidget):
         enabled = self.daemons_tweak.enabled
         for card in self.daemon_cards:
             card.setEnabled(enabled)
+        if hasattr(self, 'recommended_card'):
+            self.recommended_card.setEnabled(enabled)
         for switch in self._forced_switches:
             switch.setChecked(True)
             switch.setEnabled(False)
@@ -277,6 +354,25 @@ class IOSDaemonsContent(QWidget):
             screen_time_switch.setChecked(self.screen_time_tweak.enabled)
             screen_time_switch.blockSignals(False)
 
+        recommended_switch = getattr(self, 'recommended_switch', None)
+        if recommended_switch is not None:
+            recommended_switch.blockSignals(True)
+            recommended_switch.setChecked(self._recommended_all_on())
+            recommended_switch.blockSignals(False)
+
+    def _retheme(self):
+        c = ColorThemeManager.instance().colors
+        self._master_label.setStyleSheet(f"color: {c.text_primary}; font-size: 15px;")
+        for lbl in self._daemon_labels:
+            lbl.setStyleSheet(f"color: {c.text_primary}; font-size: 15px;")
+        for note in self._forced_notes:
+            note.setStyleSheet(f"color: {c.error}; font-size: 12px;")
+        if hasattr(self, '_recommended_label'):
+            self._recommended_label.setStyleSheet(
+                f"color: {c.text_primary}; font-size: 15px; font-weight: 600;")
+        if hasattr(self, '_screen_time_label'):
+            self._screen_time_label.setStyleSheet(f"color: {c.text_primary}; font-size: 15px;")
+
 
 class IOSDaemonsPage(QWidget):
     def __init__(self, window, parent=None):
@@ -288,12 +384,19 @@ class IOSDaemonsPage(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
+        c = ColorThemeManager.instance().colors
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("background-color: #1e1e1e; border: none;")
+        scroll.setStyleSheet(f"background-color: {c.bg_primary}; border: none;")
+        self._scroll = scroll
         self.content = IOSDaemonsContent(window, self)
         scroll.setWidget(self.content)
         layout.addWidget(scroll)
 
     def refresh_from_tweaks(self):
         self.content.refresh_from_tweaks()
+
+    def _retheme(self):
+        c = ColorThemeManager.instance().colors
+        self._scroll.setStyleSheet(f"background-color: {c.bg_primary}; border: none;")
+        self.content._retheme()

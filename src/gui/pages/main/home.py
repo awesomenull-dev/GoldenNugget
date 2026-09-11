@@ -3,6 +3,7 @@ from webbrowser import open_new_tab
 from ..page import Page
 from src.qt.mainwindow_ui import Ui_Nugget
 from src.gui.preset_widget import PresetWidget
+from src.gui.theme import ColorThemeManager
 
 class HomePage(Page):
     def __init__(self, window, ui: Ui_Nugget):
@@ -79,12 +80,16 @@ class HomePage(Page):
             self.show_uuid = True
             uuid = self.window.device_manager.get_current_device_udid()
             if uuid != "":
-                self.ui.phoneVersionLbl.setText(f"<a style=\"text-decoration:none; color: white\" href=\"#\">{uuid}</a>")
+                c = ColorThemeManager.instance().colors
+                self.ui.phoneVersionLbl.setText(
+                    f"<a style=\"text-decoration:none; color: {c.text_secondary};\" href=\"#\">{uuid}</a>")
 
     def show_version_text(self, version: str, build: str):
-        support_str: str = "<span style=\"color: #32d74b;\">" + QCoreApplication.tr("Supported!") + "</span></a>"
+        c = ColorThemeManager.instance().colors
+        support_str: str = f"<span style=\"color: {c.success};\">" + QCoreApplication.tr("Supported!") + "</span></a>"
         if not self.window.device_manager.get_current_device_is_supported_by_fork():
-            support_str = "<span style=\"color: #ff0000;\">" + QCoreApplication.tr("Not Supported.") + "</span></a>"
+            support_str = f"<span style=\"color: {c.error};\">" + QCoreApplication.tr("Not Supported.") + "</span></a>"
         elif self.window.device_manager.get_current_device_partially_supported():
-            support_str = "<span style=\"color: #ffd60a;\">" + QCoreApplication.tr("Partially Supported") + "</span></a>"
-        self.ui.phoneVersionLbl.setText(f"<a style=\"text-decoration:none; color: white;\" href=\"#\">iOS {version} ({build}) {support_str}")
+            support_str = f"<span style=\"color: {c.warning};\">" + QCoreApplication.tr("Partially Supported") + "</span></a>"
+        self.ui.phoneVersionLbl.setText(
+            f"<a style=\"text-decoration:none; color: {c.text_secondary};\" href=\"#\">iOS {version} ({build}) {support_str}")

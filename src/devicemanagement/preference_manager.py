@@ -16,6 +16,7 @@ class PreferenceManager:
         self.use_backup_cache = False
         self.use_encrypted_backup = False
         self.skip_setup = True
+        self.skip_apple_id_setup = False
         self.supervised = False
         self.organization_name = ""
 

@@ -11,7 +11,7 @@ from ..tweak_classes import Tweak
 from .tendie_file import TendieFile
 from .template_file import TemplateFile
 from .pb_config_manager import PBConfigManager
-from src.restore.restore import FileToRestore
+from src.utils.file_to_restore import FileToRestore
 from src.controllers.plist_handler import set_plist_value
 from src.controllers.files_handler import get_bundle_files
 from src.controllers import video_handler
@@ -275,11 +275,9 @@ class PosterboardTweak(Tweak):
                     version: str, force_pb_refresh: bool,
                     update_label=lambda x: None):
         # find the directory
-        if version.startswith("16"):
-            # iOS 16 has a different number for the structure
-            self.structure_version = 59
-        else:
-            self.structure_version = 61
+        # structure version 61 for all supported iOS versions (26.2+); the
+        # iOS-16 era value 59 applied only to unsupported devices and is gone.
+        self.structure_version = 61
         if len(self.resetModes) > 0:
             # null out the folder
             file_paths = []

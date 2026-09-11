@@ -9,7 +9,7 @@ import time
 from PySide6.QtCore import QCoreApplication
 
 from . import backup, perform_restore, reboot_device
-from .mbdb import _FileMode
+from src.utils.file_to_restore import FileToRestore, _FileMode
 from .skip_setup27 import skip_all_setup27
 from .protective import (
     PreparedBackup,
@@ -33,50 +33,6 @@ from pymobiledevice3.exceptions import ConnectionTerminatedError, PyMobileDevice
 
 from src.exceptions.nugget_exception import NuggetException
 from src.exceptions.device_errors import is_transient_restore_error
-
-class FileToRestore:
-    def __init__(self,
-                 contents: str, restore_path: str, contents_path: str = None, domain: str = "",
-                 owner: int = 501, group: int = 501, mode: _FileMode = None
-                ):
-        self.contents = contents
-        self.contents_path = contents_path
-        self.restore_path = restore_path
-        self.domain = domain
-        self.owner = owner
-        self.group = group
-        self.mode = mode
-
-def concat_exploit_file(file: FileToRestore, files_list: list[FileToRestore], last_domain: str) -> str:
-    base_path = ""
-    # set it to work in the separate volumes (prevents a bootloop)
-    if file.restore_path.startswith("/var/mobile/"):
-        # required on iOS 17.0+ since /var/mobile is on a separate partition
-        base_path = "/var/mobile/backup"
-    elif file.restore_path.startswith("/private/var/mobile/"):
-        base_path = "/private/var/mobile/backup"
-    elif file.restore_path.startswith("/private/var/"):
-        base_path = "/private/var/backup"
-    # don't append the directory if it has already been added (restore will fail)
-    path, name = os.path.split(file.restore_path)
-    domain_path = f"SysContainerDomain-../../../../../../../..{base_path}{path}/"
-    new_last_domain = last_domain
-    if last_domain != domain_path:
-        files_list.append(backup.Directory(
-            "",
-            f"{domain_path}",
-            owner=file.owner,
-            group=file.group
-        ))
-        new_last_domain = domain_path
-    files_list.append(backup.ConcreteFile(
-        "",
-        f"{domain_path}{name}",
-        owner=file.owner,
-        group=file.group,
-        contents=file.contents
-    ))
-    return new_last_domain
 
 def concat_regular_file(file: FileToRestore, files_list: list[FileToRestore], last_domain: str, last_path: str):
     path, name = os.path.split(file.restore_path)
@@ -151,21 +107,6 @@ def merge_duplicates(original_files: list[FileToRestore]) -> list[FileToRestore]
             no_dupe_files.append(file)
             existing_locations[file_loc] = len(no_dupe_files) - 1
     return no_dupe_files
-
-def has_sparserestore_capability(lockdown_client: LockdownClient = None) -> bool:
-    if lockdown_client is None:
-        return True
-    try:
-        ver = lockdown_client.product_version.split(".")
-        major = int(ver[0])
-        minor = int(ver[1]) if len(ver) > 1 else 0
-    except (ValueError, IndexError):
-        return True
-    if major != 18:
-        return major < 18
-    # there is no iOS 18.0.2 and 18.0.1 works with sparserestore, so no need to check the patch number
-    return minor == 0
-
 
 # --- iOS 27+ three-phase restore -------------------------------------------
 #
@@ -411,6 +352,7 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
                           prepared_backup_root: PreparedBackup = None,
                           pb_inject_files: list = None,
                           skip_setup: bool = True,
+                          skip_apple_id_setup: bool = False,
                           skip_protective_backup: bool = False,
                           include_keychain: bool = False,
                           prompt_choice=None):
@@ -615,7 +557,7 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
         try:
             # brief settle time after reconnect — _restore_protective_backup
             # retries handle any remaining startup delay
-            await asyncio.sleep(3)
+            await asyncio.sleep(1)
             if skip_protective_backup or not backup_complete:
                 log_warn("Phase 3: skipping protective restore (user opted out "
                          "of data protection)")
@@ -666,7 +608,8 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
             if skip_setup:
                 progress_callback("Skipping setup panes...")
                 log_info("Phase 4: Skipping setup panes via MobileConfigService")
-                await skip_all_setup27(lc, udid)
+                await skip_all_setup27(lc, udid,
+                                       skip_apple_id_setup=skip_apple_id_setup)
                 log_info("Phase 4: Setup panes skipped successfully")
                 progress_callback(95)
 
@@ -711,7 +654,7 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
 
 
 # files is a list of FileToRestore objects
-async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdown_client: LockdownClient = None, progress_callback = lambda x: None, backup_password: str = "", prepared_backup_root: PreparedBackup = None, skip_setup: bool = True, skip_protective_backup: bool = False, include_keychain: bool = False, prompt_choice=None):
+async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdown_client: LockdownClient = None, progress_callback = lambda x: None, backup_password: str = "", prepared_backup_root: PreparedBackup = None, skip_setup: bool = True, skip_apple_id_setup: bool = False, skip_protective_backup: bool = False, include_keychain: bool = False, prompt_choice=None):
     # create the files to be backed up
     files_list = [
     ]
@@ -723,8 +666,6 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
     last_domain = ""
     last_path = ""
     exploit_only = True
-    # extra check for system version to prevent sparserestore from restoring on iOS 18.1+
-    passed_version_check = has_sparserestore_capability(lockdown_client)
     # iOS 27 dev beta 6 / public beta 4 reject sparse restores that contain
     # AppDomain-* domains: the device drops the connection at 0% and no
     # security recovery triggers. With a prepared protective backup we can
@@ -736,8 +677,10 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
     pb_inject_files = []
     for file in sorted_files:
         if file.domain == "" or file.domain == "z":
-            if passed_version_check:
-                last_domain = concat_exploit_file(file, files_list, last_domain)
+            # Files without a real domain were only ever delivered via the
+            # pre-iOS-18 path-traversal exploit, which iOS 26.2+ sparse
+            # restore cannot use — they are dropped.
+            continue
         else:
             if pb_via_protective and file.domain == "AppDomain-com.apple.PosterBoard":
                 pb_inject_files.append(file)
@@ -832,7 +775,8 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
                                             progress_callback,
                                             prompt_choice=prompt_choice)
                 log_info("Raw sparse: skipping setup panes via MobileConfigService")
-                await skip_all_setup27(lc, lockdown_client.udid)
+                await skip_all_setup27(lc, lockdown_client.udid,
+                                       skip_apple_id_setup=skip_apple_id_setup)
                 progress_callback(95)
         else:
             # iOS 27 era: three-phase protective backup + restore
@@ -841,6 +785,7 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
                                  prepared_backup_root=prepared_backup_root,
                                  pb_inject_files=pb_inject_files,
                                  skip_setup=skip_setup,
+                                 skip_apple_id_setup=skip_apple_id_setup,
                                  skip_protective_backup=skip_protective_backup,
                                  include_keychain=include_keychain,
                                  prompt_choice=prompt_choice)

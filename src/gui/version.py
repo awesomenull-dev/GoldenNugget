@@ -1,2 +1,1 @@
-App_Version = "9.4"
-App_Build = 1
+from src.version import App_Version, App_Build

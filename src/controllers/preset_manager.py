@@ -349,8 +349,8 @@ class PresetManager:
             # never re-enable HotLoad-hidden features: loading a preset must not
             # resurrect broken/dangerous tweaks (defense-in-depth on top of the
             # warning shown before loading)
-            from src.gui.ios.tweaks import _hidden_tweak_names
-            hidden_names = _hidden_tweak_names()
+            from src.tweaks.hidden import current_hidden_tweak_names
+            hidden_names = current_hidden_tweak_names()
 
             if "tweaks" in data:
                 for name, tweak_data in data["tweaks"].items():

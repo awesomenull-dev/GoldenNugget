@@ -19,7 +19,8 @@ class _CardGrid(QWidget):
     before the page itself has been shown. Hidden cards are dropped from the
     layout entirely and collapse cleanly.
     """
-    MIN_CARD_WIDTH = 260
+    MIN_CARD_WIDTH = 200
+    SPACING = 12
 
     def __init__(self, cards, parent=None):
         super().__init__(parent)
@@ -27,8 +28,8 @@ class _CardGrid(QWidget):
         self._hidden = set()
         self._grid = QGridLayout(self)
         self._grid.setContentsMargins(0, 0, 0, 0)
-        self._grid.setHorizontalSpacing(12)
-        self._grid.setVerticalSpacing(12)
+        self._grid.setHorizontalSpacing(self.SPACING)
+        self._grid.setVerticalSpacing(self.SPACING)
         for card in cards:
             card.setSizePolicy(
                 QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -54,11 +55,24 @@ class _CardGrid(QWidget):
     def reflow(self):
         self._reflow()
 
+    def _col_count(self, count: int) -> int:
+        """Pick the largest column count whose cards stay wide enough.
+
+        Prefers filling the row (4 columns) whenever each card still gets at
+        least ``MIN_CARD_WIDTH``, so the last card doesn't fall to a second
+        row when the window has room for it.
+        """
+        for n in range(count, 0, -1):
+            avail = self.width() - self.SPACING * (n - 1)
+            if avail / n >= self.MIN_CARD_WIDTH:
+                return n
+        return 1
+
     def _reflow(self):
         include = [c for c in self._cards if c not in self._hidden]
         target = []
         if include:
-            cols = max(1, min(len(include), self.width() // self.MIN_CARD_WIDTH))
+            cols = max(1, min(len(include), self._col_count(len(include))))
             for i, card in enumerate(include):
                 target.append((i // cols, i % cols, card))
         key = tuple((r, c, id(w)) for r, c, w in target)

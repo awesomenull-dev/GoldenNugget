@@ -13,15 +13,18 @@ from src.gui.theme import t, ColorThemeManager, theme_icon
 class _CardGrid(QWidget):
     """Responsive grid for the home feature cards.
 
-    Reflows the visible cards into columns based on the available width and
-    keeps only the currently-visible cards laid out (hidden cards — e.g. the
-    Status Bar on iOS 27 or HotLoad-hidden features — collapse cleanly).
+    Reflows the visible cards into columns based on the available width.
+    Cards hidden on purpose (Status Bar on iOS 27, HotLoad-hidden features)
+    are tracked via their Show/Hide events, so the grid stays correct even
+    before the page itself has been shown. Hidden cards are dropped from the
+    layout entirely and collapse cleanly.
     """
     MIN_CARD_WIDTH = 260
 
     def __init__(self, cards, parent=None):
         super().__init__(parent)
         self._cards = cards
+        self._hidden = set()
         self._grid = QGridLayout(self)
         self._grid.setContentsMargins(0, 0, 0, 0)
         self._grid.setHorizontalSpacing(12)
@@ -34,8 +37,14 @@ class _CardGrid(QWidget):
         self._reflow()
 
     def eventFilter(self, obj, event):
-        if obj in self._cards and event.type() in (QEvent.Show, QEvent.Hide):
-            self._reflow()
+        if obj in self._cards:
+            etype = event.type()
+            if etype == QEvent.Hide:
+                self._hidden.add(obj)
+                self._reflow()
+            elif etype == QEvent.Show:
+                self._hidden.discard(obj)
+                self._reflow()
         return super().eventFilter(obj, event)
 
     def resizeEvent(self, event):
@@ -46,19 +55,19 @@ class _CardGrid(QWidget):
         self._reflow()
 
     def _reflow(self):
-        visible = [c for c in self._cards if c.isVisible()]
+        include = [c for c in self._cards if c not in self._hidden]
         target = []
-        if visible:
-            cols = max(1, min(len(visible), self.width() // self.MIN_CARD_WIDTH))
-            for i, card in enumerate(visible):
+        if include:
+            cols = max(1, min(len(include), self.width() // self.MIN_CARD_WIDTH))
+            for i, card in enumerate(include):
                 target.append((i // cols, i % cols, card))
         key = tuple((r, c, id(w)) for r, c, w in target)
         if key == self._layout_key:
             return
-        while self._grid.count():
-            self._grid.takeAt(0)
+        for card in self._cards:
+            self._grid.removeWidget(card)
         for col in range(4):
-            self._grid.setColumnStretch(col, 1 if col < len(visible) else 0)
+            self._grid.setColumnStretch(col, 1 if col < len(include) else 0)
         for r, c, w in target:
             self._grid.addWidget(w, r, c)
         self._layout_key = key

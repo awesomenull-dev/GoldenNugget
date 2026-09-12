@@ -5,7 +5,7 @@
     {
       "tweak": "Daemons",
       "reason": "Remove your autosave preset and disable hotload in settings if you disabled removed daemons in 9.1.1!, else just disable hotload",
-      "app_versions": ["9.3"],
+      "app_versions": ["9.3.2"],
       "min_version": "26.0",
       "max_version": "27.9",
       "disabled": true

@@ -1,5 +1,6 @@
 """Shared error classification for device backup/restore operations."""
 import asyncio
+import plistlib
 
 import pymobiledevice3.exceptions as pm3_exc
 
@@ -34,5 +35,15 @@ def is_transient_restore_error(error) -> bool:
         return True  # device-side purge request — retry after cleanup
     # MBErrorDomain/1: SpringBoard not ready for a restore yet.
     if "SpringBoard" in msg and "ready for a restore" in msg:
+        return True
+    # A malformed plist over the restore channel. On a freshly-rebooted iOS 27
+    # device this is almost always the mobilebackup2 tunnel being torn down or
+    # truncated mid-handshake, not a broken backup — retrying on a fresh
+    # service reconnects and completes the restore. Aborting on the first
+    # occurrence strands the user right after Phase 2 wiped the device (the
+    # exact data-loss route seen with "InvalidFileException in Phase 3").
+    if isinstance(error, plistlib.InvalidFileException):
+        return True
+    if "parse_plist invalid data" in msg:
         return True
     return "start" in msg.lower() and "service" in msg.lower()

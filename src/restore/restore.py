@@ -335,6 +335,24 @@ async def _restore_protective_backup(lc: LockdownClient, backup_root: str,
                     "next run."
                 ),
             )
+        # The password gate (handled separately by the caller) and already
+        # user-friendly errors must pass through untouched. Anything else that
+        # survived the retry loop is an opaque device/protocol failure — surface
+        # it as clear guidance instead of a bare traceback: the protective
+        # backup is the ONLY copy of the user's data after Phase 2 wiped it.
+        if isinstance(e, (PasswordRequiredError, NuggetException)):
+            raise e
+        raise NuggetException(
+            QCoreApplication.tr(
+                "The protective backup could not be restored to the iPhone."),
+            detailed_text=QCoreApplication.tr(
+                "The device dropped the connection during the data restore.\n\n"
+                "Your data is not lost — the protective backup taken before "
+                "the wipe is kept on this computer.\n\n"
+                "Do not erase the phone or set it up as new. Reconnect the "
+                "iPhone, keep it unlocked with the screen on, and apply again "
+                "so the restore can complete.")
+        ) from e
 
     await async_retry(
         _restore_once,

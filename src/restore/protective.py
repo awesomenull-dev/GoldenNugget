@@ -30,7 +30,6 @@ encrypted at rest and iOS rejects them in an unencrypted backup.
 
 import asyncio
 import os
-import plistlib
 import shutil
 import sqlite3
 import tempfile
@@ -328,8 +327,74 @@ def _domain_match(device_name: str, domain: str) -> bool:
 
 
 def _path_match(device_name: str, path: str) -> bool:
+    """Match a HomeDomain-scoped path prefix against a device-side upload name.
+
+    Accepts the three layouts seen in the wild:
+    - bare physical path: ``Library/Preferences/...``
+    - legacy domain-qualified: ``HomeDomain/Library/Preferences/...``
+    - iOS 27 physical tree: ``/.b/<n>/Library/Preferences/...`` (via ``_tree_match``)
+
+    App-container names (``AppDomain-.../`` or ``Containers/.../Library/...``)
+    never match: they sit under a different root and are out of protective
+    scope. (An earlier substring form ``f"/{path}/" in name`` did match them,
+    which is how app plists/WebKit data leaked into the backup.)
+    """
     name = _norm_device_name(device_name)
-    return name == path or name.startswith(f"{path}/") or f"/{path}/" in name
+    if name == path or name.startswith(f"{path}/"):
+        return True
+    if name == f"HomeDomain/{path}" or name.startswith(f"HomeDomain/{path}/"):
+        return True
+    return _tree_match(device_name, path)
+
+
+def _device_tree_name(device_name: str) -> str:
+    """Normalised device name with the iOS 27+ backup-session root stripped.
+
+    On iOS 27 the device uploads the raw filesystem tree: names arrive as
+    ``/.b/<n>/Media/DCIM/IMG_0001.PNG`` with the logical domain (``CameraRollDomain``)
+    absent from the name entirely. Stripping the ``.b/<n>/`` root yields the
+    physical relative path (``Media/DCIM/IMG_0001.PNG``); legacy domain-qualified
+    names (``HomeDomain/Library/...``) pass through unchanged so the domain-style
+    matchers keep working on older iOS.
+    """
+    name = _norm_device_name(device_name)
+    for prefix in (".b", "b"):
+        if name.startswith(f"{prefix}/"):
+            name = name[len(prefix) + 1:]
+            if name.split("/", 1)[0].isdigit():
+                return name.split("/", 1)[1]
+            break
+    return name
+
+
+def _tree_match(device_name: str, *trees: str) -> bool:
+    """Match a device name against physical tree roots (iOS 27+ layout).
+
+    ``CameraRollDomain``/``MediaDomain`` files live under the top-level ``Media``
+    node (DCIM/, PhotoData/, PhotoStream/...), iMessage data under
+    ``Library/Messages`` etc., and the keychain export under ``Keychains/``.
+    App-container media sits deeper under ``Containers/...`` (and app containers
+    are skipped device-side anyway), so a bare first-segment comparison is
+    unambiguous.
+    """
+    name = _device_tree_name(device_name)
+    for tree in trees:
+        if name == tree or name.startswith(f"{tree}/"):
+            return True
+    return False
+
+
+def _posterboard_db_match(device_name: str) -> bool:
+    """Match the PosterBoard sqlite database by its physical file name.
+
+    The store directory carries a structure version (61, 62, ...) that varies
+    between iOS releases and lives inside an app container either as
+    ``AppDomain-com.apple.PosterBoard/...`` (iOS 26) or under the raw file tree
+    ``/.b/<n>/Containers/...`` (iOS 27), so matching is done by file name, not
+    path or domain.
+    """
+    name = _norm_device_name(device_name)
+    return "PRBPosterExtensionDataStore" in name and POSTERBOARD_DB_NAME in name
 
 
 def is_protective_device_file(device_name: str, include_photos: bool = True,
@@ -337,28 +402,34 @@ def is_protective_device_file(device_name: str, include_photos: bool = True,
                               include_keychain: bool = False) -> bool:
     """Mid-stream backup filter: match an upload's device-side name against the keep-set.
 
-    Upload names carry the domain and path (e.g. ``HomeDomain/Library/...``),
-    mirroring pymobiledevice3's own BackupSelectionRule matching. Rejected
-    payloads are drained by the DeviceLink; their Manifest.db rows survive so
-    subsequent incremental backups do not re-upload them.
+    On iOS 26 upload names carry the domain and path (``HomeDomain/Library/...``),
+    mirroring pymobiledevice3's own BackupSelectionRule matching. On iOS 27 the
+    device uploads the raw filesystem tree (``/.b/<n>/Media/DCIM/...``) with no
+    domain in the name, so the keep-set is matched against the physical tree
+    roots instead (see ``_tree_match``). Rejected payloads are drained by the
+    DeviceLink; their Manifest.db rows survive so subsequent incremental backups
+    do not re-upload them.
     """
     for domain in (("CameraRollDomain", "MediaDomain") if include_photos else ()) + \
             ("SystemPreferencesDomain", "MessagesDomain"):
         if _domain_match(device_name, domain):
             return True
-    if include_keychain and _domain_match(device_name, KEYCHAIN_DOMAIN):
+    if include_photos and _tree_match(device_name, "Media"):
+        return True
+    if _tree_match(device_name, "Library/Messages", "Library/SMS", "Library/MessagesMetaData"):
+        return True
+    if include_keychain and (_domain_match(device_name, KEYCHAIN_DOMAIN)
+                             or _tree_match(device_name, "Keychains")):
         return True
     for prefix in (APPLE_ID_PATH_PREFIXES + SPRINGBOARD_PATH_PREFIXES
                + CONTROL_CENTER_PATH_PREFIXES + SHORTCUTS_PATH_PREFIXES
                + WEB_CLIPS_PATH_PREFIXES + WEB_APP_PATH_PREFIXES
                + WEBKIT_WEBSITE_DATA_PATH_PREFIXES
                + ADDRESS_BOOK_PATH_PREFIXES):
-        if _path_match(device_name, f"HomeDomain/{prefix}") or _path_match(device_name, prefix):
+        if _path_match(device_name, prefix):
             return True
-    if include_posterboard:
-        name = _norm_device_name(device_name)
-        if "PRBPosterExtensionDataStore" in name and POSTERBOARD_DB_NAME in name:
-            return True
+    if include_posterboard and _posterboard_db_match(device_name):
+        return True
     return False
 
 
@@ -526,10 +597,8 @@ PROTECTIVE_PERSIST_DIRNAME = "protective"
 # in restore.py can never match a real backup.
 WORKING_COPY_PREFIX = "nugget_working_"
 
-# Retention for finished live backups: how many to keep per device, and how
-# long a directory must exist before it becomes eligible for deletion.
+# Retention for finished live backups: how many to keep per device.
 PROTECTIVE_KEEP_RUNS = 2
-PROTECTIVE_MIN_AGE_HOURS = 24.0
 
 
 def protective_persistent_base() -> Path:
@@ -608,32 +677,15 @@ def find_latest_protective_backup(udid: str) -> Optional[str]:
     return str(runs[0] / "device_backup") if runs else None
 
 
-def prune_protective_backups(udid: str, keep: int = PROTECTIVE_KEEP_RUNS,
-                             min_age_hours: float = PROTECTIVE_MIN_AGE_HOURS) -> int:
+def prune_protective_backups(udid: str, keep: int = PROTECTIVE_KEEP_RUNS) -> int:
     """Drop older live backups for ``udid``, keeping the newest ``keep``.
 
-    Refuses to delete anything younger than ``min_age_hours``: right after a
-    failed apply the newest backup is the only copy of the user's data, and
-    deleting it on a timer is precisely the failure this replaces. Returns the
-    number of run directories removed.
-
-    Before the age-based deletion the kept-but-old runs are deduplicated
-    against the newest one (``dedupe_protective_payloads``): stale copies get
-    freed immediately even when they are too young to delete outright, but
-    they stay readable for rollback.
+    Deletes every older run outright; the newest ``keep`` runs are left
+    untouched. Returns the number of run directories removed.
     """
-    try:
-        dedupe_protective_payloads(udid)
-    except Exception as e:
-        log_warn(f"Protective payload dedupe failed: {e}")
     runs = list_protective_backups(udid)
     removed = 0
-    now = time.time()
     for old in runs[keep:]:
-        age_h = (now - old.stat().st_mtime) / 3600
-        if age_h < min_age_hours:
-            log_info(f"Protective backup {old.name} is only {age_h:.1f}h old — keeping it")
-            continue
         shutil.rmtree(old, ignore_errors=True)
         if not old.exists():
             removed += 1
@@ -836,90 +888,6 @@ def _iter_payload_files(device_dir: Path):
                 yield entry
         elif entry.is_dir():
             yield from _iter_payload_files(entry)
-
-
-def _payload_digests_by_fileid(device_dir: Path) -> dict:
-    """Map fileID -> content digest (SHA-1) for a backup's regular-file rows.
-
-    Read from the MBFile blobs the device itself wrote into ``Manifest.db`` —
-    exact (digest == payload SHA-1, no payload I/O needed) and independent of
-    the on-disk payload. Returns ``{}`` when the manifest cannot be read
-    (e.g. an encrypted backup without a password).
-    """
-    manifest_db = device_dir / "Manifest.db"
-    if not _validate_sqlite_db(manifest_db):
-        return {}
-    out = {}
-    try:
-        conn = sqlite3.connect(str(manifest_db))
-        try:
-            for file_id, blob in conn.execute(
-                    "SELECT fileID, file FROM Files WHERE flags = 1 AND file IS NOT NULL"):
-                try:
-                    # MBFile archive layout: $objects[3] is the SHA-1 Digest.
-                    obj = plistlib.loads(blob)
-                    digest = obj["$objects"][3]
-                except Exception:
-                    continue
-                if isinstance(digest, (bytes, bytearray)):
-                    out[file_id] = bytes(digest)
-        finally:
-            conn.close()
-    except sqlite3.DatabaseError:
-        return {}
-    return out
-
-
-def dedupe_protective_payloads(udid: str) -> tuple:
-    """Free disk by hardlinking payloads older runs share with the newest.
-
-    A fresh protective run mostly repeats the previous one — only the files
-    that actually changed on-device differ — so kept older runs waste space
-    holding byte-identical copies. For every payload an older run carries in
-    common with the newest run (same fileID AND same content digest), the
-    older payload is replaced by a hardlink to the newest one: the older
-    backup still resolves every path (so rollback keeps working) while the
-    duplicate stops costing disk space.
-
-    Matching uses the SHA-1 digests each run's Manifest.db records, so a file
-    that legitimately changed between runs (same fileID, new content) keeps
-    its own payload and is never clobbered. Encrypted runs without a password
-    are skipped (their manifests cannot be read).
-
-    Returns (files_deduped, bytes_freed).
-    """
-    runs = list_protective_backups(udid)
-    if len(runs) < 2:
-        return 0, 0
-    safe_udid = udid or "unknown"
-    newest_dir = runs[0] / "device_backup" / safe_udid
-    newest_digests = _payload_digests_by_fileid(newest_dir)
-    if not newest_digests:
-        return 0, 0
-    files = bytes_freed = 0
-    for run in runs[1:]:
-        old_dir = run / "device_backup" / safe_udid
-        old_digests = _payload_digests_by_fileid(old_dir)
-        for file_id, digest in old_digests.items():
-            if newest_digests.get(file_id) != digest:
-                continue
-            new_payload = newest_dir / file_id[:2] / file_id
-            old_payload = old_dir / file_id[:2] / file_id
-            if not new_payload.is_file() or not old_payload.is_file():
-                continue
-            try:
-                if os.path.samefile(old_payload, new_payload):
-                    continue
-                os.unlink(old_payload)
-                os.link(new_payload, old_payload)
-                files += 1
-                bytes_freed += new_payload.stat().st_size
-            except OSError:
-                continue
-    if files:
-        log_info(f"Deduplicated {files} payload files across protective backups "
-                 f"(freed {bytes_freed / 1024 / 1024:.1f} MiB on disk)")
-    return files, bytes_freed
 
 
 def _keep_protective_entry(domain: str, relative_path: str, include_photos: bool = True,

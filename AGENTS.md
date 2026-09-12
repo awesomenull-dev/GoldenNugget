@@ -270,17 +270,9 @@ backup in the persistent app-data store
   with **5 attempts** (backoff 2s, 4s, 8s, 15s); `perform_protective_backup`
   itself has no retry loop
 
-### Live backup retention & dedupe (src/restore/protective.py)
+### Live backup retention (src/restore/protective.py)
 - `prune_protective_backups()` keeps the newest `PROTECTIVE_KEEP_RUNS=2` runs and
-  refuses to fully delete anything younger than `PROTECTIVE_MIN_AGE_HOURS=24`
-  (right after a failed apply the newest backup is the only copy of user data).
-- `dedupe_protective_payloads()` runs first on every prune: each older run's
-  payloads that the newest run also carries — same fileID **and** same content
-  SHA-1, read from each run's own Manifest.db `MBFile` blobs — are replaced by
-  hardlinks to the newest run's files. Stale-but-kept runs stop eating disk
-  immediately while staying fully readable for rollback; a file that genuinely
-  changed between runs keeps its own payload and is never clobbered. Encrypted
-  manifests without a password are skipped.
+  deletes every older run outright (no age guard, no payload dedupe).
 
 ### `clean_backup_for_restore()` (src/restore/protective.py)
 - Prunes Manifest.db to protective files only (temp-table keep-set, single DELETE)

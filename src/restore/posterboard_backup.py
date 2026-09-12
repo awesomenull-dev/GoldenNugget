@@ -119,7 +119,7 @@ async def targeted_posterboard_database_backup(udid: str, update_label=lambda x:
     from src.exceptions.device_errors import is_device_locked_error as _is_device_locked_error
     from src.restore.protective import (
         POSTERBOARD_DB_DOMAIN, ProtectiveBackupService, _domain_match,
-        extract_posterboard_db)
+        _posterboard_db_match, extract_posterboard_db)
 
     app_data_path = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)
     pb_dir = os.path.join(app_data_path, "PosterBoard")
@@ -144,7 +144,11 @@ async def targeted_posterboard_database_backup(udid: str, update_label=lambda x:
                         "Please use the original Nugget for iOS 26.1 and earlier.")
                 async with ProtectiveBackupService(service_provider, include_posterboard=True) as backup_client:
                     def _pb_only(backup_file):
-                        return _domain_match(backup_file.device_name or "", POSTERBOARD_DB_DOMAIN)
+                        # iOS 26: domain-qualified names (AppDomain-com.apple.PosterBoard/...);
+                        # iOS 27: raw file-tree names (/.b/<n>/Containers/...). Match both.
+                        device_name = backup_file.device_name or ""
+                        return (_domain_match(device_name, POSTERBOARD_DB_DOMAIN)
+                                or _posterboard_db_match(device_name))
                     try:
                         await backup_client.backup(
                             full=True, backup_directory=backup_dir,

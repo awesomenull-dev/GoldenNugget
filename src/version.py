@@ -6,4 +6,4 @@ GUI package. ``src/gui/version.py`` re-exports them for the GUI side.
 """
 
 App_Version = "9.4"
-App_Build = 2
+App_Build = 0

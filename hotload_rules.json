@@ -4,11 +4,11 @@
   "rules": [
     {
       "tweak": "Daemons",
-      "reason": "The Voice Control daemons (assistant_service / assistantd / voiced) cause a bootloop when disabled on current iOS. GoldenNugget 9.2 still ships Voice Control in the daemons list, so enabling Daemons is dangerous on 9.2 builds. 9.2.1+ hard-blocks Voice Control in code.",
-      "app_versions": ["9.2"],
+      "reason": "Remove your autosave preset and disable hotload in settings if you disabled removed daemons in 9.1.1!, else just disable hotload",
+      "app_versions": ["9.3"],
       "min_version": "26.0",
       "max_version": "27.9",
-      "disabled": false
+      "disabled": true
     },
     {
       "tweak": "Daemons",

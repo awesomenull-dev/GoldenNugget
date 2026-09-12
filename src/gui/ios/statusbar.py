@@ -156,26 +156,26 @@ class IOSStatusBarPage(QWidget):
         # Item show/hide toggles
         self.content_layout.addWidget(IOSSectionHeader(QCoreApplication.translate("Nugget", "Items")))
         for name, item in [
-            (QCoreApplication.translate("Nugget", "Focus Mode Icon"), StatusBarItem.QuietModeStatusBarItem),
-            (QCoreApplication.translate("Nugget", "Airplane Mode"), StatusBarItem.AirplaneModeStatusBarItem),
-            (QCoreApplication.translate("Nugget", "Cellular Service"), StatusBarItem.CellularServiceStatusBarItem),
-            (QCoreApplication.translate("Nugget", "Wi-Fi Icon"), StatusBarItem.CellularDataNetworkStatusBarItem),
-            (QCoreApplication.translate("Nugget", "Battery Icon"), StatusBarItem.MainBatteryStatusBarItem),
-            (QCoreApplication.translate("Nugget", "Bluetooth Icon"), StatusBarItem.BluetoothStatusBarItem),
-            (QCoreApplication.translate("Nugget", "Alarm Icon"), StatusBarItem.AlarmStatusBarItem),
-            (QCoreApplication.translate("Nugget", "Location Icon"), StatusBarItem.LocationStatusBarItem),
-            (QCoreApplication.translate("Nugget", "Rotation Lock Icon"), StatusBarItem.RotationLockStatusBarItem),
-            (QCoreApplication.translate("Nugget", "AirPlay Icon"), StatusBarItem.AirPlayStatusBarItem),
-            (QCoreApplication.translate("Nugget", "CarPlay Icon"), StatusBarItem.CarPlayStatusBarItem),
-            (QCoreApplication.translate("Nugget", "VPN Icon"), StatusBarItem.VPNStatusBarItem),
-            (QCoreApplication.translate("Nugget", "Voice Control Icon"), StatusBarItem.VoiceControlStatusBarItem),
-            (QCoreApplication.translate("Nugget", "Liquid Detection Warning Icon"), StatusBarItem.LiquidDetectionStatusBarItem),
+            (QCoreApplication.translate("Nugget", "Disable Focus Mode icon"), StatusBarItem.QuietModeStatusBarItem),
+            (QCoreApplication.translate("Nugget", "Disable Airplane Mode icon"), StatusBarItem.AirplaneModeStatusBarItem),
+            (QCoreApplication.translate("Nugget", "Disable Cellular Service icon"), StatusBarItem.CellularServiceStatusBarItem),
+            (QCoreApplication.translate("Nugget", "Disable Wi-Fi icon"), StatusBarItem.CellularDataNetworkStatusBarItem),
+            (QCoreApplication.translate("Nugget", "Disable Battery icon"), StatusBarItem.MainBatteryStatusBarItem),
+            (QCoreApplication.translate("Nugget", "Disable Bluetooth icon"), StatusBarItem.BluetoothStatusBarItem),
+            (QCoreApplication.translate("Nugget", "Disable Alarm icon"), StatusBarItem.AlarmStatusBarItem),
+            (QCoreApplication.translate("Nugget", "Disable Location icon"), StatusBarItem.LocationStatusBarItem),
+            (QCoreApplication.translate("Nugget", "Disable Rotation Lock icon"), StatusBarItem.RotationLockStatusBarItem),
+            (QCoreApplication.translate("Nugget", "Disable AirPlay icon"), StatusBarItem.AirPlayStatusBarItem),
+            (QCoreApplication.translate("Nugget", "Disable CarPlay icon"), StatusBarItem.CarPlayStatusBarItem),
+            (QCoreApplication.translate("Nugget", "Disable VPN icon"), StatusBarItem.VPNStatusBarItem),
+            (QCoreApplication.translate("Nugget", "Disable Voice Control icon"), StatusBarItem.VoiceControlStatusBarItem),
+            (QCoreApplication.translate("Nugget", "Disable Liquid Detection Warning icon"), StatusBarItem.LiquidDetectionStatusBarItem),
         ]:
             overridden = self.status_manager.is_item_overridden(item)
-            shown = self.status_manager.get_item_override(item)
+            hidden = overridden and self.status_manager.get_item_override(item) == 0
             self._make_switch(
                 name,
-                overridden and shown,
+                hidden,
                 self._make_item_handler(item),
             )
 
@@ -235,12 +235,11 @@ class IOSStatusBarPage(QWidget):
     def _make_item_handler(self, item: StatusBarItem):
         def handler(checked: bool):
             if checked:
-                self.status_manager.set_item_override(item, True)
-            else:
-                if self.status_manager.get_item_override(item):
-                    self.status_manager.unset_item_override(item)
-                else:
-                    self.status_manager.set_item_override(item, False)
+                # switch ON → the icon is disabled (forced hidden)
+                self.status_manager.set_item_override(item, False)
+            elif self.status_manager.is_item_overridden(item):
+                # switch OFF → back to the stock default visibility
+                self.status_manager.unset_item_override(item)
         return handler
 
     def _make_switch(self, title: str, checked: bool, on_toggled):

@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
 
 from src.gui.ios.components import (
     IOSSectionHeader, IOSCard, IOSSettingsRow,
-    IOSSwitch, TextInputDialog, NumberInputDialog
+    IOSSwitch, TextInputDialog, NumberInputDialog, decimals_for_step
 )
 from src.gui.ios.compat import is_tweak_compatible
 from src.gui.theme import ColorThemeManager
@@ -23,6 +23,14 @@ _SECTION_FEATURES = SECTION_FEATURES
 def _hidden_feature_names() -> set:
     """Names of HotLoad-hidden features for the current setup, as a set."""
     return current_hidden_feature_names()
+
+
+def _fmt_number(value) -> str:
+    """Render a numeric tweak value compactly (5, 0.5, 1)."""
+    try:
+        return f"{float(value):g}"
+    except (TypeError, ValueError):
+        return str(value)
 
 
 def _hidden_tweak_names() -> set:
@@ -125,7 +133,7 @@ class IOSSectionContent(QWidget):
 
         # Helper for number input tweaks
         def make_number_input(tweak_id: TweakID, title: str, min_val: int = 0, max_val: int = 999,
-                              description: str = ""):
+                              description: str = "", step: float = 1.0):
             if tweak_id not in tweaks:
                 return
             if not is_compatible(tweak_id):
@@ -138,12 +146,14 @@ class IOSSectionContent(QWidget):
             if description:
                 row.setToolTip(f"{description}\n\n"
                                + QCoreApplication.translate("Nugget", "Range: {0} – {1}")
-                               .format(min_val, max_val))
+                               .format(_fmt_number(min_val), _fmt_number(max_val)))
+            decimals = decimals_for_step(step)
             current = 0
             if hasattr(tweak, 'value') and tweak.value:
-                current = int(tweak.value) if tweak.value else 0
-                row.setText(f"{title}  ({current})")
-            row.clicked.connect(lambda: self._show_number_input_dialog(tweak_id, title, current, row, min_val, max_val))
+                current = int(tweak.value) if decimals == 0 else float(tweak.value)
+                row.setText(f"{title}  ({_fmt_number(current)})")
+            row.clicked.connect(lambda: self._show_number_input_dialog(
+                tweak_id, title, current, row, min_val, max_val, step))
             card_layout.addWidget(row)
             layout.addWidget(card)
 
@@ -162,7 +172,8 @@ class IOSSectionContent(QWidget):
             Kind.SWITCH: lambda spec: make_switch(spec.id, tr_title(spec), tr_description(spec)),
             Kind.TEXT: lambda spec: make_text_input(spec.id, tr_title(spec), tr_description(spec)),
             Kind.NUMBER: lambda spec: make_number_input(
-                spec.id, tr_title(spec), spec.min_value, spec.max_value, tr_description(spec)),
+                spec.id, tr_title(spec), spec.min_value, spec.max_value,
+                tr_description(spec), spec.step),
         }
 
         sections_to_render = self.sections if self.sections is not None else list(Section)
@@ -194,12 +205,12 @@ class IOSSectionContent(QWidget):
             display = value if value else "(empty)"
             row.setText(f"{title}  ({display})")
 
-    def _show_number_input_dialog(self, tweak_id: TweakID, title: str, current: int, row: IOSSettingsRow, min_val: int, max_val: int):
-        dialog = NumberInputDialog(title, current, min_val, max_val, self)
+    def _show_number_input_dialog(self, tweak_id: TweakID, title: str, current, row: IOSSettingsRow, min_val, max_val, step: float = 1.0):
+        dialog = NumberInputDialog(title, current, min_val, max_val, self, step=step)
         if dialog.exec() == QDialog.Accepted:
             value = dialog.get_value()
             tweaks[tweak_id].set_value(value, toggle_enabled=True)
-            row.setText(f"{title}  ({value})")
+            row.setText(f"{title}  ({_fmt_number(value)})")
 
 
 class IOSTweaksPage(QWidget):

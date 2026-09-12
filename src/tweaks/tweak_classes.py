@@ -76,6 +76,42 @@ class BasicPlistTweak(Tweak):
             other_tweaks[self.file_location] = {self.key: self.value}
         return other_tweaks
     
+class CompanionKeyTweak(BasicPlistTweak):
+    """A plist tweak that writes companion keys alongside its main key.
+
+    Some settings only take effect once the system can see that a human
+    changed them (e.g. ``UIViewGlassEverEditedInSettings`` marks the Liquid
+    Glass tint amount as deliberately chosen; without it iOS treats the
+    amount as never set and applies its own default). Those keys are not
+    user-facing toggles, so they ride along with the real one.
+
+    Merging matches ``BasicPlistTweak``, so several tweaks can keep sharing
+    one plist (both this one and ``UseFloatingTabBar`` target the UIKit
+    Managed Preferences file).
+    """
+    def __init__(
+            self,
+            file_location: FileLocation,
+            key: str,
+            value: any = True,
+            companion_keys: Optional[dict] = None,
+            owner: int = 501, group: int = 501
+        ):
+        super().__init__(file_location=file_location, key=key, value=value,
+                         owner=owner, group=group)
+        self.companion_keys = dict(companion_keys or {})
+
+    def apply_tweak(self, other_tweaks: dict) -> dict:
+        if not self.enabled:
+            return other_tweaks
+        target = other_tweaks.get(self.file_location)
+        if not isinstance(target, dict):
+            target = {}
+            other_tweaks[self.file_location] = target
+        target[self.key] = self.value
+        target.update(self.companion_keys)
+        return other_tweaks
+
 class AdvancedPlistTweak(BasicPlistTweak):
     def __init__(
         self,

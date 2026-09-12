@@ -2,7 +2,7 @@ from PySide6.QtCore import Qt, QCoreApplication, Signal as pyqtSignal
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QLabel, QPushButton, QFrame,
     QSizePolicy, QDialog, QDialogButtonBox, QLineEdit, QSpinBox,
-    QVBoxLayout,
+    QDoubleSpinBox, QVBoxLayout,
 )
 
 from src.gui.theme import t, ColorThemeManager
@@ -44,26 +44,55 @@ class TextInputDialog(QDialog):
         return self.input.text()
 
 
+def decimals_for_step(step) -> int:
+    """Decimal places needed to express ``step`` (0.5 -> 1, 1 -> 0, 0.25 -> 2)."""
+    try:
+        text = f"{float(step):.6f}".rstrip("0")
+    except (TypeError, ValueError):
+        return 0
+    if text.endswith("."):
+        return 0
+    return len(text.split(".", 1)[1])
+
+
 class NumberInputDialog(QDialog):
-    """iOS-style number input dialog."""
-    def __init__(self, title: str, current_value: int = 0, min_val: int = 0, max_val: int = 999, parent=None):
+    """iOS-style number input dialog.
+
+    ``step`` picks the widget: an integral step keeps the integer spin box
+    (every existing numeric tweak), a finer one switches to a decimal box so
+    values like 0.5 are expressible. ``get_value`` returns an int in the
+    integral case and a float otherwise.
+    """
+    def __init__(self, title: str, current_value: int = 0, min_val: int = 0, max_val: int = 999,
+                 parent=None, step: float = 1.0):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setModal(True)
         self.setMinimumWidth(320)
         self._retheme()
 
+        self._decimals = decimals_for_step(step)
+        self._integral = self._decimals == 0
+
         layout = QVBoxLayout(self)
         layout.setSpacing(16)
         layout.setContentsMargins(24, 24, 24, 24)
 
-        self.spin = QSpinBox()
-        self.spin.setRange(min_val, max_val)
-        self.spin.setValue(current_value)
-        self.spin.setButtonSymbols(QSpinBox.NoButtons)
+        if self._integral:
+            self.spin = QSpinBox()
+            self.spin.setRange(int(min_val), int(max_val))
+            self.spin.setValue(int(current_value))
+            self.spin.setButtonSymbols(QSpinBox.NoButtons)
+        else:
+            self.spin = QDoubleSpinBox()
+            self.spin.setDecimals(self._decimals)
+            self.spin.setSingleStep(abs(float(step)))
+            self.spin.setRange(float(min_val), float(max_val))
+            self.spin.setValue(float(current_value))
+            self.spin.setButtonSymbols(QDoubleSpinBox.NoButtons)
         c = ColorThemeManager.instance().colors
         self.spin.setStyleSheet(f"""
-            QSpinBox {{
+            QSpinBox, QDoubleSpinBox {{
                 background-color: {c.bg_input};
                 border: none;
                 border-radius: 10px;
@@ -97,8 +126,9 @@ class NumberInputDialog(QDialog):
             QPushButton:hover {{ background-color: {c.accent_hover}; }}
         """)
 
-    def get_value(self) -> int:
-        return self.spin.value()
+    def get_value(self):
+        value = self.spin.value()
+        return int(value) if self._integral else round(float(value), self._decimals)
 
 
 class IOSSectionHeader(QLabel):

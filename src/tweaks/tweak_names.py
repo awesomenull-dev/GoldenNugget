@@ -22,6 +22,7 @@ class TweakID(Enum):
     HideDICompletely = auto()
     SBShowAuthenticationEngineeringUI = auto()
     UseFloatingTabBar = auto()
+    SBDisableIconParallax = auto()
 
     # internal
     SBBuildNumber = auto()
@@ -64,6 +65,16 @@ class TweakID(Enum):
     IgnoreSolariumHardwareCheck = auto()
     IgnoreSolariumOptOut = auto()
     DisableSpecularEverywhere = auto()
+    GlassTintAmount = auto()
+    # SpringBoard home-screen glass family (same preference table as the keys
+    # above; read by SpringBoard from com.apple.springboard, all Bool)
+    DisableWidgetSpecular = auto()
+    DisableDockSpecular = auto()
+    DisableFolderSpecular = auto()
+    ExcludeClearGlassShadows = auto()
+    ExcludeDockShadow = auto()
+    ExcludeSearchShadow = auto()
+    UseFlatIconsEverywhere = auto()
 
     # daemons
     Daemons = auto()

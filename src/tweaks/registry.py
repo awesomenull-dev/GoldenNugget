@@ -46,8 +46,9 @@ class TweakSpec:
     key: str
     value: any = True          # value written when the tweak is enabled
     kind: Kind = Kind.SWITCH
-    min_value: int = 0         # NUMBER kind only
-    max_value: int = 999       # NUMBER kind only
+    min_value: float = 0       # NUMBER kind only
+    max_value: float = 999     # NUMBER kind only
+    step: float = 1.0          # NUMBER kind only; not integral = decimal input
     min_version: Optional[str] = None
     max_version: Optional[str] = None
     iphone_only: bool = False
@@ -81,6 +82,50 @@ def _watchos_compatibility():
             "AdvertisingIdentifierSeed": "85E70251-1960-4DA0-A321-B68AC118FAB5",  # this prolly isn't needed either
             "minPairingCompatibilityVersion": 1
         })
+
+
+def _glass_tint_tweak():
+    """Liquid Glass tint amount, plus its "user edited it" acknowledgment.
+
+    UIKit keeps the tint as a float in the ``com.apple.UIKit`` domain, 0…1,
+    with **0.5 the neutral / stock value**. That is measured rather than
+    assumed: writing 0.5 renders byte-identically to not writing the key at
+    all, while 0.0/0.25/0.5/0.75/1.0 each produce their own frame
+    (docs/Simulator_Verification.md §6).
+
+    Settings → Display & Brightness → Liquid Glass drives the same number with
+    a SwiftUI ``Slider`` whose ``neutralValue`` is 0.5. Its live label switches
+    between the three strings Apple ships for the row:
+
+        LIQUID_GLASS_TINT_DESCRIPTION_CLEAR    "More Clear"    below 0.5
+        LIQUID_GLASS_TINT_DESCRIPTION_DEFAULT  "Default"       at 0.5
+        LIQUID_GLASS_TINT_DESCRIPTION_TINTED   "More Tinted"   above 0.5
+
+    So those are *descriptions of where the amount sits*, not three discrete
+    stops -- do not describe the spec as "the same three stops as Settings".
+
+    The response is continuous but **very unequally weighted**: measured on the
+    Settings search field, luminance went 47.33 / 46.20 / 45.49 / 43.58 / 41.94
+    / 40.51 / 38.51 / 38.26 for 0.00 / 0.25 / 0.50 / 0.55 / 0.60 / 0.65 / 0.75
+    / 1.00. Slope jumps from about -3 per unit below 0.5 to -38 just above it,
+    then flattens again past 0.75 -- i.e. 0.0 and 0.5 look nearly alike, 0.75
+    and 1.0 look nearly alike, and the visible work happens in 0.5-0.75. That
+    is why ``step`` is 0.05 rather than snapping to the three labelled
+    positions; the whole transition would otherwise be unreachable.
+
+    The companion key is *not* load-bearing for the value to take effect --
+    also measured: writing ``UIViewGlassTintAmount`` alone still changes the
+    rendered glass. It is kept because that is what Settings itself writes when
+    a user moves the slider, and some surfaces outside the process that reads
+    the pref may well gate on it. Do not describe it as required.
+    """
+    from .tweak_classes import CompanionKeyTweak
+    return CompanionKeyTweak(
+        FileLocation.uikit,
+        key="UIViewGlassTintAmount",
+        value=1.0,
+        companion_keys={"UIViewGlassEverEditedInSettings": True},
+    )
 
 
 GP = FileLocation.globalPreferences
@@ -132,6 +177,44 @@ SPECS: tuple[TweakSpec, ...] = (
     _t(TweakID.DisableSolariumHDR, Section.LIQUID_GLASS, "Disable Solarium HDR", GP, "SolariumAllowHDR", value=False,
        description=QT_TRANSLATE_NOOP("Nugget", "Disables HDR tone-mapping in the Solarium renderer. Can fix washed-out or over-bright Liquid Glass areas. Enabled when the switch is OFF."),
        min_version="26.0"),
+    _t(TweakID.GlassTintAmount, Section.LIQUID_GLASS, "Liquid Glass Tint Amount",
+       FileLocation.uikit, "UIViewGlassTintAmount",
+       value=1.0, kind=Kind.NUMBER, min_value=0.0, max_value=1.0, step=0.05,
+       factory=_glass_tint_tweak,
+       description=QT_TRANSLATE_NOOP("Nugget", "System-wide Liquid Glass tint amount, 0 to 1. 0.0 = More Clear, 0.5 = Default (the stock appearance), 1.0 = More Tinted — the same number Settings → Display & Brightness → Liquid Glass drives with a slider, and any value in between is meaningful. Also writes UIViewGlassEverEditedInSettings, matching what Settings itself does."),
+       min_version="27.0"),
+    # Home Screen glass family. These sit in the same accessor/key table as the
+    # SB* keys above — the one SpringBoard itself persists into
+    # com.apple.springboard — and SpringBoard reads them through the standard
+    # defaults search chain, so NSGlobalDomain (GP) reaches them too.
+    _t(TweakID.DisableWidgetSpecular, Section.LIQUID_GLASS, "Disable Widget Specular",
+       GP, "SBDisableWidgetSpecular",
+       description=QT_TRANSLATE_NOOP("Nugget", "Removes the specular (glossy highlight) pass from Home Screen widget icons, so they no longer catch a moving highlight."),
+       min_version="27.0"),
+    _t(TweakID.DisableDockSpecular, Section.LIQUID_GLASS, "Disable Dock Specular",
+       GP, "SBDisableDockSpecular",
+       description=QT_TRANSLATE_NOOP("Nugget", "Removes the specular highlight from the Home Screen dock, leaving the glass material without its glossy sheen."),
+       min_version="27.0"),
+    _t(TweakID.DisableFolderSpecular, Section.LIQUID_GLASS, "Disable Folder Specular",
+       GP, "SBDisableFolderSpecular",
+       description=QT_TRANSLATE_NOOP("Nugget", "Removes the specular highlight from Home Screen folder backgrounds."),
+       min_version="27.0"),
+    _t(TweakID.ExcludeClearGlassShadows, Section.LIQUID_GLASS, "Exclude All Clear Glass Shadows",
+       GP, "SBExcludeAllClearGlassShadows",
+       description=QT_TRANSLATE_NOOP("Nugget", "Drops every shadow the Clear Glass material casts. Useful when the shadows make light wallpapers look muddy."),
+       min_version="27.0"),
+    _t(TweakID.ExcludeDockShadow, Section.LIQUID_GLASS, "Exclude Dock Shadow",
+       GP, "SBExcludeDockShadow",
+       description=QT_TRANSLATE_NOOP("Nugget", "Removes the drop shadow under the Home Screen dock."),
+       min_version="27.0"),
+    _t(TweakID.ExcludeSearchShadow, Section.LIQUID_GLASS, "Exclude Search Shadow",
+       GP, "SBExcludeSearchShadow",
+       description=QT_TRANSLATE_NOOP("Nugget", "Removes the drop shadow under the Home Screen search field."),
+       min_version="27.0"),
+    _t(TweakID.UseFlatIconsEverywhere, Section.LIQUID_GLASS, "Use Flat Icons Everywhere",
+       GP, "SBUseFlatIconsEverywhere",
+       description=QT_TRANSLATE_NOOP("Nugget", "Draws Home Screen icons in the flat style instead of the glass/3D look."),
+       min_version="27.0"),
 
     # --- SpringBoard ---
     _t(TweakID.LockScreenFootnote, Section.SPRINGBOARD, "Lock Screen Footnote Text",
@@ -180,6 +263,9 @@ SPECS: tuple[TweakSpec, ...] = (
     _t(TweakID.UseFloatingTabBar, Section.SPRINGBOARD, "Disable Floating Tab Bar",
        FileLocation.uikit, "UseFloatingTabBar", value=False, ipad_only=True,
        description=QT_TRANSLATE_NOOP("Nugget", "Uses the old fixed tab bar style instead of the floating tab bar on iPad. Enabled when the switch is OFF.")),
+    _t(TweakID.SBDisableIconParallax, Section.SPRINGBOARD, "Disable Icon Parallax",
+       FileLocation.springboard, "SBDisableParallax",
+       description=QT_TRANSLATE_NOOP("Nugget", "Stops Home Screen icons from shifting with the device tilt (the parallax effect). Pair with Disable Icon Page-Control Parallax for a fully static Home Screen.")),
 
     # --- Internal Options ---
     _t(TweakID.SBBuildNumber, Section.INTERNAL, "Show Build Version in Status Bar", GP, "UIStatusBarShowBuildVersion",

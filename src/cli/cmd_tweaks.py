@@ -187,8 +187,11 @@ def _run_set(args):
     from src.tweaks.tweaks import tweaks
     tweak = tweaks[spec.id]
     if spec.kind == Kind.NUMBER:
+        # Integral ranges keep strict int parsing; a fractional step
+        # (spec.step, e.g. the Liquid Glass tint's 0.5) accepts floats.
+        integral = float(spec.step or 1).is_integer()
         try:
-            value = int(args.value)
+            value = int(args.value) if integral else float(args.value)
         except ValueError:
             print(f"ERROR: {spec.id.name} needs a number, got '{args.value}'.",
                   file=sys.stderr)

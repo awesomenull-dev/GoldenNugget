@@ -1,14 +1,22 @@
-"""Legacy standalone PosterBoard database backup.
+"""Standalone PosterBoard database backup.
 
-Backs up the whole device and extracts the PosterBoard SQLite database file,
-used when the posterboard container could not be carried inside the protective
-backup (device rejected the container / encrypted backup). Lives here so the
-backend apply path (``device_manager._backup_posterboard_database``) does not
-depend on the GUI package; ``src/gui/dialogs/pb_dialog.py`` imports it too.
+Two mechanisms, both kept GUI-independent so the backend apply path
+(``device_manager._backup_posterboard_database``) needs no GUI imports:
+
+* ``backup_posterboard_database`` — LEGACY: backs up the whole device and
+  extracts the PosterBoard SQLite file. Only safe as a fallback now.
+* ``targeted_posterboard_database_backup`` — modern channel: backs up ONLY the
+  PosterBoard container (everything else the device uploads is drained
+  mid-stream, never written to disk) and hands back a WAL-merged copy of the
+  sqlite. This is what iOS 26 applies use instead of the full Phase 0 backup.
+
+``src/gui/dialogs/pb_dialog.py`` imports the legacy function for its
+"Fetch Database File" wizard.
 """
 
 import os
 import sqlite3
+import tempfile
 
 from PySide6.QtCore import QStandardPaths
 
@@ -93,3 +101,67 @@ async def backup_posterboard_database(udid: str, update_label=lambda x: None, up
     if not os.path.exists(db_file_path):
         raise NuggetException("The database file doesn't exist!")
     return db_file_path
+
+
+async def targeted_posterboard_database_backup(udid: str, update_label=lambda x: None,
+                                               update_progress=lambda x: None) -> str:
+    """Back up ONLY the PosterBoard container and return the merged sqlite path.
+
+    The PosterBoard delivery channel for iOS 26 applies: there is no Phase 0
+    protective backup there (the restore is a plain sparse pass, nothing gets
+    restored), so this pulls just the ``AppDomain-com.apple.PosterBoard``
+    database off the device. The factory info lists only that container and the
+    mid-stream filter drops every other file the device uploads, so the run
+    stays small on disk and fast — no photos, contacts or settings are ever
+    written here. Returns the extracted (WAL-merged) database path.
+    """
+    from src.exceptions.device_errors import is_connection_error as _is_connection_error
+    from src.exceptions.device_errors import is_device_locked_error as _is_device_locked_error
+    from src.restore.protective import (
+        POSTERBOARD_DB_DOMAIN, ProtectiveBackupService, _domain_match,
+        extract_posterboard_db)
+
+    app_data_path = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)
+    pb_dir = os.path.join(app_data_path, "PosterBoard")
+    if not os.path.exists(pb_dir):
+        os.makedirs(pb_dir)
+    dest_path = os.path.join(pb_dir, f"{udid}.sqlite3")
+
+    max_retries = 3
+
+    def _on_retry(attempt: int, total: int, e: Exception, delay: float) -> None:
+        if attempt < total:
+            update_label(f"Connection lost, retrying in {delay}s... (attempt {attempt}/{max_retries})")
+
+    async def _attempt():
+        # hard-block fetching the database from an unsupported (old) iOS version
+        with tempfile.TemporaryDirectory(prefix="nugget_pb_only_") as backup_dir:
+            async with lockdown_session(udid) as service_provider:
+                if not is_supported_by_fork(service_provider.all_values.get("ProductVersion", "0.0")):
+                    raise NuggetException(
+                        "This version of iOS is not supported by this fork.\n\n"
+                        "GoldenNugget only supports iOS 26.2 and newer. "
+                        "Please use the original Nugget for iOS 26.1 and earlier.")
+                async with ProtectiveBackupService(service_provider, include_posterboard=True) as backup_client:
+                    def _pb_only(backup_file):
+                        return _domain_match(backup_file.device_name or "", POSTERBOARD_DB_DOMAIN)
+                    try:
+                        await backup_client.backup(
+                            full=True, backup_directory=backup_dir,
+                            progress_callback=update_progress, filter_callback=_pb_only)
+                    except Exception as e:
+                        if _is_device_locked_error(e):
+                            raise NuggetException(
+                                "Device locked during backup. Please unlock your device, "
+                                "keep it awake (tap screen periodically), and try again.")
+                        raise
+            update_label("Getting the file...")
+            db_path = extract_posterboard_db(backup_dir, udid, dest_path)
+            if db_path is None:
+                raise NuggetException(
+                    "Could not find the PosterBoard database in the backup!")
+            return db_path
+
+    return await async_retry(
+        _attempt, max_retries, retry_if=_is_connection_error,
+        exp_cap=15, on_retry=_on_retry)

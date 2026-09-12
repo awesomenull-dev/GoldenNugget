@@ -481,11 +481,11 @@ class DeviceManager:
 
             # Phase 0: protective backup.
             #  - iOS 27+ (partial support): the heavy backup is built and later
-            #    restored (Phase 1/3) to survive the security-recovery wipe.
-            #  - iOS 26.x: the apply is a plain sparse restore (no wipe), so the
-            #    backup is only run as a PosterBoard delivery vehicle — it ships
-            #    the WAL-merged sqlite to GoldenNugget, then is discarded; the
-            #    restore stays the usual raw sparse pass.
+            #    restored (Phase 1/3) to survive the security-recovery wipe. It
+            #    also carries the PosterBoard sqlite when wallpapers are pending.
+            #  - iOS 26.x: the apply is a plain sparse restore (no wipe, no Phase
+            #    3), so NO Phase 0 runs here at all — PosterBoard delivery
+            #    happens through the targeted PosterBoard-only backup below.
             prepared_root = None
             pb_from_cache = False
             raw_sparse = os.environ.get("GOLDENNUGGET_NO_PROTECTIVE_BACKUP") == "1"
@@ -499,7 +499,7 @@ class DeviceManager:
                          "(no data protection)")
                 self._protective_backup_skipped = True
             partially_supported = self.get_current_device_partially_supported()
-            should_prepare = (partially_supported or needs_posterboard) and not raw_sparse
+            should_prepare = partially_supported and not raw_sparse
             if should_prepare:
                 # On NotEnoughDiskSpaceError the user can choose to continue
                 # without it — tweaks still apply, but there is no data
@@ -507,8 +507,7 @@ class DeviceManager:
                 try:
                     prepared_root, pb_from_cache = await self._prepare_protective_backup(
                         update_label, needs_posterboard=needs_posterboard,
-                        prompt_password=prompt_password,
-                        force_live=not partially_supported)
+                        prompt_password=prompt_password)
                 except Exception as e:
                     if "disk space" in str(e).lower() or "NotEnoughDiskSpace" in type(e).__name__:
                         # The Yes/No decision must be asked on the main thread
@@ -536,18 +535,16 @@ class DeviceManager:
                             return
                     else:
                         raise
-                if not partially_supported:
-                    # iOS 26: the backup is only used to pull the PosterBoard
-                    # sqlite; the restore itself is a plain sparse pass, so the
-                    # prepared root must not reach Phase 1/3.
-                    log_info("iOS 26.x apply: Phase 0 used only for PosterBoard sqlite "
-                             "delivery — proceeding with raw sparse restore")
-                    prepared_root = None
             else:
-                log_info("Phase 0 skipped: nothing to prepare (no iOS 27 restore, no PosterBoard)")
+                log_info("Phase 0 skipped: no iOS 27 protective restore required")
 
-            # fallback: PosterBoard DB missing from the cache backup (e.g. the
-            # device rejected container inclusion) -> legacy separate backup
+            # PosterBoard delivery:
+            #  - iOS 27+: the sqlite normally rides the Phase 0 backup (extracted
+            #    inside _prepare_protective_backup); when it could not be read out
+            #    of it (device rejected the container / encrypted backup), this
+            #    targeted PosterBoard-only backup runs as the fallback.
+            #  - iOS 26.x: no Phase 0 at all, so this targeted backup IS the
+            #    delivery channel — tiny and fast, no full device backup.
             if needs_posterboard and not pb_from_cache and not raw_sparse:
                 if os.environ.get("GOLDENNUGGET_SKIP_PB_BACKUP"):
                     log_warn("GOLDENNUGGET_SKIP_PB_BACKUP=1 set; skipping PosterBoard DB fetch")
@@ -597,12 +594,11 @@ class DeviceManager:
 
     async def _prepare_protective_backup(self, update_label=lambda x: None,
                                          needs_posterboard: bool = False,
-                                         prompt_password=None,
-                                         force_live: bool = False) -> tuple:
+                                         prompt_password=None) -> tuple:
         """Phase 0: build the protective backup that Phase 3 will restore.
     
         Two modes:
-    
+
         * LIVE (default): runs a fresh ``perform_protective_backup`` right now,
           always including the PosterBoard container when wallpapers are being
           applied — so ``extract_posterboard_db`` yields the fresh sqlite and the
@@ -617,19 +613,16 @@ class DeviceManager:
     
 Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
         container cannot be read out of the backup the caller falls back to the
-        legacy separate ``_backup_posterboard_database``. Returns (None, False)
+        targeted ``_backup_posterboard_database``. Returns (None, False)
         only when there is no UDID at all.
 
-        ``force_live`` bypasses the experimental cache and always runs a fresh
-        live backup. Used on iOS 26, where the restore is a plain sparse pass —
-        the backup is never restored, it only exists to ship a WAL-merged
-        PosterBoard sqlite to GoldenNugget.
+        iOS 26 applies never take this path: their restore is a plain sparse
+        pass, so the heavy backup serves no purpose there — PosterBoard
+        delivery goes through ``_backup_posterboard_database`` instead.
         """
         udid = self.get_current_device_udid()
         if not udid:
             return None, False
-        if force_live:
-            log_info("Phase 0: forced live (iOS 26 PosterBoard delivery) — cache bypassed")
     
         from src.restore.protective import (
             PreparedBackup, extract_posterboard_db, is_backup_encrypted,
@@ -691,8 +684,7 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
                 return prepared, False
             return prepared, _register_pb_db(backup_root)
     
-        cache_enabled = (not force_live
-                         and self.pref_manager.use_backup_cache
+        cache_enabled = (self.pref_manager.use_backup_cache
                          and not os.environ.get("GOLDENNUGGET_NO_BACKUP_CACHE"))
     
         async with lockdown_session(udid) as lc:
@@ -751,11 +743,12 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
         fetched copies are only reused when the database is genuinely needed and
         a fresh one isn't required (``force=False``).
 
-        Uses the same mechanism as the "Fetch Database File" wizard
-        (``backup_posterboard_database`` in ``src/restore/posterboard_backup.py``),
-        i.e. a full mobilebackup2 backup + Manifest.db lookup. Failure is
-        non-fatal: the apply continues and config mode surfaces its own clear
-        error later.
+        Uses a targeted PosterBoard-only backup
+        (``targeted_posterboard_database_backup`` in ``src/restore/posterboard_backup.py``):
+        only the PosterBoard container is pulled off the device and everything
+        else the device uploads is drained mid-stream, so no full backup is
+        ever written. Failure is non-fatal: the apply continues and config mode
+        surfaces its own clear error later.
         """
         udid = self.get_current_device_udid()
         if not udid:
@@ -770,9 +763,9 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
             return
 
         update_label(QCoreApplication.tr("Fetching PosterBoard database..."))
-        from src.restore.posterboard_backup import backup_posterboard_database
+        from src.restore.posterboard_backup import targeted_posterboard_database_backup
         try:
-            db_file_path = await backup_posterboard_database(udid, update_label)
+            db_file_path = await targeted_posterboard_database_backup(udid, update_label)
             if not db_file_path or not os.path.exists(db_file_path):
                 raise NuggetException("The PosterBoard database file doesn't exist!")
             update_label(QCoreApplication.tr("Saving PosterBoard database..."))

@@ -129,8 +129,19 @@ result). Do not call `create_using_usbmux` directly in new code.
 ### `_apply_changes()`
 Main entry point for applying tweaks. Order:
 1. `_raise_if_unsupported()` — hard-block iOS < 26.2
-2. `_prepare_protective_backup()` — Phase 0: builds the protective backup that Phase 3 will restore. Default (cache OFF): a **live** `perform_protective_backup()` fresh every apply, **always carrying the PosterBoard container when wallpapers are pending** (`include_posterboard`) so the extracted DB is never stale. With the experimental cache ON: incremental refresh of the cached master; the "reuse as-is" fast path never applies when wallpapers are pending, so the extracted DB is still always fresh. Returns (PreparedBackup, posterboard_db_ok); (None, False) only when there is no UDID
-3. Fallback: if the PB DB was needed but missing from the protective backup (device rejected container inclusion / encrypted), the legacy separate `_backup_posterboard_database(force=True)` runs (skipped if `GOLDENNUGGET_SKIP_PB_BACKUP=1`)
+2. `_prepare_protective_backup()` — Phase 0, **iOS 27+ only** (no Phase 0 on iOS 26): builds the protective backup that Phase 3 will restore. Default (cache OFF): a **live** `perform_protective_backup()` fresh every apply, **always carrying the PosterBoard container when wallpapers are pending** (`include_posterboard`) so the extracted DB is never stale. With the experimental cache ON: incremental refresh of the cached master; the "reuse as-is" fast path never applies when wallpapers are pending, so the extracted DB is still always fresh. Returns (PreparedBackup, posterboard_db_ok); (None, False) only when there is no UDID
+3. PosterBoard DB delivery:
+   - **iOS 26.x (no Phase 0):** a **targeted PosterBoard-only backup**
+     (`targeted_posterboard_database_backup` in `src/restore/posterboard_backup.py`)
+     pulls ONLY the `AppDomain-com.apple.PosterBoard` container — everything
+     else the device uploads is drained mid-stream, never written to disk — and
+     hands back a WAL-merged copy of the sqlite. This replaces the old "full
+     Phase 0 as a delivery vehicle" and the legacy full-device fallback.
+   - **iOS 27+:** the sqlite normally rides the Phase 0 backup; when it could
+     not be read out of it (device rejected container inclusion / encrypted
+     backup), the same targeted backup runs as the fallback and stores the
+     extracted DB at `<AppData>/PosterBoard/<udid>.sqlite3`.
+   - Both are skipped if `GOLDENNUGGET_SKIP_PB_BACKUP=1`.
 4. `_apply_tweak_pass()` — generate all tweak files, handle backup encryption, then `start_restore(prepared_backup_root=...)`
 
 ### Protective Backup Cache (src/restore/protective_cache.py)
@@ -381,11 +392,14 @@ User clicks "Apply Tweaks"
     |
 _apply_changes()
     |_ _raise_if_unsupported()
-    |_ _prepare_protective_backup()          [Phase 0: live backup (default) or cached master refresh]
+    |_ [iOS 27+ only] _prepare_protective_backup()   [Phase 0: live backup (default) or cached master refresh]
     |     |_ cache OFF (default) -> fresh live perform_protective_backup()
     |     |_ cache ON (experimental) -> incremental master refresh; "reuse as-is" fast path only when NOT needs_posterboard
     |     |_ wallpapers applied? -> include PosterBoard container in the backup + extract fresh DB after
-    |_ PB DB missing from the protective backup / encrypted? -> legacy _backup_posterboard_database(force=True)
+    |_ targeted_posterboard_database_backup()        [iOS 26: the delivery channel, no Phase 0]
+    |     |_ only the AppDomain-com.apple.PosterBoard container; everything else drained mid-stream
+    |     |_ extract WAL-merged sqlite -> <AppData>/PosterBoard/<udid>.sqlite3
+    |     |_ iOS 27+: run only when the Phase 0 backup could not yield the DB
     |_ _apply_tweak_pass(prepared_backup_root)
          |_ generate tweak files
          |_ backup encryption handling (iOS 27+ password prompt)

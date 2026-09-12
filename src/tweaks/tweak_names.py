@@ -65,7 +65,6 @@ class TweakID(Enum):
     IgnoreSolariumHardwareCheck = auto()
     IgnoreSolariumOptOut = auto()
     DisableSpecularEverywhere = auto()
-    GlassTintAmount = auto()
     # SpringBoard home-screen glass family (same preference table as the keys
     # above; read by SpringBoard from com.apple.springboard, all Bool)
     DisableWidgetSpecular = auto()

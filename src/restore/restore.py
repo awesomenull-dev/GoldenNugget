@@ -156,11 +156,15 @@ async def _wait_for_device(udid: str, progress_callback,
     Polls usbmux with capped exponential backoff. Fully async — the caller's
     event loop (and the GUI) stays responsive for the whole wait.
 
-    The pairing record SURVIVES the wipe (verified: SideStore keeps working),
-    so the connect runs WITHOUT autopair — forcing a re-pair crashes with
-    MissingValueError while the device is still finishing recovery and has
-    no DevicePublicKey to give. If the host turns out to be unpaired after
-    a short grace period, one autopair fallback is attempted.
+    The pairing record SURVIVES a plain tweak-apply wipe (verified: SideStore
+    keeps working), so the connect runs WITHOUT autopair — forcing a re-pair
+    crashes with MissingValueError while the device is still finishing recovery
+    and has no DevicePublicKey to give. A Reset (purplebuddy erasure) wipes the
+    on-device pairing too: lockdownd then rejects the session start and
+    create_using_usbmux(autopair=False) returns a SILENTLY UNPAIRED client, so
+    we verify ``ld.paired`` and, once a short grace period has passed, attempt
+    a full autopair fallback. Only a client whose pairing validated is ever
+    returned — otherwise Phase 3's service start would raise NotPairedError.
 
     Instead of failing the whole restore when the wait times out (the classic
     "device was not unlocked in time after the security recovery" case), the
@@ -171,7 +175,7 @@ async def _wait_for_device(udid: str, progress_callback,
     from pymobiledevice3.exceptions import (
         DeviceNotFoundError, PasswordRequiredError, NotPairedError,
         ConnectionFailedError, ConnectionTerminatedError, LockdownError,
-        MissingValueError,
+        MissingValueError, PairingError, FatalPairingError,
     )
     while True:
         start = time.monotonic()
@@ -187,7 +191,21 @@ async def _wait_for_device(udid: str, progress_callback,
                 f"({elapsed // 60}:{elapsed % 60:02d} elapsed)..."
             )
             try:
-                return await create_using_usbmux(serial=udid, autopair=False)
+                ld = await create_using_usbmux(serial=udid, autopair=False)
+                if not getattr(ld, "paired", False):
+                    # The host's pair record still exists but lockdownd rejected
+                    # the session start — the erasure wiped the on-device pairing
+                    # (typical for Reset, unlike a plain tweak apply where the
+                    # record survives). Returning this client would make every
+                    # later service start raise NotPairedError. Close it, record
+                    # the loss and let the poll continue so the autopair
+                    # fallback below re-pairs the device after the grace period.
+                    try:
+                        await ld.close()
+                    except Exception:
+                        pass
+                    raise NotPairedError()
+                return ld
             except NotPairedError as e:
                 # pairing genuinely lost — try a full re-pair once, after giving
                 # the device time to finish recovery
@@ -195,8 +213,22 @@ async def _wait_for_device(udid: str, progress_callback,
                 if not autopair_tried and time.monotonic() - start >= 30:
                     autopair_tried = True
                     try:
-                        return await create_using_usbmux(serial=udid, autopair=True)
-                    except (MissingValueError, LockdownError) as e2:
+                        ld = await create_using_usbmux(serial=udid, autopair=True)
+                        if getattr(ld, "paired", False):
+                            return ld
+                        try:
+                            await ld.close()
+                        except Exception:
+                            pass
+                        last_error = NotPairedError(
+                            "re-pair completed but lockdownd still reports "
+                            "the host as unpaired")
+                    except (MissingValueError, LockdownError,
+                            PairingError, FatalPairingError) as e2:
+                        # PairingError covers the pending/denied trust dialog;
+                        # FatalPairingError a rejected re-pair. None of these
+                        # should kill the wait — the device may still be
+                        # finishing recovery, so keep polling.
                         last_error = e2
             except (DeviceNotFoundError, PasswordRequiredError,
                     ConnectionFailedError, ConnectionTerminatedError,
@@ -234,8 +266,9 @@ async def _wait_for_device(udid: str, progress_callback,
             text = QCoreApplication.tr(
                 "The device has not been unlocked for too long after the "
                 "security recovery.\n\n"
-                "Unlock it, enter the passcode and make sure it stays "
-                "connected via USB, then choose:\n\n"
+                "Unlock it, enter the passcode, tap \"Trust\" if the computer "
+                "trust prompt appears, and make sure it stays connected via "
+                "USB, then choose:\n\n"
                 "  \u2022 Resume \u2014 keep waiting (restarts the \"Waiting for "
                 "device to reconnect after security recovery\" cycle).\n"
                 "  \u2022 Abort \u2014 stop now. Tweaks may not be applied and "

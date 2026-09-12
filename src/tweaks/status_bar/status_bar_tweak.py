@@ -302,3 +302,29 @@ class StatusBarTweak(Tweak):
         return self.setter.silly_mode
     def toggle_silly_mode(self, value: bool) -> None:
         self.setter.silly_mode = value
+
+    def count_overrides(self) -> int:
+        """Number of currently-active overrides (drives the apply summary).
+
+        Counts every ``override*`` flag set to 1 plus every enabled
+        ``overrideItemIsEnabled`` entry. Approximate by design — a single
+        user change can legitimately toggle more than one override field.
+        """
+        overrides = self._overrides()
+        count = 0
+        try:
+            for i in range(len(overrides.overrideItemIsEnabled)):
+                if overrides.overrideItemIsEnabled[i]:
+                    count += 1
+        except Exception:
+            pass
+        for name in dir(overrides):
+            if not name.startswith("override") or name == "overrideItemIsEnabled":
+                continue
+            try:
+                val = getattr(overrides, name)
+            except Exception:
+                continue
+            if isinstance(val, int) and val:
+                count += 1
+        return count

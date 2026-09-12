@@ -576,8 +576,86 @@ class ApplyMixin:
         self.apply_changes()
 
 
+    def _build_apply_summary(self) -> tuple:
+        """Human-readable breakdown of what an apply would change.
+
+        Returns ``(lines, total)`` — ``lines`` feed the pre-apply summary
+        dialog, ``total`` is the summed change count (0 = nothing to do).
+        """
+        from src.tweaks.registry import SPECS_BY_SECTION, Section
+        from src.tweaks.tweak_loader import load_plist_tweaks, load_daemons
+        load_plist_tweaks()
+        load_daemons()
+
+        lines = []
+        total = 0
+
+        def add(label, count):
+            nonlocal total
+            if count > 0:
+                total += count
+                lines.append(f"• {label}: {count}")
+
+        for section in Section:
+            enabled = sum(
+                1 for spec in SPECS_BY_SECTION[section]
+                if getattr(tweaks.get(spec.id), "enabled", False))
+            if enabled:
+                add(QCoreApplication.translate("Nugget", section.value), enabled)
+
+        pb = tweaks.get(TweakID.PosterBoard)
+        if pb is not None:
+            add(QCoreApplication.translate("Nugget", "PosterBoard"), len(pb.tendies))
+
+        tmpl = tweaks.get(TweakID.Templates)
+        if tmpl is not None:
+            add(QCoreApplication.translate("Nugget", "Templates"), len(tmpl.templates))
+
+        st = tweaks.get(TweakID.StatusBar)
+        if st is not None:
+            try:
+                add(QCoreApplication.translate("Nugget", "Status Bar"), st.count_overrides())
+            except Exception:
+                pass
+
+        dm = tweaks.get(TweakID.Daemons)
+        if dm is not None:
+            add(QCoreApplication.translate("Nugget", "Daemons"),
+                sum(1 for v in getattr(dm, "value", {}).values() if v))
+
+        return lines, total
+
+
+    def _confirm_apply_summary(self) -> bool:
+        """Show the pre-apply summary; True only if the user confirms."""
+        lines, total = self._build_apply_summary()
+        if not lines:
+            QtWidgets.QMessageBox.information(
+                self,
+                QCoreApplication.translate("Nugget", "Nothing to apply"),
+                QCoreApplication.translate(
+                    "Nugget",
+                    "No tweaks, daemons, wallpapers or templates are enabled. "
+                    "Enable something first."))
+            return False
+        from src.gui.ios.components import IOSSummaryDialog
+        dlg = IOSSummaryDialog(
+            title=QCoreApplication.translate("Nugget", "Apply Tweaks"),
+            lines=lines,
+            muted=QCoreApplication.translate(
+                "Nugget",
+                "Your device reboots when it's done — remember to turn Find My "
+                "back on afterwards. A protective backup runs first."),
+            confirm_text=QCoreApplication.translate("Nugget", "Apply"),
+            parent=self)
+        return dlg.exec() == QtWidgets.QDialog.Accepted
+
+
     def apply_changes(self, reset_pages: list=None):
         if not self.apply_in_progress:
+            # Applies (not resets) get a what-will-change summary first.
+            if reset_pages is None and not self._confirm_apply_summary():
+                return
             self.apply_in_progress = True
             self.toggle_thread_btns(disabled=True)
             self.worker_thread = ApplyThread(manager=self.device_manager, settings=self.settings, reset_pages=reset_pages)

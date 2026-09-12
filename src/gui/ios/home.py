@@ -1,12 +1,67 @@
-from PySide6.QtCore import Qt, QCoreApplication, Slot, QTimer, QSize
+from PySide6.QtCore import Qt, QCoreApplication, Slot, QTimer, QSize, QEvent
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox, QFrame
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
+    QComboBox, QFrame, QSizePolicy
 )
 
-from src.gui.ios.components import IOSCard, IOSPrimaryButton
+from src.gui.ios.components import IOSCard, IOSPrimaryButton, IOSDangerButton
 from src.gui.preset_widget import PresetWidget
 from src.gui.theme import t, ColorThemeManager, theme_icon
+
+
+class _CardGrid(QWidget):
+    """Responsive grid for the home feature cards.
+
+    Reflows the visible cards into columns based on the available width and
+    keeps only the currently-visible cards laid out (hidden cards — e.g. the
+    Status Bar on iOS 27 or HotLoad-hidden features — collapse cleanly).
+    """
+    MIN_CARD_WIDTH = 260
+
+    def __init__(self, cards, parent=None):
+        super().__init__(parent)
+        self._cards = cards
+        self._grid = QGridLayout(self)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setHorizontalSpacing(12)
+        self._grid.setVerticalSpacing(12)
+        for card in cards:
+            card.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+            card.installEventFilter(self)
+        self._layout_key = None
+        self._reflow()
+
+    def eventFilter(self, obj, event):
+        if obj in self._cards and event.type() in (QEvent.Show, QEvent.Hide):
+            self._reflow()
+        return super().eventFilter(obj, event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reflow()
+
+    def reflow(self):
+        self._reflow()
+
+    def _reflow(self):
+        visible = [c for c in self._cards if c.isVisible()]
+        target = []
+        if visible:
+            cols = max(1, min(len(visible), self.width() // self.MIN_CARD_WIDTH))
+            for i, card in enumerate(visible):
+                target.append((i // cols, i % cols, card))
+        key = tuple((r, c, id(w)) for r, c, w in target)
+        if key == self._layout_key:
+            return
+        while self._grid.count():
+            self._grid.takeAt(0)
+        for col in range(4):
+            self._grid.setColumnStretch(col, 1 if col < len(visible) else 0)
+        for r, c, w in target:
+            self._grid.addWidget(w, r, c)
+        self._layout_key = key
 
 
 class IOSHomePage(QWidget):
@@ -75,28 +130,24 @@ class IOSHomePage(QWidget):
         self.status_lbl.setTextFormat(Qt.RichText)
         layout.addWidget(self.status_lbl)
 
-        cards_row = QHBoxLayout()
-        cards_row.setSpacing(12)
-
-        self.posterboard_card = self._make_card(
-            "PosterBoard", "Animated wallpapers & templates", 2)
-        self.tweaks_card = self._make_card(
-            "Tweaks", "Customize system settings", 1)
-        self.daemons_card = self._make_card(
-            "Daemons", "Disable system daemons", 3)
-        self.statusbar_card = self._make_card(
-            "Status Bar", "Customize the status bar", 5)
-        cards_row.addWidget(self.posterboard_card, 1)
-        cards_row.addWidget(self.tweaks_card, 1)
-        cards_row.addWidget(self.daemons_card, 1)
-        cards_row.addWidget(self.statusbar_card, 1)
-        layout.addLayout(cards_row)
+        cards_row = [self._make_card(
+            "PosterBoard", "Animated wallpapers & templates", 2),
+            self._make_card(
+            "Tweaks", "Customize system settings", 1),
+            self._make_card(
+            "Daemons", "Disable system daemons", 3),
+            self._make_card(
+            "Status Bar", "Customize the status bar", 5)]
+        (self.posterboard_card, self.tweaks_card,
+         self.daemons_card, self.statusbar_card) = cards_row
+        self.cards_grid = _CardGrid(cards_row)
+        layout.addWidget(self.cards_grid)
 
         apply_btn = IOSPrimaryButton(QCoreApplication.translate("Nugget", "Apply Tweaks"))
         apply_btn.clicked.connect(self.open_apply_classic)
         layout.addWidget(apply_btn)
 
-        reset_btn = IOSPrimaryButton(QCoreApplication.translate("Nugget", "Reset Tweaks"))
+        reset_btn = IOSDangerButton(QCoreApplication.translate("Nugget", "Reset Tweaks"))
         reset_btn.clicked.connect(self.reset_tweaks)
         layout.addWidget(reset_btn)
 
@@ -271,6 +322,7 @@ class IOSHomePage(QWidget):
 
     def set_statusbar_visible(self, visible: bool):
         self.statusbar_card.setVisible(visible)
+        self.cards_grid.reflow()
 
     def _make_card(self, title: str, subtitle: str, page_index: int) -> IOSCard:
         c = self._c

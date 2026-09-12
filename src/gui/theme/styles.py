@@ -114,16 +114,61 @@ STYLES = {
 
     "primary_button": """
         QPushButton {{
-            background-color: {accent};
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                        stop:0 {accent}, stop:1 {accent_pressed});
             border-radius: 12px;
             color: {text_inverse};
             font-size: 17px;
             font-weight: 600;
             border: none;
         }}
-        QPushButton:hover {{ background-color: {accent_hover}; }}
+        QPushButton:hover {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                        stop:0 {accent_hover}, stop:1 {accent}); }}
         QPushButton:pressed {{ background-color: {accent_pressed}; }}
         QPushButton:disabled {{ background-color: {border}; color: {text_disabled}; }}
+    """,
+
+    "danger_button": """
+        QPushButton {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                        stop:0 {error}, stop:1 {error_pressed});
+            border-radius: 12px;
+            color: {text_inverse};
+            font-size: 17px;
+            font-weight: 600;
+            border: none;
+        }}
+        QPushButton:hover {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                        stop:0 {error_hover}, stop:1 {error}); }}
+        QPushButton:pressed {{ background-color: {error_pressed}; }}
+        QPushButton:disabled {{ background-color: {border}; color: {text_disabled}; }}
+    """,
+
+    "confirm_dialog": """
+        QDialog {{ background-color: {bg_elevated}; }}
+        QLabel {{ color: {text_primary}; font-size: 15px; }}
+        QLabel#confirmTitle {{ font-size: 17px; font-weight: 700; color: {text_primary}; }}
+        QLabel#confirmMuted {{ color: {text_secondary}; font-size: 13px; }}
+        QLabel#confirmRow {{ font-size: 14px; color: {text_primary}; }}
+        QPushButton {{
+            background-color: {accent};
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                        stop:0 {accent}, stop:1 {accent_pressed});
+            border-radius: 10px;
+            color: {text_inverse};
+            font-size: 15px;
+            font-weight: 600;
+            padding: 12px 24px;
+            border: none;
+            min-width: 110px;
+        }}
+        QPushButton:hover {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                        stop:0 {accent_hover}, stop:1 {accent}); }}
+        QPushButton#cancelBtn {{
+            background-color: {bg_tertiary};
+            color: {text_primary};
+        }}
+        QPushButton#cancelBtn:hover {{ background-color: {surface_hover}; }}
     """,
 
     "switch_track_on": "background-color: {success}; border-radius: 15px; border: none;",

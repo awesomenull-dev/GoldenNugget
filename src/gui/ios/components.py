@@ -131,6 +131,66 @@ class NumberInputDialog(QDialog):
         return int(value) if self._integral else round(float(value), self._decimals)
 
 
+class IOSSummaryDialog(QDialog):
+    """iOS-style confirm dialog listing what an action will do.
+
+    Built for the pre-apply summary: takes a title, a list of ``lines`` and an
+    optional muted footer note, then offers Cancel / a themed confirm button.
+    ``exec()`` returns ``QDialog.Accepted`` when the user confirms.
+    """
+    def __init__(self, title: str, lines: list[str], muted: str = "",
+                 confirm_text: str = "", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setModal(True)
+        self.setMinimumWidth(380)
+        self.setMinimumHeight(140)
+        self._retheme()
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(24, 20, 24, 20)
+
+        title_lbl = QLabel(title, self)
+        title_lbl.setObjectName("confirmTitle")
+        title_lbl.setWordWrap(True)
+        layout.addWidget(title_lbl)
+
+        for line in lines:
+            row_lbl = QLabel(line, self)
+            row_lbl.setObjectName("confirmRow")
+            row_lbl.setWordWrap(True)
+            layout.addWidget(row_lbl)
+
+        if muted:
+            muted_lbl = QLabel(muted, self)
+            muted_lbl.setObjectName("confirmMuted")
+            muted_lbl.setWordWrap(True)
+            layout.addWidget(muted_lbl)
+
+        layout.addStretch()
+
+        buttons = QHBoxLayout()
+        buttons.setSpacing(12)
+        buttons.addStretch()
+        cancel_btn = QPushButton(QCoreApplication.translate("IOSSummaryDialog", "Cancel"), self)
+        cancel_btn.setObjectName("cancelBtn")
+        cancel_btn.setCursor(Qt.PointingHandCursor)
+        cancel_btn.clicked.connect(self.reject)
+        buttons.addWidget(cancel_btn)
+        self.confirm_btn = QPushButton(
+            confirm_text or QCoreApplication.translate("IOSSummaryDialog", "Confirm"), self)
+        self.confirm_btn.setObjectName("confirmBtn")
+        self.confirm_btn.setCursor(Qt.PointingHandCursor)
+        self.confirm_btn.clicked.connect(self.accept)
+        self.confirm_btn.setDefault(True)
+        buttons.addWidget(self.confirm_btn)
+        layout.addLayout(buttons)
+
+    def _retheme(self):
+        self.setStyleSheet(t("confirm_dialog"))
+
+
 class IOSSectionHeader(QLabel):
     def __init__(self, text: str, parent=None):
         super().__init__(text, parent)
@@ -261,6 +321,20 @@ class IOSPrimaryButton(QPushButton):
 
     def _retheme(self):
         self.setStyleSheet(t("primary_button"))
+
+
+class IOSDangerButton(QPushButton):
+    """Red destructive CTA (Reset Tweaks / Remove Tweaks)."""
+    def __init__(self, text: str, parent=None):
+        super().__init__(text, parent)
+        self.setObjectName("iosDangerButton")
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedHeight(50)
+        self._retheme()
+        _auto_retheme(self)
+
+    def _retheme(self):
+        self.setStyleSheet(t("danger_button"))
 
 
 class IOSSwitch(QPushButton):

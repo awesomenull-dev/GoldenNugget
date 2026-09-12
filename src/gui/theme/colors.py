@@ -26,6 +26,8 @@ class ThemeColors:
     # Semantic
     success: str
     error: str
+    error_hover: str
+    error_pressed: str
     warning: str
 
     # Borders / dividers
@@ -67,6 +69,8 @@ DARK = ThemeColors(
 
     success="#30D158",
     error="#FF453A",
+    error_hover="#FF5A50",
+    error_pressed="#C2322A",
     warning="#FFD60A",
 
     border="#3A3A3C",

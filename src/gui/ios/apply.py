@@ -1,10 +1,12 @@
 from PySide6.QtCore import Qt, QCoreApplication
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QProgressBar
 )
+import re
 
-from src.gui.ios.components import IOSSectionHeader, IOSCard, IOSPrimaryButton
-from src.gui.theme import ColorThemeManager
+from src.gui.ios.components import (
+    IOSSectionHeader, IOSCard, IOSPrimaryButton, IOSDangerButton)
+from src.gui.theme import ColorThemeManager, t
 
 
 class IOSApplyPage(QWidget):
@@ -73,7 +75,7 @@ class IOSApplyPage(QWidget):
         self.remove_desc = remove_desc
         remove_layout.addWidget(remove_desc)
 
-        self.remove_btn = IOSPrimaryButton(QCoreApplication.translate(
+        self.remove_btn = IOSDangerButton(QCoreApplication.translate(
             "Nugget", "Remove Tweaks"))
         self.remove_btn.clicked.connect(self.window.remove_tweaks_clicked)
         remove_layout.addWidget(self.remove_btn)
@@ -93,12 +95,28 @@ class IOSApplyPage(QWidget):
         self.status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_lbl.setStyleSheet(f"color: {c.text_primary}; font-size: 14px;")
         status_layout.addWidget(self.status_lbl)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMaximum(100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setFixedHeight(8)
+        self.progress_bar.setStyleSheet(t("dialog_progress_bar"))
+        self.progress_bar.hide()
+        status_layout.addWidget(self.progress_bar)
         content_layout.addWidget(status_card)
 
         content_layout.addStretch()
 
     def set_status(self, text: str):
         self.status_lbl.setText(text or "")
+        match = re.search(r"(\d+(?:\.\d+)?)\s*%", text or "")
+        if match:
+            self.progress_bar.setValue(
+                max(0, min(100, int(round(float(match.group(1)))))))
+            self.progress_bar.show()
+        else:
+            self.progress_bar.hide()
 
     def set_busy(self, busy: bool):
         self.apply_btn.setEnabled(not busy)
@@ -110,3 +128,4 @@ class IOSApplyPage(QWidget):
         self.apply_desc.setStyleSheet(f"color: {c.text_secondary}; font-size: 13px;")
         self.remove_desc.setStyleSheet(f"color: {c.text_secondary}; font-size: 13px;")
         self.status_lbl.setStyleSheet(f"color: {c.text_primary}; font-size: 14px;")
+        self.progress_bar.setStyleSheet(t("dialog_progress_bar"))

@@ -207,10 +207,8 @@ See [CONTRIBUTING.md](https://github.com/awesomenull-dev/GoldenNugget/blob/main/
 - [LeminLimez] for creating Nugget.
 - [Wind0ws11Aero] for helping with development a lot.
 - [PosterRestore][PosterRestoreDiscord] for their help with PosterBoard
-  - Special thanks to [dootskyre][dootskyreX], [Middo][MiddoX], [dulark][dularkGitHub], forcequitOS, and pingubow for their work on this. It would not have been possible without them!
+  - Special thanks to [dootskyre][dootskyreX], [Middo][MiddoX], [dulark][dularkGitHub], forcequitOS, and pingubow for their work on nugget. It would not have been possible without them!
   - Thanks to [Snoolie for aar handling][python-aar-stuffGitHub]!
-  - Thanks to [SerStars][SerStarsX] for creating [the website][WallpapersWebsite]!
-- [disfordottie][disfordottieX] for some global flag features
 - [iTechExpert][iTechExpertTwitter] for various Springboard/Internal Options
 - [Mikasa-san][Mikasa-sanGitHub] for [Quiet Daemon][QuietDaemonGitHub]
 - [pymobiledevice3][pymobiledevice3GitHub] for restoring and device algorithms.

@@ -42,6 +42,13 @@
       "min_version": "27.0",
       "max_version": "27.9",
       "disabled": false
+    },
+    {
+      "action": "hide_feature",
+      "feature": "Daemons",
+      "reason": "9.3 / 9.3.1 bundled builds ship daemon tweaks (including ones with no UI switch) that an imported/shared preset can re-activate with no per-key whitelist — the INTERFACE_KEYS scrub landed only in 9.3.2. Hiding the whole Daemons feature on 9.3/9.3.1 keeps every daemon out of the UI, out of apply, and out of preset loads. 9.3.2+ is already safe in code.",
+      "app_versions": ["9.3", "9.3.1"],
+      "disabled": false
     }
   ]
 }

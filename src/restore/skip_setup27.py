@@ -86,23 +86,15 @@ SKIP_ALL_PANES = [
     'Tips',
 ]
 
-def skip_setup_panes(skip_apple_id_setup: bool = False) -> list:
-    """Resolve the exact ``SkipSetup`` pane list.
-
-    ``skip_apple_id_setup=True`` preserves the all-panes skip (Apple ID pane
-    included). ``False`` (default) drops only ``AppleID`` so the setup
-    assistant still asks the user to sign in — which is what pulls their
-    iCloud data (photos from iCloud Photo Library, etc.) back after an iOS 27
-    security-recovery wipe. Keeps ``SKIP_ALL_PANES`` as the canonical list.
+def skip_setup_panes() -> list:
+    """Resolve the exact ``SkipSetup`` pane list: every pane is skipped,
+    Apple ID sign-in included. Keeps ``SKIP_ALL_PANES`` as the canonical list.
     """
-    if skip_apple_id_setup:
-        return list(SKIP_ALL_PANES)
-    return [p for p in SKIP_ALL_PANES if p != "AppleID"]
+    return list(SKIP_ALL_PANES)
 
 
-async def skip_all_setup27(ld: LockdownClient, udid: str | None = None,
-                           skip_apple_id_setup: bool = False):
+async def skip_all_setup27(ld: LockdownClient, udid: str | None = None):
     async with MobileConfigService(lockdown=ld) as mcs:
         cloud_config = await mcs.get_cloud_configuration() or {}
-        cloud_config['SkipSetup'] = skip_setup_panes(skip_apple_id_setup)
+        cloud_config['SkipSetup'] = skip_setup_panes()
         await mcs.set_cloud_configuration(cloud_config)

@@ -318,10 +318,13 @@ the `ProtectiveBackupCache` to `protective_cache.py` (both re-exported from
   `GOLDENNUGGET_CACHE_REFRESH_SECS` tunes the cache refresh interval.
 
 ### `original_plist.py`
-`psysbackup()` — full capture of the plists listed by `FileLocation` so
+`psysbackup()` — **selective** capture of the plists listed by `FileLocation`
+(ProtectiveBackupService + mid-stream keep-filter, no full-device copy) so
 Reset can restore originals instead of empty files. When backup encryption is
 enabled it returns `{}` (skips) **only if no `backup_password` is provided**;
-with a password it decrypts the manifest and proceeds.
+with a password it decrypts the manifest and proceeds. The capture is
+best-effort: a failure falls back to stock `{}` defaults rather than aborting
+the reset.
 
 ---
 

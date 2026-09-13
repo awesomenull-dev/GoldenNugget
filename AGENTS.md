@@ -80,8 +80,11 @@ hide whole broken features. Behaviours per rule `action`:
   keys are always injected into the disabled-daemons plist at apply time no
   matter the UI toggles or a loaded preset
   (`_apply_hotload_daemon_forcing` in `device_manager.py`, called from
-  `_apply_changes`), and the daemons page locks those switches ON with a
-  "Daemon Locked by Safety Rules" warning (`src/gui/ios/daemons.py`).
+  `_apply_changes`; the forced keys are added to the daemons tweak's
+  `allowed_keys` so they bypass the `INTERFACE_KEYS` whitelist, since a rule
+  may name a daemon with no UI switch), and the daemons page locks those
+  switches ON with a "Daemon Locked by Safety Rules" warning
+  (`src/gui/ios/daemons.py`).
 
 Feature → tweak membership lives in `FEATURE_TWEAKS` (Liquid Glass, Springboard,
 Internal, PosterBoard, Daemons, Status Bar, Templates). `hidden_features()` /
@@ -289,13 +292,20 @@ backup in the persistent app-data store
 ## Original Plist Capture (src/restore/original_plist.py)
 
 ### `psysbackup()`
-- Full device backup to capture original plists before a reset
+- **Selective** backup of the plists listed by `FileLocation`: uses the same
+  `ProtectiveBackupService` (app containers skipped via empty `Applications`)
+  plus a mid-stream `filter_callback` keep-set, so no full-device copy is ever
+  pulled. The keep-set covers iOS 26 domain-qualified names
+  (`ManagedPreferencesDomain/...`) and iOS 27 raw-tree names (`/.b/<n>/...`).
 - Templates device-specific values (SerialNumber, DeviceName, etc.)
 - Skipped (returns `{}`) if backup encryption is enabled **and no
   `backup_password` is provided**; with a password it decrypts the manifest
   and proceeds
 - Retry logic: 3 attempts, backoff `min(2**attempt, 15)`s (2s, 4s) for connection errors
 - Validates Manifest.db is valid SQLite before reading
+- `_reset_tweaks` treats the whole capture as **best-effort**: on a capture
+  failure (e.g. PlistParseError on an already half-broken device) it falls
+  back to stock `{}` defaults instead of aborting the reset
 
 ## PosterBoard Backup (src/gui/dialogs/pb_dialog.py)
 

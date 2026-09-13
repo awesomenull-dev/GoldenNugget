@@ -249,14 +249,15 @@ class HotLoad:
         names = self.disabled_daemons(device_version, device_model, app_version)
         if not names:
             return set()
-        from src.tweaks.daemons_tweak import Daemon, INTERFACE_KEYS
+        from src.tweaks.daemons_tweak import Daemon
         members = {d.name: d for d in Daemon}
+        all_keys = {k for d in Daemon for k in d.value}
         keys = set()
         for name in names:
             member = members.get(name)
             if member is not None:
                 keys.update(member.value)
-            elif name in INTERFACE_KEYS:
+            elif name in all_keys:
                 keys.add(name)
         return keys
 

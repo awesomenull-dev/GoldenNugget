@@ -249,7 +249,6 @@ class SettingsMixin:
             use_backup_cache = self.settings.value("use_backup_cache", False, type=bool)
 
             skip_setup = self.settings.value("skip_setup", True, type=bool)
-            skip_apple_id_setup = self.settings.value("skip_apple_id_setup", True, type=bool)
             supervised = self.settings.value("supervised", False, type=bool)
             organization_name = self.settings.value("organization_name", "", type=str)
             use_encrypted_backup = self.settings.value("use_encrypted_backup", False, type=bool)
@@ -261,7 +260,6 @@ class SettingsMixin:
             self.device_manager.pref_manager.use_backup_cache = use_backup_cache
             self.device_manager.pref_manager.use_encrypted_backup = use_encrypted_backup
             self.device_manager.pref_manager.skip_setup = skip_setup
-            self.device_manager.pref_manager.skip_apple_id_setup = skip_apple_id_setup
             self.device_manager.pref_manager.supervised = supervised
             self.device_manager.pref_manager.organization_name = organization_name
         except Exception as e:

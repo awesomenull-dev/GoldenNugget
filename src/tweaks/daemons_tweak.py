@@ -170,10 +170,6 @@ class Daemon(Enum):
 DANGEROUS_DAEMONS: set["Daemon"] = set()
 DANGEROUS_KEYS = frozenset(k for d in DANGEROUS_DAEMONS for k in d.value)
 
-# Interface-visible daemon keys: everything a user can toggle in the UI.
-# Any key outside this set is stripped from presets / the apply pass.
-INTERFACE_KEYS = frozenset(k for d in Daemon for k in d.value)
-
 # Safe one-tap analytics/telemetry disable set — the "Recommended" switch in
 # the daemons UI. Analytics/tracking/logging only; verified safe to disable.
 RECOMMENDED_ANALYTICS = [
@@ -185,3 +181,28 @@ RECOMMENDED_ANALYTICS = [
     Daemon.WirelessDiagnostics, Daemon.DuetHeuristic, Daemon.DuetExpert,
     Daemon.Decisiond, Daemon.Triald, Daemon.Sociald,
 ]
+
+# Interface-visible daemons: the switches on the Daemons page plus the
+# one-tap Recommended set. Every OTHER enum member (e.g. AskPermissions,
+# Commerce, News, StatusKit, ...) has no UI switch — disabling it broke
+# whole apps on iOS 26.5 — so its keys must never reach the tweak value,
+# a stored preset, or the apply pass.
+INTERFACE_DAEMONS: frozenset["Daemon"] = frozenset({
+    # main "Disable" section (src/gui/ios/daemons.py)
+    Daemon.thermalmonitord, Daemon.OTA, Daemon.UsageTrackingAgent,
+    Daemon.GameCenter, Daemon.ATWAKEUP, Daemon.Tips, Daemon.VPN,
+    Daemon.ChineseLAN, Daemon.HealthKit, Daemon.AirPrint,
+    Daemon.AssistiveTouch, Daemon.iCloud, Daemon.InternetTethering,
+    Daemon.PassBook, Daemon.Spotlight, Daemon.NanoTimeKit,
+    Daemon.VoiceControl, Daemon.FollowUp, Daemon.Location,
+    # analytics / telemetry section
+    Daemon.WifiAnalytics, Daemon.AnalyticsHelper, Daemon.CallAnalytics,
+    Daemon.CoreDuet, Daemon.Insight, Daemon.Metrics, Daemon.MediaExperience,
+    Daemon.Symptomsd, Daemon.StatisticalDiagnostic, Daemon.WirelessDiagnostics,
+    Daemon.DuetHeuristic, Daemon.DuetExpert, Daemon.Decisiond, Daemon.Triald,
+    Daemon.Sociald,
+} | set(RECOMMENDED_ANALYTICS))
+
+# Interface-visible daemon keys: everything a user can toggle in the UI.
+# Any key outside this set is stripped from presets / the apply pass.
+INTERFACE_KEYS = frozenset(k for d in INTERFACE_DAEMONS for k in d.value)

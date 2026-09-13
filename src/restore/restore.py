@@ -402,9 +402,8 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
                           backup_password: str = "",
                           prepared_backup_root: PreparedBackup = None,
                           pb_inject_files: list = None,
-                          skip_setup: bool = True,
-                          skip_apple_id_setup: bool = False,
-                          skip_protective_backup: bool = False,
+skip_setup: bool = True,
+                           skip_protective_backup: bool = False,
                           include_keychain: bool = False,
                           prompt_choice=None):
     """iOS 27+ restore: backup → tweak → wipe → restore → skip setup → reboot.
@@ -662,8 +661,7 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
             if skip_setup:
                 progress_callback("Skipping setup panes...")
                 log_info("Phase 4: Skipping setup panes via MobileConfigService")
-                await skip_all_setup27(lc, udid,
-                                       skip_apple_id_setup=skip_apple_id_setup)
+                await skip_all_setup27(lc, udid)
                 log_info("Phase 4: Setup panes skipped successfully")
                 progress_callback(95)
 
@@ -708,7 +706,7 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
 
 
 # files is a list of FileToRestore objects
-async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdown_client: LockdownClient = None, progress_callback = lambda x: None, backup_password: str = "", prepared_backup_root: PreparedBackup = None, skip_setup: bool = True, skip_apple_id_setup: bool = False, skip_protective_backup: bool = False, include_keychain: bool = False, prompt_choice=None):
+async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdown_client: LockdownClient = None, progress_callback = lambda x: None, backup_password: str = "", prepared_backup_root: PreparedBackup = None, skip_setup: bool = True, skip_protective_backup: bool = False, include_keychain: bool = False, prompt_choice=None):
     # create the files to be backed up
     files_list = [
     ]
@@ -829,8 +827,7 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
                                             progress_callback,
                                             prompt_choice=prompt_choice)
                 log_info("Raw sparse: skipping setup panes via MobileConfigService")
-                await skip_all_setup27(lc, lockdown_client.udid,
-                                       skip_apple_id_setup=skip_apple_id_setup)
+                await skip_all_setup27(lc, lockdown_client.udid)
                 progress_callback(95)
         else:
             # iOS 27 era: three-phase protective backup + restore
@@ -839,7 +836,6 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
                                  prepared_backup_root=prepared_backup_root,
                                  pb_inject_files=pb_inject_files,
                                  skip_setup=skip_setup,
-                                 skip_apple_id_setup=skip_apple_id_setup,
                                  skip_protective_backup=skip_protective_backup,
                                  include_keychain=include_keychain,
                                  prompt_choice=prompt_choice)

@@ -154,16 +154,6 @@ class IOSSettingsPage(QWidget):
         )
 
         self._make_switch(
-            QCoreApplication.translate("Nugget", "Skip Apple ID Setup *"),
-            pref.skip_apple_id_setup,
-            self._make_setting_handler("skip_apple_id_setup"),
-        ).setToolTip(QCoreApplication.translate(
-            "Nugget",
-            "When enabled (default), the setup assistant skips the Apple ID "
-            "sign-in pane like every other pane. Disable to keep it so your "
-            "iCloud data can be pulled back after an iOS 27 restore."))
-
-        self._make_switch(
             QCoreApplication.translate("Nugget", "Enable Supervision * (requires Skip Setup)"),
             pref.supervised,
             self._make_setting_handler("supervised"),

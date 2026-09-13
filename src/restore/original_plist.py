@@ -25,10 +25,13 @@ from pymobiledevice3.exceptions import NotEnoughDiskSpaceError
 from typing import Optional
 
 from src.devicemanagement.session import lockdown_session
-from pymobiledevice3.services.mobilebackup2 import Mobilebackup2Service
 
 from src.exceptions.nugget_exception import NuggetException
-from src.restore.protective import _validate_sqlite_db, check_disk_space_for_backup
+from src.restore.protective import (
+    ProtectiveBackupService,
+    _validate_sqlite_db,
+    _device_tree_name,
+)
 
 # Keys from lockdown ``all_values`` whose string values are device-specific
 # and should be replaced with placeholders when templating.
@@ -127,10 +130,12 @@ async def psysbackup(
     Returns a dict of ``absolute_path -> templated bytes`` for the files that
     exist on the device and parse as plists.
 
-    The capture runs a full mobilebackup2 backup (a filtered backup makes the
-    device abort with ``Manifest references files not in backup``), then reads
-    the wanted payloads straight from the on-device Manifest.db. The backup is
-    kept in a temporary directory that is removed when done.
+    The capture runs a selective mobilebackup2 backup: the device uploads only
+    the fields/filters that survive the mid-stream ``filter_callback``, so no
+    full-device copy is ever pulled (this mirrors the protective backup
+    mechanism). App containers are skipped entirely via ``ProtectiveBackupService``.
+    The wanted payloads are then read straight from the on-device Manifest.db.
+    The backup is kept in a temporary directory that is removed when done.
 
     If backup_password is provided and the device has encryption enabled,
     it will be used to decrypt the backup manifest.
@@ -138,17 +143,43 @@ async def psysbackup(
     from src.exceptions.device_errors import is_device_locked_error as _is_device_locked_error
     from src.exceptions.device_errors import is_connection_error as _is_connection_error
     from src.utils.async_retry import async_retry
+    from src.restore.path_mapping import split_path_into_domain
+
+    # Precompute the keep-set once: absolute physical paths (iOS 27 raw tree
+    # names) plus the domain-qualified / bare relative forms (iOS 26).
+    keep_candidates = set()
+    for path in paths:
+        keep_candidates.add(path.lstrip("/"))
+        domain, rel = split_path_into_domain(path)
+        if domain is None or rel is None:
+            continue
+        keep_candidates.add(f"{domain}/{rel}")
+        keep_candidates.add(f"{domain}-{rel}")
+        keep_candidates.add(rel)
+
+    def _selective_filter(backup_file) -> bool:
+        """Mid-stream keep-filter matching ONLY the wanted plist files.
+
+        Handles the two upload-name layouts:
+        - iOS 26: domain-qualified names (``ManagedPreferencesDomain/...``,
+          ``HomeDomain/Library/Preferences/...``).
+        - iOS 27: raw physical tree names (``/.b/<n>/...``) with no domain.
+        """
+        name = _device_tree_name(backup_file.device_name or "")
+        for candidate in keep_candidates:
+            if name == candidate or name.startswith(candidate + "/"):
+                return True
+        return False
 
     update_label("Backing up device to capture original plists...")
     max_retries = 3
 
     async def _attempt() -> dict[str, bytes]:
-        # The disk-space pre-check runs once before the retry loop below.
         async with lockdown_session(udid) as ld:
             # Check if backup encryption is enabled on device
             is_encrypted = False
             try:
-                async with Mobilebackup2Service(ld) as backup_client:
+                async with ProtectiveBackupService(ld) as backup_client:
                     is_encrypted = await backup_client.get_will_encrypt()
             except Exception:
                 pass
@@ -164,12 +195,13 @@ async def psysbackup(
                     return {}
 
             with TemporaryDirectory() as tmp_dir:
-                async with Mobilebackup2Service(ld) as backup_client:
+                async with ProtectiveBackupService(ld) as backup_client:
                     try:
                         await backup_client.backup(
                             full=True,
                             backup_directory=tmp_dir,
                             progress_callback=update_progress,
+                            filter_callback=_selective_filter,
                             password=backup_password,
                         )
                     except NotEnoughDiskSpaceError:
@@ -184,9 +216,6 @@ async def psysbackup(
                             raise NuggetException("Device locked during backup. Please unlock your device, keep it awake, and try again.")
                         raise
                 return _read_originals(Path(tmp_dir) / udid, paths)
-
-    async with lockdown_session(udid) as ld:
-        await check_disk_space_for_backup(ld)
 
     def _on_retry(attempt: int, total: int, e: Exception, delay: float) -> None:
         if attempt < total:

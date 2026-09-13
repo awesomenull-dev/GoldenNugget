@@ -332,8 +332,7 @@ class DeviceManager:
                 async with MobileConfigService(lockdown=ld) as mcs:
                     cloud_config_plist = await mcs.get_cloud_configuration()
             # add the 2 skip setup files
-            cloud_config_plist["SkipSetup"] = skip_setup_panes(
-                self.pref_manager.skip_apple_id_setup)
+            cloud_config_plist["SkipSetup"] = skip_setup_panes()
             cloud_config_plist["AllowPairing"] = True
             cloud_config_plist["ConfigurationWasApplied"] = True
             cloud_config_plist["CloudConfigurationUIComplete"] = True
@@ -421,7 +420,6 @@ class DeviceManager:
                 progress_callback=self.progress_callback,
                 backup_password=backup_password,
                 prepared_backup_root=prepared_backup_root,
-                skip_apple_id_setup=self.pref_manager.skip_apple_id_setup,
                 skip_protective_backup=skip_protective_backup,
                 include_keychain=include_keychain,
                 prompt_choice=prompt_choice,
@@ -586,6 +584,12 @@ class DeviceManager:
             daemons_tweak = tweaks.get(TweakID.Daemons)
             if daemons_tweak is None:
                 return
+            # Safety rules are authoritative: the forced keys must reach the
+            # plist regardless of the interface whitelist (a rule may name a
+            # daemon with no UI switch, e.g. ScreenTime). Extend allowed_keys
+            # so set_multiple_values and the apply-pass filter both let them
+            # through, then toggle them on.
+            daemons_tweak.allowed_keys.update(forced)
             daemons_tweak.set_multiple_values(sorted(forced), value=True)
             log_info(f"[HotLoad] daemons force-disabled by safety rules: "
                      f"{', '.join(sorted(forced))}")
@@ -1028,7 +1032,16 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
                 raise NuggetException(QCoreApplication.tr("No device connected."))
             all_values = await self._get_lockdown_values()
             update_label(QCoreApplication.tr("Capturing original plists..."))
-            captured = await self._capture_original_plists(udid, update_label)
+            # The capture is best-effort: on a device that is already half-broken
+            # the mobilebackup2 protocol chatter can fail (e.g. PlistParseError
+            # mid-stream). Falling back to stock defaults restores the device
+            # instead of aborting the whole reset on a metadata capture.
+            try:
+                captured = await self._capture_original_plists(udid, update_label)
+            except Exception as e:
+                print(f"[reset_tweaks] Original-plist capture failed: {e}")
+                update_label(QCoreApplication.tr("Original plists unavailable — restoring default values..."))
+                captured = {}
             original_plists = {}
             for path, data in captured.items():
                 try:

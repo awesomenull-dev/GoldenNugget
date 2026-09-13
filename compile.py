@@ -1,11 +1,44 @@
 from sys import platform, argv
 import os
+import re
 import shutil # Added for the macOS fix
+import subprocess
 import PyInstaller.__main__
 
 target_arch = next((arg for arg in argv if arg.startswith("--target-arch=")), None)
 if target_arch:
     print(f"[+] Target arch: {target_arch}")
+
+
+def _package_macos_app(dist_path):
+    """Zip the built .app bundle so the top-level archive entry is Nugget.app.
+
+    PyInstaller --onedir --windowed produces BOTH dist/Nugget.app and a loose
+    dist/Nugget/ folder. Zipping the wrong one makes users extract a bare
+    'Contents' folder that Finder does not treat as an app (issue #29).
+    ditto --keepParent pins Nugget.app as the archive root and preserves
+    symlinks/resource forks, so extraction yields a proper .app bundle.
+    """
+    arch = None
+    if target_arch:
+        m = re.search(r"=([^=]+)$", target_arch)
+        if m:
+            arch = m.group(1)
+    arch_label = arch or platform.machine()
+    arch_map = {"arm64": "Apple-Silicon", "x86_64": "Intel", "universal2": "Universal"}
+    arch_label = arch_map.get(arch_label, arch_label)
+
+    app_path = os.path.join(dist_path, "Nugget.app")
+    if not os.path.isdir(app_path):
+        print(f"[!] macOS packaging skipped: {app_path} not found")
+        return
+
+    zip_path = os.path.join(dist_path, f"Nugget-macOS-{arch_label}.zip")
+    subprocess.run(
+        ["ditto", "-c", "-k", "--keepParent", app_path, zip_path],
+        check=True,
+    )
+    print(f"[+] macOS app packaged: {zip_path} (extracts to Nugget.app)")
 
 # Base PyInstaller args
 args = [
@@ -91,3 +124,6 @@ elif os.name == 'nt':
         print("[!] libimobiledevice binaries not bundled: 'idevice' folder not found")
 
 PyInstaller.__main__.run(args)
+
+if platform == "darwin":
+    _package_macos_app("dist")

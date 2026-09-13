@@ -45,6 +45,17 @@ Dark/light mode + accent color customization for the whole GUI.
   `MainWindow._apply_global_stylesheet`; it sets `QLabel color` via the
   `QWidget { color: {text_primary} }` rule, so bare labels inside styled
   rows pick up the theme without their own `_retheme`.
+- **One font everywhere**: the bundled `Inter` variable font is
+  registered in `main_app.py` (`QFontDatabase.addApplicationFont` +
+  `app.setFont`) and its family is pinned by the `global` template via the
+  `{font_family}` placeholder (rendered from `FONT_FAMILY` —
+  `"Inter Variable"` — in `src/gui/theme/styles.py`). The
+  `QWidget { font-family: ... }` rule overrides any Designer-hardcoded
+  family (e.g. `.AppleSystemUIFont`) while per-widget `font-size`/
+  `font-weight` still win. Do not add new `font-family` declarations — a
+  single source of truth. The font files ONLY live at `src/qt/fonts/`
+  (`InterVariable.ttf` + `InterVariable-Italic.ttf`; they ship into the
+  frozen app via `--add-data=src/qt:src/qt`).
 - `src/qt/mainwindow_ui.py` is generated from Qt Designer — do not edit;
   theme the chrome via `_apply_global_stylesheet` instead.
 - Old `src/gui/ios/theme_manager.py` (`CLASSIC`/`IOS`) is layout-only

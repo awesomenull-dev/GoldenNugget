@@ -51,7 +51,7 @@ from src.controllers.web_request_handler import Nugget_Repo, get_latest_version
 
 # App version
 from src.gui.version import App_Version, App_Build
-from src.gui.theme import ColorThemeManager
+from src.gui.theme import ColorThemeManager, FONT_FAMILY
 
 
 class AboutProgramDialog(QDialog):
@@ -82,7 +82,7 @@ class AboutProgramDialog(QDialog):
         
         app_name = QLabel("GoldenNugget")
         app_name_font = QFont()
-        app_name_font.setFamily("Unbounded")
+        app_name_font.setFamily(FONT_FAMILY)
         app_name_font.setPointSize(28)
         app_name_font.setBold(True)
         app_name.setFont(app_name_font)

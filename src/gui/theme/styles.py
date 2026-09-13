@@ -7,6 +7,13 @@ Usage::
 """
 
 
+# Single UI font used on every platform. The bundled variable font
+# (src/qt/fonts/InterVariable.ttf + InterVariable-Italic.ttf) is registered at
+# startup in main_app.py; the global stylesheet pins it here so Designer
+# hardcoded families (e.g. .AppleSystemUIFont) can never leak in.
+FONT_FAMILY = "Inter Variable"
+
+
 STYLES = {
     # ---- Components ------------------------------------------------------
     "text_input_dialog": """
@@ -402,7 +409,7 @@ STYLES = {
 
     # ---- Global (main window stylesheet) ---------------------------------
     "global": """
-        QWidget {{ color: {text_primary}; background-color: transparent; spacing: 0px; }}
+        QWidget {{ color: {text_primary}; background-color: transparent; spacing: 0px; font-family: '{font_family}'; }}
         QWidget:focus {{ outline: none; }}
         QWidget[cls=central] {{ background-color: {bg_primary}; border-radius: 0px; border: 1px solid {divider}; }}
         QLabel {{ font-size: 14px; }}

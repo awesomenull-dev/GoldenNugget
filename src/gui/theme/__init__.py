@@ -2,22 +2,22 @@ from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
 
 from src.gui.theme.theme_manager import ColorThemeManager
 from src.gui.theme.colors import DARK, ACCENT_PRESETS
-from src.gui.theme.styles import STYLES
+from src.gui.theme.styles import STYLES, FONT_FAMILY
 from src.gui.theme.accent_picker import AccentPicker
 
 
 def t(style_key: str) -> str:
     """Render a named stylesheet template with the current theme colors."""
-    tm = ColorThemeManager.instance()
-    template = STYLES[style_key]
-    return template.format_map(tm.colors.__dict__)
+    payload = dict(ColorThemeManager.instance().colors.__dict__)
+    payload["font_family"] = FONT_FAMILY
+    return STYLES[style_key].format_map(payload)
 
 
 def themed_stylesheet(style_key: str, **extra) -> str:
     """Render a stylesheet template with the current colors plus runtime
     extras (e.g. a generated caret image path passed as ``caret=...``)."""
-    tm = ColorThemeManager.instance()
-    payload = dict(tm.colors.__dict__)
+    payload = dict(ColorThemeManager.instance().colors.__dict__)
+    payload["font_family"] = FONT_FAMILY
     payload.update(extra)
     return STYLES[style_key].format_map(payload)
 
@@ -35,6 +35,6 @@ def theme_icon(resource_path: str, color_hex: str) -> QIcon:
 
 
 __all__ = [
-    "ColorThemeManager", "DARK", "ACCENT_PRESETS", "STYLES",
+    "ColorThemeManager", "DARK", "ACCENT_PRESETS", "STYLES", "FONT_FAMILY",
     "AccentPicker", "t", "themed_stylesheet", "theme_icon",
 ]

@@ -158,9 +158,27 @@ def main() -> int:
     # managed by ColorThemeManager so it can switch between dark/light.
     app.setStyle("Fusion")
 
-    from src.gui.theme import ColorThemeManager
+    from src.gui.theme import ColorThemeManager, FONT_FAMILY
     _color_theme = ColorThemeManager.instance()
     app.setPalette(_color_theme.build_palette())
+
+    # Register the bundled Inter variable font and make it the single UI font
+    # on every platform. Both the dev tree and the PyInstaller bundle
+    # (_MEIPASS) ship it at src/qt/fonts/...; the platform default size is
+    # kept and weights/italics come from the variable font.
+    from PySide6.QtGui import QFontDatabase
+    _fonts_root = os.path.join(
+        getattr(sys, "_MEIPASS", os.path.dirname(__file__)),
+        "src", "qt", "fonts",
+    )
+    for _font_file in ("InterVariable.ttf", "InterVariable-Italic.ttf"):
+        _font_path = os.path.join(_fonts_root, _font_file)
+        if QFontDatabase.addApplicationFont(_font_path) == -1:
+            print(f"[init] WARNING: bundled font not registered: {_font_path}", flush=True)
+    _app_font = app.font()
+    _app_font.setFamily(FONT_FAMILY)
+    app.setFont(_app_font)
+    print(f"[init] Font: {FONT_FAMILY} on all platforms", flush=True)
 
     print(f"[init] Qt style: {app.style().objectName()}")
 

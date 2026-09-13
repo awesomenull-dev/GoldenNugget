@@ -65,7 +65,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: Nugget_macOS_intel
-          path: dist/Nugget.app
+          path: dist/Nugget-macOS-*.zip
           if-no-files-found: error
 
   build-macos-arm:
@@ -107,7 +107,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: Nugget_macOS_arm
-          path: dist/Nugget.app
+          path: dist/Nugget-macOS-*.zip
           if-no-files-found: error
 
   build-windows:

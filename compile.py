@@ -3,6 +3,7 @@ import os
 import re
 import shutil # Added for the macOS fix
 import subprocess
+import platform as _platform_mod
 import PyInstaller.__main__
 
 target_arch = next((arg for arg in argv if arg.startswith("--target-arch=")), None)
@@ -24,7 +25,7 @@ def _package_macos_app(dist_path):
         m = re.search(r"=([^=]+)$", target_arch)
         if m:
             arch = m.group(1)
-    arch_label = arch or platform.machine()
+    arch_label = arch or _platform_mod.machine()
     arch_map = {"arm64": "Apple-Silicon", "x86_64": "Intel", "universal2": "Universal"}
     arch_label = arch_map.get(arch_label, arch_label)
 

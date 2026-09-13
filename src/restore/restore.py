@@ -432,12 +432,15 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
     udid = lockdown_client.udid
     started = time.monotonic()
     using_cache = prepared_backup_root is not None
-    # With the cache the prune password was captured when the master was built.
-    # Without it, this run's freshly-created backup uses the device's current
-    # encryption, so the Phase 3 restore password doubles as the manifest
-    # password. Leaving it "" would skip pruning and make Phase 3 try to
-    # download the rows that were drained mid-stream → MBErrorDomain/205.
-    manifest_password = prepared_backup_root.manifest_password if using_cache else backup_password
+    # The prune password comes from whichever Phase-0 path built the backup:
+    #  - cache master: captured when the master was built (manifest_password);
+    #  - Phase-0 LIVE backup: none is stored (it never prompts), so fall back to
+    #    the Phase 3 restore password, which the user just typed for the
+    #    encrypted restore and IS the same manifest password.
+    # Leaving it "" skips pruning entirely and makes Phase 3 try to download the
+    # rows that were drained mid-stream → MBErrorDomain/205.
+    manifest_password = ((prepared_backup_root.manifest_password if using_cache else "")
+                         or backup_password)
     protective_dir = None
     if using_cache:
         backup_root = await asyncio.to_thread(

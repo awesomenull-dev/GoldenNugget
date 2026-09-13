@@ -1,6 +1,10 @@
 from PySide6.QtCore import Signal, QThread, QSettings
 from PySide6.QtWidgets import QMessageBox
 from typing import Optional
+# Module-level on purpose: the async workers below (``RestoreCacheThread.
+# _restore``, ``ResetPairingThread``) awaited/used ``asyncio`` while only
+# importing it inside another method's scope, which is a NameError.
+import asyncio
 import queue
 import traceback
 import threading

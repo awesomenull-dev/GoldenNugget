@@ -11,9 +11,11 @@ from typing import Optional
 from PySide6 import QtCore, QtWidgets
 from PySide6.QtCore import QCoreApplication
 
+from src.controllers.video_handler import set_ignore_frame_limit
 from src.devicemanagement.constants import Version
 from src.gui.dialogs import AboutProgramDialog
 from src.gui.dialogs.reset_dialog import ResetDialog
+from src.gui.logger import get_logger
 from src.gui.thread_workers.apply_worker import (
     ApplyAlertMessage,
     ApplyThread,
@@ -253,7 +255,7 @@ class SettingsMixin:
             use_encrypted_backup = self.settings.value("use_encrypted_backup", False, type=bool)
 
             self.device_manager.pref_manager.auto_reboot = auto_reboot
-            video_handler.set_ignore_frame_limit(ignore_frame_limit)
+            set_ignore_frame_limit(ignore_frame_limit)
             self.device_manager.pref_manager.disable_tendies_limit = disable_tendies_limit
             self.device_manager.pref_manager.auto_refresh_posterboard = auto_refresh_posterboard
             self.device_manager.pref_manager.use_backup_cache = use_backup_cache
@@ -262,8 +264,11 @@ class SettingsMixin:
             self.device_manager.pref_manager.skip_apple_id_setup = skip_apple_id_setup
             self.device_manager.pref_manager.supervised = supervised
             self.device_manager.pref_manager.organization_name = organization_name
-        except Exception:
-            pass
+        except Exception as e:
+            # Never silent: a NameError here used to abort every assignment
+            # below it, so the app quietly booted with default preferences
+            # (and the Settings switches read back OFF after a restart).
+            get_logger("gui").warning("loadSettings failed: %s", e, exc_info=True)
 
 
     def _load_last_preset(self):

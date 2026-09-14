@@ -67,6 +67,7 @@ jobs:
           name: Nugget_macOS_intel
           path: dist/Nugget-macOS-*.zip
           if-no-files-found: error
+          archive: false
 
   build-macos-arm:
     if: ${{ github.event_name == 'push' || github.event.inputs.build_for_macos_arm == 'true' }}
@@ -109,6 +110,7 @@ jobs:
           name: Nugget_macOS_arm
           path: dist/Nugget-macOS-*.zip
           if-no-files-found: error
+          archive: false
 
   build-windows:
     if: ${{ github.event_name == 'push' || github.event.inputs.build_for_windows == 'true' }}

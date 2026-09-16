@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 
 from src.gui.ios.components import IOSCard
 from src.gui.theme import ColorThemeManager, theme_icon
+from src.gui.dialogs.icon_pack_downloader import IconPackDownloaderDialog
 from src.tweaks.tweaks import tweaks, TweakID
 from src.tweaks.icon_themes.icon_theme import IconTheme
 
@@ -48,8 +49,16 @@ class IOSIconThemesPage(QWidget):
         self._hint = hint
         self.content_layout.addWidget(hint)
 
+        download_btn = QPushButton(QCoreApplication.translate(
+            "Nugget", "Download Icon Packs"))
+        download_btn.setObjectName("downloadIconPacks")
+        download_btn.setCursor(Qt.PointingHandCursor)
+        download_btn.clicked.connect(self.show_download_packs)
+        self._download_btn = download_btn
+        self.content_layout.addWidget(download_btn)
+
         self.themes_placeholder = QLabel(QCoreApplication.translate(
-            "Nugget", "No icon themes yet. Tap + Add Icon to create one."))
+            "Nugget", "No icon themes yet. Tap + Add Icon or download a pack."))
         self.themes_placeholder.setAlignment(Qt.AlignCenter)
         self.content_layout.addWidget(self.themes_placeholder)
 
@@ -68,6 +77,18 @@ class IOSIconThemesPage(QWidget):
         self._scroll.setStyleSheet(
             f"background-color: {c.bg_primary}; border: none;")
         self._hint.setStyleSheet(f"color: {c.text_secondary}; font-size: 13px;")
+        self._download_btn.setStyleSheet(f"""
+            QPushButton#downloadIconPacks {{
+                background-color: {c.bg_secondary};
+                border: 1px solid {c.border};
+                border-radius: 12px;
+                color: {c.accent};
+                font-size: 14px;
+                font-weight: 600;
+                padding: 12px;
+            }}
+            QPushButton#downloadIconPacks:hover {{ background-color: {c.surface_hover}; }}
+        """)
         self.themes_placeholder.setStyleSheet(
             f"color: {c.text_secondary}; font-size: 15px; padding: 24px 0;")
         # Rebuild the theme cards so their hardcoded label colors follow the
@@ -166,6 +187,11 @@ class IOSIconThemesPage(QWidget):
                         "folder. The theme may not apply reliably."))
             tweak.add_theme(theme)
             tweak.set_enabled(True)
+            self.refresh_themes()
+
+    def show_download_packs(self):
+        dialog = IconPackDownloaderDialog(self.window)
+        if dialog.exec() == QDialog.Accepted and dialog.added_bundle_ids:
             self.refresh_themes()
 
 

@@ -13,6 +13,9 @@ supported version.
 
 import os
 import plistlib
+import shutil
+import tempfile
+import zipfile
 from shutil import copyfile
 
 from PySide6.QtCore import QCoreApplication, QStandardPaths
@@ -77,6 +80,120 @@ class IconThemesTweak(Tweak):
 
     def remove_theme(self, bundle_id: str):
         self.themes = [t for t in self.themes if t.bundle_id != bundle_id]
+
+    @staticmethod
+    def strip_icon_suffix(filename: str) -> str:
+        """Strip Cowabunga's icon-name suffixes (``-large``, ``@2x``, ``@3x``)
+        so ``com.apple.AppStore@2x.png`` maps to the bundle id
+        ``com.apple.AppStore`` — same rules as ``appIDFromIcon``."""
+        base = os.path.splitext(filename)[0]
+        for suffix in ("-large", "@2x", "@3x"):
+            if base.endswith(suffix):
+                return base[: -len(suffix)]
+        return base
+
+    @staticmethod
+    def _dpi_rank(rel_path: str) -> int:
+        # Prefer the most detailed icon a pack ships: top-level flat files
+        # rank best, then "@3x", then "@2x" subfolders.
+        parts = rel_path.replace("\\", "/").split("/")
+        parent = parts[-2].lower() if len(parts) > 1 else ""
+        if len(parts) == 1:
+            return 0
+        if "3x" in parent or "@3x" in parent:
+            return 1
+        if "2x" in parent or "@2x" in parent:
+            return 2
+        return 3
+
+    @classmethod
+    def scan_icon_pack(cls, folder: str) -> list[tuple[str, str]]:
+        """Scan an icon-pack folder for ``<bundleID>.png`` files.
+
+        Mirrors Cowabunga's theme folder (flat files named by bundle id) but
+        also descends into ``2x``/``3x`` subfolders (choosing the highest-DPI
+        match) and ignores ``__MACOSX``/dotfile junk found in real .theme
+        archives. Returns ``[(bundle_id, abs_path)]`` sorted by bundle id.
+        """
+        IMAGE_EXTENSIONS = (".png", ".heic", ".jpg", ".jpeg", ".webp")
+        best: dict[str, tuple[int, int, str]] = {}  # bundle_id -> (rank, len, path)
+        for root, dirs, files in os.walk(folder):
+            dirs[:] = [d for d in dirs
+                       if not d.startswith((".", "_", "__MACOSX"))]
+            for name in sorted(files):
+                if name.startswith(".") or name.startswith("._"):
+                    continue
+                if not name.lower().endswith(IMAGE_EXTENSIONS):
+                    continue
+                path = os.path.join(root, name)
+                if not os.path.isfile(path):
+                    continue
+                bundle_id = cls.strip_icon_suffix(name)
+                if not bundle_id:
+                    continue
+                rel = os.path.relpath(path, folder)
+                rank = (cls._dpi_rank(rel), len(rel), path)
+                prev = best.get(bundle_id)
+                if prev is None or rank < prev:
+                    best[bundle_id] = rank
+        return sorted((bid, path) for bid, (_, _, path) in best.items())
+
+    def import_pack(self, folder: str) -> tuple[int, list[str]]:
+        """Add every icon in *folder* as a theme.
+
+        Pack icons default to ``display_name=""`` (label hidden) matching the
+        trend of these packs; per-app labels can be added individually on top.
+        Returns ``(added, skipped_bundle_ids)``.
+        """
+        added = 0
+        skipped = []
+        for bundle_id, path in self.scan_icon_pack(folder):
+            theme = IconTheme(bundle_id=bundle_id, icon_path=path)
+            if not self.store_icon(theme):
+                skipped.append(bundle_id)
+                continue
+            self.add_theme(theme)
+            added += 1
+        return added, skipped
+
+    def import_pack_zip(self, archive_path: str,
+                        theme_name: str = None) -> tuple[int, list[str]]:
+        """Extract an icon-pack archive and import the icons inside.
+
+        Follows Cowabunga: explore-repo zips store their icons in a
+        ``<ThemeName>/`` folder, standalone .theme archives expose an
+        ``IconBundles`` folder. Returns ``(added, skipped_bundle_ids)``.
+        """
+        tmp = tempfile.mkdtemp(prefix="icontheme_pack_")
+        try:
+            with zipfile.ZipFile(archive_path) as zf:
+                zf.extractall(tmp)
+            folder = self.resolve_icon_folder(tmp, theme_name)
+            return self.import_pack(folder)
+        except (zipfile.BadZipFile, OSError):
+            return 0, []
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    @staticmethod
+    def resolve_icon_folder(extract_root: str, theme_name: str = None) -> str:
+        """Locate the folder holding the icons inside an extracted archive."""
+        if theme_name:
+            named = os.path.join(extract_root, theme_name)
+            if os.path.isdir(named):
+                return named
+        best = extract_root
+        best_len = float("inf")
+        for root, dirs, files in os.walk(extract_root):
+            # prefer a directory literally named IconBundles
+            if os.path.basename(root) == "IconBundles":
+                return root
+            n = len(files)
+            if n and n < best_len:
+                best, best_len = root, n
+        if best != extract_root:
+            return best
+        return extract_root
 
     def store_icon(self, theme: IconTheme):
         """Copy a theme's icon into the persistent store and point it there.

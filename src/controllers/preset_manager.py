@@ -15,6 +15,8 @@ from src.tweaks.tweak_classes import (
 from src.tweaks.posterboard.template_options.templates_tweak import TemplatesTweak
 from src.tweaks.status_bar.status_bar_tweak import StatusBarTweak
 from src.tweaks.status_bar.status_bar_c.status_setter import ffi as status_ffi
+from src.tweaks.icon_themes.icon_themes_tweak import IconThemesTweak
+from src.tweaks.icon_themes.icon_theme import IconTheme
 from src.controllers.hotload import HotLoad
 
 PRESETS_DIR_NAME = "Presets"
@@ -337,6 +339,14 @@ class PresetManager:
             data["enabled"] = tweak.enabled
             data["silly_mode"] = tweak.setter.silly_mode
             data["override_data"] = base64.b64encode(status_ffi.buffer(tweak.setter.current_overrides)).decode("ascii")
+        elif isinstance(tweak, IconThemesTweak):
+            # Icons live in the persistent IconThemes store (see
+            # icon_themes_tweak.store_icon), so paths are stable across loads.
+            data["themes"] = [
+                {"bundle_id": t.bundle_id, "display_name": t.display_name,
+                 "icon_path": t.icon_path}
+                for t in tweak.themes
+            ]
         # NullifyFileTweak only needs "enabled"
         return data
 
@@ -398,6 +408,8 @@ class PresetManager:
             self._apply_templates(tweak, data)
         elif isinstance(tweak, StatusBarTweak):
             self._apply_status_bar(tweak, data)
+        elif isinstance(tweak, IconThemesTweak):
+            self._apply_icon_themes(tweak, data)
 
     def _apply_templates(self, tweak: TemplatesTweak, data: dict):
         if "templates" in data:
@@ -421,4 +433,19 @@ class PresetManager:
                 tweak.setter.apply_changes(new_overrides)
             except Exception as e:
                 print(f"Failed to restore status bar: {e}")
+
+    def _apply_icon_themes(self, tweak: IconThemesTweak, data: dict):
+        tweak.themes = []
+        for entry in data.get("themes", []):
+            if not isinstance(entry, dict) or not entry.get("bundle_id"):
+                continue
+            path = entry.get("icon_path", "")
+            if path and os.path.isfile(path):
+                # Stick to the persistent store copy so the restored theme
+                # stays loadable even if the original file disappeared.
+                theme = IconTheme(bundle_id=entry["bundle_id"],
+                                  display_name=entry.get("display_name", ""),
+                                  icon_path=path)
+                if tweak.store_icon(theme):
+                    tweak.add_theme(theme)
 

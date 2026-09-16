@@ -22,6 +22,7 @@ from src.gui.ios.daemons import IOSDaemonsPage
 from src.gui.ios.apply import IOSApplyPage
 from src.gui.ios.settings import IOSSettingsPage
 from src.gui.ios.statusbar import IOSStatusBarPage
+from src.gui.ios.icon_themes import IOSIconThemesPage
 from src.tweaks.registry import Section
 
 from src.gui.theme import ColorThemeManager, t, theme_icon, themed_stylesheet
@@ -117,7 +118,8 @@ class MainWindow(QtWidgets.QMainWindow, DeviceBarMixin, SettingsMixin,
 
         # build the iOS-style pages stack
         # 0 = home, 1 = tweaks, 2 = posterboard, 3 = daemons, 4 = settings,
-        # 5 = statusbar, 6 = apply, 7 = springboard, 8 = internal, 9 = liquidglass
+        # 5 = statusbar, 6 = apply, 7 = springboard, 8 = internal, 9 = liquidglass,
+        # 10 = icon themes
         self.ios_pages = QtWidgets.QStackedWidget(self)
         self.ios_pages.setStyleSheet(t("page_bg"))
         self.ios_home = IOSHomePage(self)
@@ -130,6 +132,7 @@ class MainWindow(QtWidgets.QMainWindow, DeviceBarMixin, SettingsMixin,
         self.ios_springboard = IOSSectionPage(self, Section.SPRINGBOARD)
         self.ios_internal = IOSSectionPage(self, Section.INTERNAL)
         self.ios_liquidglass = IOSSectionPage(self, Section.LIQUID_GLASS)
+        self.ios_iconthemes = IOSIconThemesPage(self)
         self.ios_pages.addWidget(self.ios_home)
         self.ios_pages.addWidget(self.ios_tweaks)
         self.ios_pages.addWidget(self.ios_posterboard)
@@ -140,6 +143,7 @@ class MainWindow(QtWidgets.QMainWindow, DeviceBarMixin, SettingsMixin,
         self.ios_pages.addWidget(self.ios_springboard)
         self.ios_pages.addWidget(self.ios_internal)
         self.ios_pages.addWidget(self.ios_liquidglass)
+        self.ios_pages.addWidget(self.ios_iconthemes)
 
         # Shared reusable header: one instance for every iOS subpage,
         # reconfigured on page change (title / back / right action).
@@ -156,9 +160,12 @@ class MainWindow(QtWidgets.QMainWindow, DeviceBarMixin, SettingsMixin,
             7: QtCore.QCoreApplication.translate("Nugget", "SpringBoard"),
             8: QtCore.QCoreApplication.translate("Nugget", "Internal"),
             9: QtCore.QCoreApplication.translate("Nugget", "Liquid Glass"),
+            10: QtCore.QCoreApplication.translate("Nugget", "Icon Themes"),
         }
         self._nav_right_actions = {
             2: ("+ Add Tendies", self.ios_posterboard.show_add_tendies_dialog),
+            10: (QtCore.QCoreApplication.translate("Nugget", "+ Add Icon"),
+                 self.ios_iconthemes.show_add_icon_dialog),
         }
         self.ios_pages.currentChanged.connect(self._update_shared_nav)
 

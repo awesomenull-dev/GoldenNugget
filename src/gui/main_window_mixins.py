@@ -626,6 +626,10 @@ class ApplyMixin:
             add(QCoreApplication.translate("Nugget", "Daemons"),
                 sum(1 for v in getattr(dm, "value", {}).values() if v))
 
+        it = tweaks.get(TweakID.IconThemes)
+        if it is not None:
+            add(QCoreApplication.translate("Nugget", "Icon Themes"), len(it.themes))
+
         return lines, total
 
 

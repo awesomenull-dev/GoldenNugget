@@ -51,6 +51,7 @@ from src.exceptions.nugget_exception import NuggetException
 from src.tweaks.tweaks import tweaks, TweakID, BasicPlistTweak, AdvancedPlistTweak, NullifyFileTweak, StatusBarTweak
 from src.tweaks.posterboard.posterboard_tweak import PosterboardTweak
 from src.tweaks.posterboard.template_options.templates_tweak import TemplatesTweak
+from src.tweaks.icon_themes.icon_themes_tweak import IconThemesTweak
 from src.tweaks.basic_plist_locations import FileLocation
 
 from src.restore.restore import restore_files, FileToRestore
@@ -890,6 +891,13 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
                         templates=templates,
                         version=self.get_current_device_version(),
                         force_pb_refresh=self.pref_manager.auto_refresh_posterboard,
+                        update_label=update_label
+                    )
+                    if tweak.uses_domains():
+                        uses_domains = True
+                elif isinstance(tweak, IconThemesTweak):
+                    tweak.apply_tweak(
+                        files_to_restore=files_to_restore,
                         update_label=update_label
                     )
                     if tweak.uses_domains():

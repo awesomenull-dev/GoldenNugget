@@ -425,6 +425,16 @@ class DeviceManager:
                 prompt_choice=prompt_choice,
             )
             tweaks[TweakID.PosterBoard].config_manager.save_staged_ids(self.get_current_device_udid())
+            if tweaks[TweakID.PosterBoard].full_reset:
+                # the on-device PosterBoard container was wiped — the stale
+                # locally-saved database and wallpaper IDs no longer match the
+                # empty DB, so drop them or the next apply rebuilds ghosts.
+                PreferenceManager.remove_pbconfig_data(self.get_current_device_udid())
+                tweaks[TweakID.PosterBoard].config_manager.saved_items = []
+                tweaks[TweakID.PosterBoard].config_manager.database = None
+                tweaks[TweakID.PosterBoard].config_manager.staged_database = None
+                tweaks[TweakID.PosterBoard].resetModes = []
+                tweaks[TweakID.PosterBoard].full_reset = False
             msg = QCoreApplication.tr("Your device will now restart.\n\nRemember to turn Find My back on!")
             if not self.pref_manager.auto_reboot:
                 msg = QCoreApplication.tr("Please restart your device to see changes.")
@@ -769,7 +779,8 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
         update_label(QCoreApplication.tr("Fetching PosterBoard database..."))
         from src.restore.posterboard_backup import targeted_posterboard_database_backup
         try:
-            db_file_path = await targeted_posterboard_database_backup(udid, update_label)
+            db_file_path = await targeted_posterboard_database_backup(
+                udid, update_label, self._backup_progress(update_label))
             if not db_file_path or not os.path.exists(db_file_path):
                 raise NuggetException("The PosterBoard database file doesn't exist!")
             update_label(QCoreApplication.tr("Saving PosterBoard database..."))

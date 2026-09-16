@@ -767,6 +767,11 @@ class IOSPosterboardPage(QWidget):
         desc.setStyleSheet(f"color: {c.text_secondary}; font-size: 13px;")
         layout.addWidget(desc)
 
+        reset_full = QCheckBox(QCoreApplication.translate(
+            "Nugget", "Full Reset (empty database, wipe everything)"))
+        reset_full.setChecked(False)
+        layout.addWidget(reset_full)
+
         reset_collections = QCheckBox(QCoreApplication.translate("Nugget", "Collections"))
         reset_collections.setChecked(True)
         layout.addWidget(reset_collections)
@@ -785,6 +790,19 @@ class IOSPosterboardPage(QWidget):
         layout.addWidget(btn_box)
 
         if dialog.exec() == QDialog.Accepted:
+            if reset_full.isChecked():
+                tweaks[TweakID.PosterBoard].full_reset = True
+                tweaks[TweakID.PosterBoard].resetModes = []
+                QMessageBox.information(
+                    self.window,
+                    QCoreApplication.translate("Nugget", "Reset Scheduled"),
+                    QCoreApplication.translate(
+                        "Nugget",
+                        "A full PosterBoard reset has been scheduled. The "
+                        "entire container will be wiped and an empty database "
+                        "restored on the next apply. Apply your tweaks to "
+                        "execute the reset."))
+                return
             selected = []
             if reset_collections.isChecked():
                 selected.append("Collections")

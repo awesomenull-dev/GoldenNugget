@@ -118,7 +118,7 @@ async def targeted_posterboard_database_backup(udid: str, update_label=lambda x:
     from src.exceptions.device_errors import is_connection_error as _is_connection_error
     from src.exceptions.device_errors import is_device_locked_error as _is_device_locked_error
     from src.restore.protective import (
-        POSTERBOARD_DB_DOMAIN, ProtectiveBackupService, _domain_match,
+        POSTERBOARD_DB_DOMAIN, _domain_match,
         _posterboard_db_match, extract_posterboard_db)
 
     app_data_path = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)
@@ -134,7 +134,6 @@ async def targeted_posterboard_database_backup(udid: str, update_label=lambda x:
             update_label(f"Connection lost, retrying in {delay}s... (attempt {attempt}/{max_retries})")
 
     async def _attempt():
-        # hard-block fetching the database from an unsupported (old) iOS version
         with tempfile.TemporaryDirectory(prefix="nugget_pb_only_") as backup_dir:
             async with lockdown_session(udid) as service_provider:
                 if not is_supported_by_fork(service_provider.all_values.get("ProductVersion", "0.0")):
@@ -142,10 +141,8 @@ async def targeted_posterboard_database_backup(udid: str, update_label=lambda x:
                         "This version of iOS is not supported by this fork.\n\n"
                         "GoldenNugget only supports iOS 26.2 and newer. "
                         "Please use the original Nugget for iOS 26.1 and earlier.")
-                async with ProtectiveBackupService(service_provider, include_posterboard=True) as backup_client:
+                async with Mobilebackup2Service(service_provider) as backup_client:
                     def _pb_only(backup_file):
-                        # iOS 26: domain-qualified names (AppDomain-com.apple.PosterBoard/...);
-                        # iOS 27: raw file-tree names (/.b/<n>/Containers/...). Match both.
                         device_name = backup_file.device_name or ""
                         return (_domain_match(device_name, POSTERBOARD_DB_DOMAIN)
                                 or _posterboard_db_match(device_name))

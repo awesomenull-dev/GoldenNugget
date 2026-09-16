@@ -10,7 +10,8 @@ from PySide6.QtCore import QCoreApplication
 from ..tweak_classes import Tweak
 from .tendie_file import TendieFile
 from .template_file import TemplateFile
-from .pb_config_manager import PBConfigManager
+from .pb_config_manager import (
+    DB_FILE_NAME, PBConfigManager, create_empty_posterboard_db)
 from src.utils.file_to_restore import FileToRestore
 from src.controllers.plist_handler import set_plist_value
 from src.controllers.files_handler import get_bundle_files
@@ -33,11 +34,13 @@ class PosterboardTweak(Tweak):
         self.calculationMode = 'linear'
         self.bundle_id = "com.apple.PosterBoard"
         self.resetModes = []
+        self.full_reset = False
         self.structure_version = 61
         self.config_manager = PBConfigManager()
 
     def uses_domains(self):
-        return (len(self.tendies) > 0 or self.videoFile != None or len(self.resetModes) > 0)
+        return (len(self.tendies) > 0 or self.videoFile != None
+                or len(self.resetModes) > 0 or self.full_reset)
     
     def is_empty(self) -> bool:
         return not self.uses_domains()
@@ -278,7 +281,66 @@ class PosterboardTweak(Tweak):
         # structure version 61 for all supported iOS versions (26.2+); the
         # iOS-16 era value 59 applied only to unsupported devices and is gone.
         self.structure_version = 61
-        if len(self.resetModes) > 0:
+        if self.full_reset:
+            # Full reset: wipe the entire PosterBoard container and replace
+            # the on-device sqlite with an empty (schema-only) database.
+            update_label(QCoreApplication.tr("Resetting PosterBoard..."))
+            # Zero out every wallpaper provider under Extensions plus the
+            # gallery cache. The zero-files keep the /61 folder a real
+            # directory, so the sqlite injection below lands cleanly.
+            wipe_paths = [
+                f"/{self.structure_version}/Extensions",
+                f"/{self.structure_version}/GalleryCache",
+                f"/{self.structure_version}/Backups",
+            ]
+            for wp in wipe_paths:
+                files_to_restore.append(FileToRestore(
+                    contents=b"",
+                    restore_path=f"/Library/Application Support/PRBPosterExtensionDataStore{wp}",
+                    domain=f"AppDomain-{self.bundle_id}"
+                ))
+            # fresh empty database
+            empty_db = create_empty_posterboard_db(
+                os.path.join(output_dir, "empty_posterboard.sqlite3"))
+            db_path = (f"/Library/Application Support/PRBPosterExtensionDataStore/"
+                       f"{self.structure_version}/{DB_FILE_NAME}")
+            files_to_restore.append(FileToRestore(
+                contents=None,
+                contents_path=empty_db,
+                restore_path=db_path,
+                domain=f"AppDomain-{self.bundle_id}"
+            ))
+            # ship 0-byte -wal/-shm so iOS starts the store clean (WAL dead-zone)
+            for wal_suffix in ("-wal", "-shm"):
+                files_to_restore.append(FileToRestore(
+                    contents=b"",
+                    restore_path=db_path + wal_suffix,
+                    domain=f"AppDomain-{self.bundle_id}"
+                ))
+            # reset the PosterBoard preferences on a full reset
+            plist = {
+                "PBF_LOCALE_DID_CHANGE": False,
+                "PBF_RESET_FILE_PROTECTIONS": True
+            }
+            if Version(version) >= Version("26.4"):
+                plist["PersistedPosterContainerBundleIdentifiers"] = [
+                    "com.apple.Posters.CollectionsPosterApp"
+                ]
+                plist["CompletedPosterBundleIdentifierMigrations"] = [
+                    "com.apple.Posters.UnityPosterApp.ExtragalacticPoster",
+                    "com.apple.Posters.WeatherPosterApp.WeatherPoster",
+                    "com.apple.Posters.UnityPosterApp.Unity2025Poster",
+                    "com.apple.Posters.UnityPosterApp.UnityPosterExtension",
+                    "com.apple.Posters.UnityPosterApp.RhizomePoster",
+                    "com.apple.Posters.KaleidoscopePosterApp.KaleidoscopePoster"
+                ]
+            files_to_restore.append(FileToRestore(
+                contents=plistlib.dumps(plist, fmt=plistlib.PlistFormat.FMT_BINARY),
+                restore_path="/Library/Preferences/com.apple.PosterBoard.unprotectedUserDefaults.plist",
+                domain=f"AppDomain-{self.bundle_id}"
+            ))
+            return
+        elif len(self.resetModes) > 0:
             # null out the folder
             file_paths = []
             for mode in self.resetModes:

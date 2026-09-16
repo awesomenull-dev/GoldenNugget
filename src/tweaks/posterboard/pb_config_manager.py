@@ -91,6 +91,44 @@ def _is_encrypted_database(db_path: str) -> bool:
 
 DB_FILE_NAME = "PBFPosterExtensionDataStoreSQLiteDatabase.sqlite3"
 
+
+def create_empty_posterboard_db(dest_path: str) -> str:
+    """Create a minimal PosterBoard database with the correct schema but no data.
+
+    Used by the full PosterBoard reset: the on-device DB is replaced with
+    this empty shell so PosterBoard starts fresh on next boot.
+    """
+    conn = sqlite3.connect(dest_path)
+    try:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS poster ("
+            "  posterId INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "  UUID TEXT,"
+            "  providerId TEXT"
+            ")")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS posterAttributes ("
+            "  posterUUID TEXT,"
+            "  roleId TEXT,"
+            "  attributeIdentifier TEXT,"
+            "  attributePayload BLOB"
+            ")")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS posterRoleMembership ("
+            "  posterUUID TEXT,"
+            "  roleId TEXT,"
+            "  roleSortKey INTEGER"
+            ")")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS sqlite_sequence ("
+            "  name TEXT,"
+            "  seq INTEGER"
+            ")")
+        conn.commit()
+    finally:
+        conn.close()
+    return dest_path
+
 class PBConfigManager:
     def __init__(self):
         self.staging = False

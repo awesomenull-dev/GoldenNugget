@@ -288,6 +288,7 @@ _SKIP_FILES = frozenset({
 # between iOS releases, so matching is done by FILE NAME, not full path.
 POSTERBOARD_DB_DOMAIN = "AppDomain-com.apple.PosterBoard"
 POSTERBOARD_DB_NAME = "PBFPosterExtensionDataStoreSQLiteDatabase.sqlite3"
+POSTERBOARD_DB_STORE_DIR = "PRBPosterExtensionDataStore"
 
 
 def _is_protective_file(domain: str, relative_path: str, include_photos: bool = True, include_keychain: bool = False) -> bool:
@@ -805,8 +806,9 @@ def extract_posterboard_db(backup_root: str, udid: str, dest_path: str) -> Optio
     conn = sqlite3.connect(str(manifest_db))
     try:
         pb_rows = conn.execute(
-            "SELECT fileID, relativePath FROM Files WHERE domain = ? ORDER BY relativePath",
-            (POSTERBOARD_DB_DOMAIN,),
+            "SELECT fileID, relativePath FROM Files "
+            "WHERE relativePath LIKE ? ORDER BY relativePath",
+            (f"%{POSTERBOARD_DB_STORE_DIR}%",),
         ).fetchall()
     finally:
         conn.close()

@@ -88,10 +88,10 @@ async def backup_posterboard_database(udid: str, update_label=lambda x: None, up
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     # resolve by file name: the store dir's structure version varies by iOS
+    # (and iOS 27 stores it under the physical tree, not the AppDomain-* domain)
     cursor.execute(
-        "SELECT fileID FROM Files WHERE domain = ? AND relativePath LIKE ? ORDER BY relativePath DESC",
-        ("AppDomain-com.apple.PosterBoard",
-         "%PBFPosterExtensionDataStoreSQLiteDatabase.sqlite3"))
+        "SELECT fileID FROM Files WHERE relativePath LIKE ? ORDER BY relativePath DESC",
+        ("%PRBPosterExtensionDataStore%PBFPosterExtensionDataStoreSQLiteDatabase.sqlite3%",))
     fileID = cursor.fetchone()
     conn.close()
     if fileID is None or len(fileID) == 0:

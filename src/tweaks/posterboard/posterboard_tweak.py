@@ -85,6 +85,17 @@ class PosterboardTweak(Tweak):
             cnt += tendie.descriptor_cnt
         return cnt
 
+    # MercuryPoster configs keep their own textual descriptor identifier
+    # (e.g. "v6x.colorB") that the userInfo.lookIdentifier and the
+    # suggestionMetadata reference — rewriting it to a random number breaks
+    # the lookup chain. Identifiers are preserved byte-for-byte for it.
+    MERCURY_EXTENSION = "com.apple.MercuryPoster"
+
+    @classmethod
+    def is_mercury(cls, restore_path: str) -> bool:
+        parts = restore_path.split('/')
+        return len(parts) > 6 and parts[6] == cls.MERCURY_EXTENSION
+
     def update_plist_id(self, file_path: str, file_name: str, randomizedID: int):
         if file_name == "com.apple.posterkit.provider.descriptor.identifier":
             return str(randomizedID).encode()
@@ -159,7 +170,9 @@ class PosterboardTweak(Tweak):
                         # update plist ids if needed
                         new_contents = None
                         contents_path = fullpath
-                        if curr_randomized_id != None:
+                        # Mercury identifiers are preserved (see is_mercury);
+                        # the rewrite below is Marble/Collections-specific.
+                        if curr_randomized_id != None and not self.is_mercury(restore_path):
                             new_contents = self.update_plist_id(curr_path, folder, curr_randomized_id)
                             if new_contents != None:
                                 contents_path = None

@@ -222,9 +222,12 @@ broken on iOS 26+).
 All supported devices (26.2+) take this path:
 
 ```
-Phase 0 (in device_manager): cached protective backup + PosterBoard DB
-Phase 1 (0-40%):  working copy of the cached master (hardlinks), or a fresh
-                  perform_protective_backup() when there is no cache
+Phase 0 (in device_manager): protective backup + PosterBoard DB
+                  (fresh live perform_protective_backup(), or the persistent
+                   cache master + incremental refresh when the experimental
+                   cache is enabled)
+Phase 1 (0-40%):  cache master → hardlink working copy; a fresh Phase-0 live
+                  backup is pruned IN PLACE (no /tmp copy ever)
                   → clean_backup_for_restore() prune
                   → inject PosterBoard files (pb_inject_files, AppDomain)
 Phase 2 (40-60%): perform_restore() sparse restore → reboot
@@ -323,13 +326,11 @@ the `ProtectiveBackupCache` to `protective_cache.py` (both re-exported from
   (structure version varies), pulls `-wal`/`-shm` siblings and checkpoints
   them into one consolidated database.
 - `verify_backup_payloads()` — last-line diagnostic before Phase 3.
-- `prune_protective_backups()` → `dedupe_protective_payloads()`: keeps
-  `PROTECTIVE_KEEP_RUNS=2` newest runs (never deleting anything younger than
-  `PROTECTIVE_MIN_AGE_HOURS=24`) and hardlinks each older run's payloads the
-  newest also carries (same fileID + content SHA-1 from the run's own
-  Manifest.db blobs) onto the newest run — stale-but-kept runs stop eating
-  disk immediately while still resolving for rollback.
-- `check_disk_space_for_backup()` — sizes the requirement from the device's
+- `prune_protective_backups()` — keeps only the newest
+  `PROTECTIVE_KEEP_RUNS=1` run and deletes every older run outright (no age
+  guard, no payload dedupe). Called strictly AFTER a successful backup so the
+  last good run is never retired before the new one exists.
+- `check_disk_space()` — sizes the requirement from the device's
   real used storage; `GOLDENNUGGET_MIN_FREE_GB` overrides the floor and
   `GOLDENNUGGET_CACHE_REFRESH_SECS` tunes the cache refresh interval.
 

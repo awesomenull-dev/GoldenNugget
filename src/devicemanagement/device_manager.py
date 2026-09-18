@@ -1,6 +1,7 @@
 import asyncio
 import os.path
 import plistlib
+import shutil
 import sys
 import traceback
 
@@ -689,10 +690,17 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
             update_label(QCoreApplication.tr("Backing up device..."))
             # include_keychain is left None (auto) so it follows the device's
             # live encryption state — one less round-trip before the backup.
-            is_encrypted = await perform_protective_backup(
-                lc, backup_root, progress_callback=self._backup_progress(update_label),
-                include_photos=True, include_posterboard=needs_posterboard,
-                include_keychain=None)
+            try:
+                is_encrypted = await perform_protective_backup(
+                    lc, backup_root, progress_callback=self._backup_progress(update_label),
+                    include_photos=True, include_posterboard=needs_posterboard,
+                    include_keychain=None)
+            except Exception:
+                # A failed run carries no/useless Manifest.db, so
+                # list_protective_backups excludes it and prune would never
+                # reclaim it — remove the partial dir right here.
+                shutil.rmtree(backup_root, ignore_errors=True)
+                raise
             # Only retire the previous run once this one is solid — pruning
             # early would delete the last good backup before the new run exists.
             prune_protective_backups(udid)
@@ -706,7 +714,10 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
                          "falling back to a separate backup")
                 return prepared, False
             return prepared, _register_pb_db(backup_root)
-    
+
+        cache_enabled = (self.pref_manager.use_backup_cache
+                         and not os.environ.get("GOLDENNUGGET_NO_BACKUP_CACHE"))
+
         async with lockdown_session(udid) as lc:
             if not cache_enabled:
                 log_info("Protective backup cache is an experimental feature and is "

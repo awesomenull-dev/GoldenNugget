@@ -115,6 +115,7 @@ class Backup:
         file_id_of = lambda f: sha1((f.domain + "-" + f.path).encode()).digest().hex()
         records = []
         now = int(datetime.now().timestamp())
+        dir_inode = 0
         for file in self.files:
             file_id = file_id_of(file)
             if isinstance(file, ConcreteFile):
@@ -128,9 +129,12 @@ class Backup:
                 records.append((file_id, file.domain, file.path, 1, blob))
             else:
                 # Directory row (flags=2) — no payload file, dirs are created
-                # by the restore agent from the row alone.
+                # by the restore agent from the row alone. Real device rows
+                # carry a unique inode (the agent dedupes by it and skips
+                # rows without one), so stamp one per dir instead of 0.
+                dir_inode += 1
                 blob = self._mb_file_blob(file.path, int(_FileMode.S_IFDIR | file.mode),
-                                          0, now, 0, file.owner, file.group, 0)
+                                          0, now, dir_inode, file.owner, file.group, 0)
                 records.append((file_id, file.domain, file.path, 2, blob))
 
         conn = sqlite3.connect(str(directory / "Manifest.db"))
@@ -145,8 +149,11 @@ class Backup:
                 CREATE INDEX FilesFlagsIdx ON Files(flags);
                 CREATE INDEX FilesRelativePathIdx ON Files(relativePath);
             """)
+            # OR REPLACE: two files can share a fileID only when their
+            # domain+path collide, so the payload is identical anyway — keep
+            # the last row instead of aborting the whole sparse restore.
             cur.executemany(
-                "INSERT INTO Files (fileID, domain, relativePath, flags, file) "
+                "INSERT OR REPLACE INTO Files (fileID, domain, relativePath, flags, file) "
                 "VALUES (?, ?, ?, ?, ?)", records)
             conn.commit()
         finally:

@@ -417,8 +417,9 @@ skip_setup: bool = True,
                       ``prepared_backup_root`` the backup already happened
                       earlier in the apply flow (fresh Phase-0 live
                       backup, or the persistent cache master + incremental
-                      refresh), so this phase only builds the pruned working
-                      copy. With ``skip_protective_backup`` the whole phase
+                      refresh): a fresh live run is pruned IN PLACE, a cache
+                      master first gets a hardlink working copy. With
+                      ``skip_protective_backup`` the whole phase
                       (and Phase 3) is skipped — the user opted out on low
                       disk space.
     Phase 2 (40-60%): Apply tweaks via sparse restore → reboot, which
@@ -767,7 +768,8 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
     # AppDomain-* domains: the device drops the connection at 0% and no
     # security recovery triggers. With a prepared protective backup we can
     # deliver PosterBoard files through Phase 3's native restore instead —
-    # injected into the pruned working copy like every other tweak file.
+    # injected into the backup Phase 3 restores (hardlink working copy for
+    # the cache master, pruned in place for a fresh Phase-0 live run).
     # GOLDENNUGGET_PB_SPARSE=1 forces the old sparse delivery.
     pb_via_protective = (prepared_backup_root is not None
                          and os.environ.get("GOLDENNUGGET_PB_SPARSE") != "1")

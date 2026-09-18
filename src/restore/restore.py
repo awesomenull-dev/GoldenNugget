@@ -10,6 +10,7 @@ from PySide6.QtCore import QCoreApplication
 
 from . import backup, perform_restore, reboot_device
 from src.utils.file_to_restore import FileToRestore, _FileMode
+from .lastapply import is_ios27_scaffolding, load_lastapply, sparse_signature
 from .skip_setup27 import skip_all_setup27
 from .protective import (
     PreparedBackup,
@@ -29,7 +30,7 @@ from pymobiledevice3.lockdown import LockdownClient, create_using_usbmux
 from pymobiledevice3.services.installation_proxy import InstallationProxyService
 from pymobiledevice3.services.lockdown_service import LockdownService
 from pymobiledevice3.services.mobilebackup2 import Mobilebackup2Service
-from pymobiledevice3.exceptions import ConnectionTerminatedError, PyMobileDevice3Exception, DeviceNotFoundError, PasswordRequiredError, NotPairedError, ConnectionFailedError, InvalidServiceError
+from pymobiledevice3.exceptions import ConnectionTerminatedError, PyMobileDevice3Exception, DeviceNotFoundError, PasswordRequiredError, NotPairedError, ConnectionFailedError, InvalidServiceError, CloudConfigurationAlreadyPresentError
 
 from src.exceptions.nugget_exception import NuggetException
 from src.exceptions.device_errors import is_transient_restore_error
@@ -554,55 +555,62 @@ skip_setup: bool = True,
         progress_callback(_PHASE_BACKUP_END)
 
         # === Phase 2: apply tweaks → reboot (40-60%) ===
-        log_info(f"Phase 2: Applying tweaks via sparse restore ({len(back.files)} files)")
         if len(back.files) == 0:
-            log_error("Phase 2: file list is EMPTY — nothing to apply, the device "
-                      "will reboot without triggering security recovery")
-        sparse_progress = {"last": None, "calls": 0}
+            # Nothing left for the sparse/partial pass. PosterBoard-only
+            # applies divert every payload to pb_inject_files (delivered by
+            # Phase 3's protective restore), so the device never needs the
+            # security-recovery reboot here — go straight to Phase 3.
+            log_info("Phase 2: nothing to sparse-restore — skipping the partial "
+                     "restore; PosterBoard is delivered by the protective "
+                     "restore (Phase 3)")
+            progress_callback(_PHASE_TWEAK_END)
+        else:
+            log_info(f"Phase 2: Applying tweaks via sparse restore ({len(back.files)} files)")
+            sparse_progress = {"last": None, "calls": 0}
 
-        def _tracking_callback(value):
-            # remember how far the sparse restore actually got before any
-            # connection drop — a drop at 0% means it was rejected, not applied
-            sparse_progress["calls"] += 1
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
-                sparse_progress["last"] = value
-            progress_callback(_scaled_callback(
-                progress_callback, _PHASE_BACKUP_END, _PHASE_TWEAK_END)(value))
+            def _tracking_callback(value):
+                # remember how far the sparse restore actually got before any
+                # connection drop — a drop at 0% means it was rejected, not applied
+                sparse_progress["calls"] += 1
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    sparse_progress["last"] = value
+                progress_callback(_scaled_callback(
+                    progress_callback, _PHASE_BACKUP_END, _PHASE_TWEAK_END)(value))
 
-        # The cache session finishes right before Phase 2 starts; on some
-        # devices backupd needs a moment before accepting another mobilebackup2
-        # client — a drop at 0% is that wedge, not a rejection. Cool down and
-        # retry once on a fresh connection.
-        max_sparse_attempts = 2
-        for sparse_attempt in range(max_sparse_attempts):
-            sparse_progress["last"] = None
-            sparse_progress["calls"] = 0
-            try:
-                await perform_restore(
-                    backup=back, reboot=True,
-                    lockdown_client=lockdown_client if sparse_attempt == 0 else None,
-                    progress_callback=_tracking_callback)
-                log_info(f"Phase 2: sparse restore completed cleanly "
-                         f"({sparse_progress['calls']} progress events)")
-                break
-            except (ConnectionTerminatedError, ssl.SSLEOFError,
-                    ConnectionAbortedError, ConnectionResetError):
-                if sparse_progress["last"] is None and sparse_attempt + 1 < max_sparse_attempts:
-                    log_warn("Phase 2: connection dropped at 0% right after the cache "
-                             "session — cooling down 25s and retrying once on a "
-                             "fresh connection")
-                    await asyncio.sleep(25)
-                    continue
-                if sparse_progress["last"] is None:
-                    log_error("Phase 2: connection dropped with ZERO restore progress "
-                              "on every attempt — the sparse restore was likely "
-                              "REJECTED. Security state recovery will not trigger; "
-                              "tweaks are NOT applied.")
-                else:
-                    log_info(f"Phase 2: Device rebooted during sparse restore "
-                             f"(expected; last progress {sparse_progress['last']:.1f}%)")
-                break
-        progress_callback(_PHASE_TWEAK_END)
+            # The cache session finishes right before Phase 2 starts; on some
+            # devices backupd needs a moment before accepting another mobilebackup2
+            # client — a drop at 0% is that wedge, not a rejection. Cool down and
+            # retry once on a fresh connection.
+            max_sparse_attempts = 2
+            for sparse_attempt in range(max_sparse_attempts):
+                sparse_progress["last"] = None
+                sparse_progress["calls"] = 0
+                try:
+                    await perform_restore(
+                        backup=back, reboot=True,
+                        lockdown_client=lockdown_client if sparse_attempt == 0 else None,
+                        progress_callback=_tracking_callback)
+                    log_info(f"Phase 2: sparse restore completed cleanly "
+                             f"({sparse_progress['calls']} progress events)")
+                    break
+                except (ConnectionTerminatedError, ssl.SSLEOFError,
+                        ConnectionAbortedError, ConnectionResetError):
+                    if sparse_progress["last"] is None and sparse_attempt + 1 < max_sparse_attempts:
+                        log_warn("Phase 2: connection dropped at 0% right after the cache "
+                                 "session — cooling down 25s and retrying once on a "
+                                 "fresh connection")
+                        await asyncio.sleep(25)
+                        continue
+                    if sparse_progress["last"] is None:
+                        log_error("Phase 2: connection dropped with ZERO restore progress "
+                                  "on every attempt — the sparse restore was likely "
+                                  "REJECTED. Security state recovery will not trigger; "
+                                  "tweaks are NOT applied.")
+                    else:
+                        log_info(f"Phase 2: Device rebooted during sparse restore "
+                                 f"(expected; last progress {sparse_progress['last']:.1f}%)")
+                    break
+            progress_callback(_PHASE_TWEAK_END)
 
         # === Phase 3: reconnect + restore protective backup (60-90%) ===
         log_info("Phase 3: Waiting for device to reconnect after security recovery")
@@ -658,11 +666,23 @@ skip_setup: bool = True,
                 log_info("Phase 3: Protective backup restored successfully")
 
             # === Phase 4: skip setup panes (90-95%) ===
+            # Runs on every apply when skip-setup is requested, including the
+            # Phase 2-skipped ones (PosterBoard-only / unchanged tweaks + added
+            # wallpapers): even a device that was never wiped may still want the
+            # sweep. If the device already carries a cloud configuration (the
+            # never-wiped case), SetCloudConfiguration raises
+            # CloudConfigurationAlreadyPresentError — that means setup was
+            # already configured, so it is treated as success, not an error.
             if skip_setup:
                 progress_callback("Skipping setup panes...")
                 log_info("Phase 4: Skipping setup panes via MobileConfigService")
-                await skip_all_setup27(lc, udid)
-                log_info("Phase 4: Setup panes skipped successfully")
+                try:
+                    await skip_all_setup27(lc, udid)
+                except CloudConfigurationAlreadyPresentError:
+                    log_info("Phase 4: device already has a cloud configuration "
+                             "— setup already handled, nothing to skip")
+                else:
+                    log_info("Phase 4: Setup panes skipped successfully")
                 progress_callback(95)
 
             # === Phase 5: reboot (95-100%) ===
@@ -703,6 +723,18 @@ skip_setup: bool = True,
         log_info(f"Protective backup kept at: {backup_root}")
     log_info(f"iOS 27 restore completed successfully in {time.monotonic() - started:.1f}s")
     progress_callback(100)
+
+
+def _is_ios27_scaffolding(file) -> bool:
+    """True for the incidental iOS 27 scaffolding files (thin wrapper around
+    ``lastapply.is_ios27_scaffolding`` that accepts both the raw
+    ``FileToRestore`` objects and the ``backup.Directory``/``backup.ConcreteFile``
+    rows built by ``concat_regular_file`` — the latter carry the path in
+    ``path`` instead of ``restore_path``)."""
+    path = getattr(file, "path", None)
+    if path is None:
+        path = getattr(file, "restore_path", "")
+    return is_ios27_scaffolding(file.domain, path.lstrip("/"))
 
 
 # files is a list of FileToRestore objects
@@ -790,6 +822,37 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
                     ))
                     log_info(f"Registered AppDomain bundle for restore: {bundle_id} "
                              f"({apps_list[-1].path})")
+
+    # Phase 2 (sparse / partial restore) is skipped when it has nothing new to
+    # deliver and the protective restore (Phase 3) already carries what this
+    # apply adds:
+    #   - PosterBoard-only: every real payload is an AppDomain-com.apple.PosterBoard
+    #     file diverted to pb_inject_files — the sparse pass would only re-stage
+    #     the incidental iOS 27 scaffolding files, which are dropped with it.
+    #     (The HomeDomain .GlobalPreferences copy is empty on such an apply and
+    #     skip-setup is re-applied natively by Phase 4.)
+    #   - Unchanged tweaks + added wallpapers: the sparse payload is identical to
+    #     the last successfully applied one (lastapply.json) and only wallpapers
+    #     are new — Phase 3 delivers them, the device already carries the tweaks.
+    # Directory rows (path scaffolding for the concrete files) never count as
+    # payload.
+    skip_sparse = False
+    if pb_inject_files:
+        if not any(
+                isinstance(f, backup.ConcreteFile) and not _is_ios27_scaffolding(f)
+                for f in files_list):
+            skip_sparse = True
+        else:
+            udid = getattr(lockdown_client, "udid", None)
+            if udid:
+                prev = load_lastapply(udid)
+                if prev and prev == sparse_signature(files):
+                    skip_sparse = True
+    if skip_sparse:
+        log_info("Phase 2 sparse/partial pass skipped: no changed tweak payload "
+                 "on this apply — the protective restore (Phase 3) delivers the "
+                 "wallpapers directly")
+        files_list = []
 
     # create the backup
     back = backup.Backup(files=files_list, apps=apps_list)

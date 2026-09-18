@@ -229,13 +229,28 @@ Phase 1 (0-40%):  working copy of the cached master (hardlinks), or a fresh
                   → inject PosterBoard files (pb_inject_files, AppDomain)
 Phase 2 (40-60%): perform_restore() sparse restore → reboot
                   → iOS 27 "safe state recovery" wipes data volume
+                  (SKIPPED when Phase 2 has nothing new to deliver and the
+                  protective restore already carries the apply:
+                  • PosterBoard-only applies — every payload is diverted to
+                    pb_inject_files, the incidental scaffolding files are
+                    dropped, the sparse list is empty
+                  • unchanged tweaks + added wallpapers — the generated
+                    sparse payload matches lastapply.json (per-device record
+                    of the last successfully applied tweak set, written after
+                    every successful apply, cleared on reset), so the device
+                    already has those tweak files and Phase 3's protective
+                    restore delivers the wallpapers right after Phase 1 —
+                    no partial restore, no wipe)
 Phase 3 (60-90%): _wait_for_device() (20 min budget, _RECONNECT_TIMEOUT);
                   on timeout the GUI gets an Abort/Resume pop-up — Resume
                   restarts a fresh waiting cycle instead of aborting (no
                   callback → classic DeviceNotFoundError)
                   → _restore_protective_backup() puts user data back
                   (max_retries=18, fixed 3s sleep, only for transient errors)
-Phase 4 (90-95%): skip_all_setup27()  — only if skip-setup requested
+Phase 4 (90-95%): skip_all_setup27()  — if skip-setup requested, on every
+                  apply including Phase 2-skipped ones; a device that was never
+                  wiped may already have a cloud config (the resulting
+                  CloudConfigurationAlreadyPresentError is treated as success)
 Phase 5 (95-100%): reboot_device()    — only if auto_reboot (default on iOS 27)
 ```
 

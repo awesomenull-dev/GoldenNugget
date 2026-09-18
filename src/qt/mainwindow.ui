@@ -768,6 +768,38 @@ QSlider::tick:horizontal {
            </widget>
           </item>
           <item>
+           <widget class="QToolButton" name="iconThemesPageBtn">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="cursor">
+             <cursorShape>PointingHandCursor</cursorShape>
+            </property>
+            <property name="text">
+             <string>    Icon Themes</string>
+            </property>
+            <property name="icon">
+             <iconset resource="resources.qrc">
+              <normaloff>:/icon/brush.svg</normaloff>:/icon/brush.svg</iconset>
+            </property>
+            <property name="checkable">
+             <bool>true</bool>
+            </property>
+            <property name="autoExclusive">
+             <bool>true</bool>
+            </property>
+            <property name="toolButtonStyle">
+             <enum>Qt::ToolButtonTextBesideIcon</enum>
+            </property>
+            <property name="cls" stdset="0">
+             <string notr="true">sidebarBtn</string>
+            </property>
+           </widget>
+          </item>
+          <item>
            <widget class="Line" name="sidebarDiv2">
             <property name="styleSheet">
              <string notr="true">QFrame {

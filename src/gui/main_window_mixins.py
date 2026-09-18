@@ -16,6 +16,7 @@ from src.devicemanagement.constants import Version
 from src.gui.dialogs import AboutProgramDialog
 from src.gui.dialogs.reset_dialog import ResetDialog
 from src.gui.logger import get_logger
+from src.gui.theme import ColorThemeManager
 from src.gui.thread_workers.apply_worker import (
     ApplyAlertMessage,
     ApplyThread,
@@ -125,6 +126,7 @@ class DeviceBarMixin:
             self.ui.internalOptionsPageBtn.hide()
             self.ui.liquidGlassPageBtn.hide()
             self.ui.daemonsPageBtn.hide()
+            self.ui.iconThemesPageBtn.hide()
             self.ui.passcodePageBtn.hide()
             self.ui.posterboardPageBtn.hide()
 
@@ -150,6 +152,7 @@ class DeviceBarMixin:
             self.ui.internalOptionsPageBtn.show()
             self.ui.liquidGlassPageBtn.show()
             self.ui.daemonsPageBtn.show()
+            self.ui.iconThemesPageBtn.show()
             self.ui.passcodePageBtn.hide()
             self.ui.posterboardPageBtn.show()
 
@@ -340,8 +343,9 @@ class SettingsMixin:
             self.shell_layout.setContentsMargins(16, 16, 16, 16)
             self.shell_layout.setSpacing(12)
             self.body_row.setSpacing(16)
-            # classic UI never shows the shared header
-            self.ios_nav.setVisible(False)
+            # classic UI hides the shared header except on pages that need it
+            # (Icon Themes keeps "+ Add Icon")
+            self._update_shared_nav(self.ios_pages.currentIndex())
             if self.ios_pages.currentIndex() == 0:
                 # the iOS home has no meaning inside the classic shell
                 self.show_home()
@@ -372,8 +376,11 @@ class NavigationMixin:
 
     def _update_shared_nav(self, index: int):
         if self.theme_manager.current_theme == ThemeManager.CLASSIC:
-            self.ios_nav.setVisible(False)
-            return
+            # Icon Themes needs the header for its "+ Add Icon" right action
+            use_nav = index in self._nav_right_actions and index != 0
+            self.ios_nav.setVisible(use_nav)
+            if not use_nav:
+                return
         # the iOS home page is full-screen — no header at all
         self.ios_nav.setVisible(index != 0)
         if index == 0:
@@ -392,10 +399,10 @@ class NavigationMixin:
     def _sync_sidebar_selection(self):
         """Move the checked highlight of the sidebar to the active view."""
         btns = (self.ui.homePageBtn, self.ui.posterboardPageBtn,
-                self.ui.springboardOptionsPageBtn, self.ui.internalOptionsPageBtn,
-                self.ui.liquidGlassPageBtn, self.ui.daemonsPageBtn,
-                self.ui.applyPageBtn, self.ui.settingsPageBtn,
-                self.ui.statusBarPageBtn)
+            self.ui.springboardOptionsPageBtn, self.ui.internalOptionsPageBtn,
+            self.ui.liquidGlassPageBtn, self.ui.daemonsPageBtn,
+            self.ui.applyPageBtn, self.ui.settingsPageBtn,
+            self.ui.statusBarPageBtn, self.ui.iconThemesPageBtn)
         page_to_btn = {
             0: 0,   # home
             2: 1,   # posterboard
@@ -406,6 +413,7 @@ class NavigationMixin:
             6: 6,   # apply
             4: 7,   # settings
             5: 8,   # status bar
+            10: 9,  # icon themes
         }
         idx = None
         if self.theme_manager.current_theme == ThemeManager.CLASSIC:
@@ -532,6 +540,11 @@ class NavigationMixin:
         else:
             self.ios_daemons.refresh_from_tweaks()
             self.show_ios_page(3)
+        self._sync_sidebar_selection()
+
+
+    def on_iconThemesPageBtn_clicked(self):
+        self.show_ios_page(10)
         self._sync_sidebar_selection()
 
 
@@ -857,12 +870,34 @@ class ApplyMixin:
             "GoldenNugget's own protected backup also runs automatically when "
             "you apply tweaks, but a full iTunes/Finder backup is the only "
             "complete safety net."))
+        # Explicit opaque background: the dialog inherits the app's global
+        # ``QWidget { background-color: transparent }`` rule otherwise and
+        # would render see-through.
+        c = ColorThemeManager.instance().colors
+        box.setStyleSheet(f"""
+            QMessageBox {{ background-color: {c.bg_elevated}; }}
+            QLabel {{ color: {c.text_primary}; background: transparent; }}
+            QPushButton {{
+                background-color: {c.bg_secondary};
+                color: {c.text_primary};
+                border: 1px solid {c.border};
+                border-radius: 6px;
+                padding: 6px 16px;
+                min-width: 80px;
+            }}
+            QPushButton:hover {{ background-color: {c.surface_hover}; }}
+            QPushButton:pressed {{ background-color: {c.border}; }}
+        """)
         got_it = box.addButton(
             QCoreApplication.translate("Nugget", "Got it, I'm backed up"),
             QtWidgets.QMessageBox.AcceptRole)
         box.addButton(
             QCoreApplication.translate("Nugget", "I'll do it later"),
             QtWidgets.QMessageBox.RejectRole)
+        # Make sure the dialog comes to the front and grabs input focus
+        # (otherwise clicks can be swallowed by the window around it).
+        box.raise_()
+        box.activateWindow()
         box.exec()
         return box.clickedButton() is got_it
 

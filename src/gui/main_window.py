@@ -48,6 +48,7 @@ _CLASSIC_THEMED_ICONS = {
     "internalOptionsPageBtn": ":/icon/hdd.svg",
     "liquidGlassPageBtn": ":/icon/liquid-glass.svg",
     "daemonsPageBtn": ":/icon/toggles.svg",
+    "iconThemesPageBtn": ":/icon/brush.svg",
     "applyPageBtn": ":/icon/check-circle.svg",
     "posterboardPageBtn": ":/icon/wallpaper.svg",
     "settingsPageBtn": ":/icon/gear.svg",
@@ -97,6 +98,7 @@ class MainWindow(QtWidgets.QMainWindow, DeviceBarMixin, SettingsMixin,
         self.ui.internalOptionsPageBtn.hide()
         self.ui.liquidGlassPageBtn.hide()
         self.ui.daemonsPageBtn.hide()
+        self.ui.iconThemesPageBtn.hide()
         self.ui.passcodePageBtn.hide()
         self.ui.applyPageBtn.hide()
         self.ui.sidebarDiv1.hide()
@@ -208,22 +210,6 @@ class MainWindow(QtWidgets.QMainWindow, DeviceBarMixin, SettingsMixin,
         self.shell_layout.addLayout(self.body_row)
         self.setCentralWidget(shell)
 
-        # First launch: ask user which interface they prefer
-        if not self.theme_manager.settings.contains("ui/theme"):
-            from src.gui.interface_picker import InterfacePickerDialog
-            dlg = InterfacePickerDialog(self)
-            if dlg.exec() == QtWidgets.QDialog.DialogCode.Accepted and dlg.choice == "ios":
-                self.theme_manager.save_theme(ThemeManager.IOS)
-            else:
-                self.theme_manager.save_theme(ThemeManager.CLASSIC)
-
-        # First launch: remind the user to back up the device before tweaking
-        # (keeps asking until they confirm a backup was made)
-        if not self.settings.value("backup_prompt_done", False, type=bool):
-            if self.prompt_first_launch_backup():
-                self.settings.setValue("backup_prompt_done", True)
-                self._sync_settings()
-
         self.apply_theme(self.theme_manager.current_theme)
 
         # Back navigation: ESC key and mouse back button go to the home page
@@ -246,12 +232,37 @@ class MainWindow(QtWidgets.QMainWindow, DeviceBarMixin, SettingsMixin,
         self.ui.internalOptionsPageBtn.clicked.connect(self.on_internalOptionsPageBtn_clicked)
         self.ui.liquidGlassPageBtn.clicked.connect(self.on_liquidGlassPageBtn_clicked)
         self.ui.daemonsPageBtn.clicked.connect(self.on_daemonsPageBtn_clicked)
+        self.ui.iconThemesPageBtn.clicked.connect(self.on_iconThemesPageBtn_clicked)
         self.ui.posterboardPageBtn.clicked.connect(self.on_posterboardPageBtn_clicked)
         self.ui.applyPageBtn.clicked.connect(self.on_applyPageBtn_clicked)
         self.ui.settingsPageBtn.clicked.connect(self.on_settingsPageBtn_clicked)
 
         # Apply the initial themed global stylesheet
         self._apply_global_stylesheet()
+
+    def run_first_launch_prompts(self):
+        """Present the first-launch dialogs AFTER the window is on screen.
+
+        Running them inside __init__ (before show()) opens them over an
+        unmapped parent, which on several platforms renders them transparent
+        and stuttering. Called from main_app right after widget.show().
+        """
+        # First launch: ask user which interface they prefer
+        if not self.theme_manager.settings.contains("ui/theme"):
+            from src.gui.interface_picker import InterfacePickerDialog
+            dlg = InterfacePickerDialog(self)
+            if dlg.exec() == QtWidgets.QDialog.DialogCode.Accepted and dlg.choice == "ios":
+                self.theme_manager.save_theme(ThemeManager.IOS)
+            else:
+                self.theme_manager.save_theme(ThemeManager.CLASSIC)
+            self.apply_theme(self.theme_manager.current_theme)
+
+        # First launch: remind the user to back up the device before tweaking
+        # (keeps asking until they confirm a backup was made)
+        if not self.settings.value("backup_prompt_done", False, type=bool):
+            if self.prompt_first_launch_backup():
+                self.settings.setValue("backup_prompt_done", True)
+                self._sync_settings()
 
     # ---- Color theme reactivity ------------------------------------------
 

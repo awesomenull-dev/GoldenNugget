@@ -276,6 +276,14 @@ def main() -> int:
     widget.resize(800, 600)
     widget.show()
 
+    # First-launch dialogs (interface picker + backup reminder) are deferred
+    # to the first event-loop iteration so the window is fully mapped and
+    # ACTIVE before the modal opens. Running them synchronously right after
+    # show() (before app.exec()) can leave the parent unmapped/inactive,
+    # which renders the dialog transparent, stuttering or unclickable.
+    from PySide6.QtCore import QTimer
+    QTimer.singleShot(0, widget.run_first_launch_prompts)
+
     # Check for updates in the background so startup never blocks on the
     # network (GitHub API latency / offline timeouts). The modal dialog is
     # exec'd on the main thread via a queued signal once the answer is known.

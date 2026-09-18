@@ -466,6 +466,21 @@ class Ui_Nugget(object):
 
         self.verticalLayout.addWidget(self.daemonsPageBtn)
 
+        self.iconThemesPageBtn = QToolButton(self.sidebar)
+        self.iconThemesPageBtn.setObjectName(u"iconThemesPageBtn")
+        sizePolicy2.setHeightForWidth(self.iconThemesPageBtn.sizePolicy().hasHeightForWidth())
+        self.iconThemesPageBtn.setSizePolicy(sizePolicy2)
+        self.iconThemesPageBtn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        icon12 = QIcon()
+        icon12.addFile(u":/icon/brush.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
+        self.iconThemesPageBtn.setIcon(icon12)
+        self.iconThemesPageBtn.setCheckable(True)
+        self.iconThemesPageBtn.setAutoExclusive(True)
+        self.iconThemesPageBtn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.iconThemesPageBtn.setProperty(u"cls", u"sidebarBtn")
+
+        self.verticalLayout.addWidget(self.iconThemesPageBtn)
+
         self.sidebarDiv2 = QFrame(self.sidebar)
         self.sidebarDiv2.setObjectName(u"sidebarDiv2")
         self.sidebarDiv2.setStyleSheet(u"QFrame {\n"
@@ -481,9 +496,9 @@ class Ui_Nugget(object):
         sizePolicy2.setHeightForWidth(self.applyPageBtn.sizePolicy().hasHeightForWidth())
         self.applyPageBtn.setSizePolicy(sizePolicy2)
         self.applyPageBtn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        icon12 = QIcon()
-        icon12.addFile(u":/icon/check-circle.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
-        self.applyPageBtn.setIcon(icon12)
+        icon13 = QIcon()
+        icon13.addFile(u":/icon/check-circle.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
+        self.applyPageBtn.setIcon(icon13)
         self.applyPageBtn.setCheckable(True)
         self.applyPageBtn.setAutoExclusive(True)
         self.applyPageBtn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
@@ -496,9 +511,9 @@ class Ui_Nugget(object):
         sizePolicy2.setHeightForWidth(self.settingsPageBtn.sizePolicy().hasHeightForWidth())
         self.settingsPageBtn.setSizePolicy(sizePolicy2)
         self.settingsPageBtn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        icon13 = QIcon()
-        icon13.addFile(u":/icon/gear.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
-        self.settingsPageBtn.setIcon(icon13)
+        icon14 = QIcon()
+        icon14.addFile(u":/icon/gear.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
+        self.settingsPageBtn.setIcon(icon14)
         self.settingsPageBtn.setCheckable(True)
         self.settingsPageBtn.setAutoExclusive(True)
         self.settingsPageBtn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
@@ -614,9 +629,9 @@ class Ui_Nugget(object):
 "	background-color: transparent;\n"
 "	padding: 0px;\n"
 "}")
-        icon14 = QIcon()
-        icon14.addFile(u":/credits/big_nugget.png", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
-        self.bigNuggetBtn.setIcon(icon14)
+        icon15 = QIcon()
+        icon15.addFile(u":/credits/big_nugget.png", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
+        self.bigNuggetBtn.setIcon(icon15)
         self.bigNuggetBtn.setIconSize(QSize(150, 200))
 
         self.horizontalLayout_27.addWidget(self.bigNuggetBtn)
@@ -653,9 +668,9 @@ class Ui_Nugget(object):
         self.discordBtn = QToolButton(self.verticalWidget_16)
         self.discordBtn.setObjectName(u"discordBtn")
         self.discordBtn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        icon15 = QIcon()
-        icon15.addFile(u":/icon/discord.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
-        self.discordBtn.setIcon(icon15)
+        icon16 = QIcon()
+        icon16.addFile(u":/icon/discord.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
+        self.discordBtn.setIcon(icon16)
         self.discordBtn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
 
         self.horizontalLayout_8.addWidget(self.discordBtn)
@@ -663,9 +678,9 @@ class Ui_Nugget(object):
         self.starOnGithubBtn = QToolButton(self.verticalWidget_16)
         self.starOnGithubBtn.setObjectName(u"starOnGithubBtn")
         self.starOnGithubBtn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        icon16 = QIcon()
-        icon16.addFile(u":/icon/star.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
-        self.starOnGithubBtn.setIcon(icon16)
+        icon17 = QIcon()
+        icon17.addFile(u":/icon/star.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
+        self.starOnGithubBtn.setIcon(icon17)
         self.starOnGithubBtn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
 
         self.horizontalLayout_8.addWidget(self.starOnGithubBtn)
@@ -707,9 +722,9 @@ class Ui_Nugget(object):
         self.mainDevBtn.setStyleSheet(u"QToolButton {\n"
 "	background: none;\n"
 "}")
-        icon17 = QIcon()
-        icon17.addFile(u":/icon/github.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
-        self.mainDevBtn.setIcon(icon17)
+        icon18 = QIcon()
+        icon18.addFile(u":/icon/github.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
+        self.mainDevBtn.setIcon(icon18)
         self.mainDevBtn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
 
         self.horizontalLayout_6.addWidget(self.mainDevBtn)
@@ -763,9 +778,9 @@ class Ui_Nugget(object):
         self.leminBtn.setStyleSheet(u"QToolButton {\n"
 "	background: none;\n"
 "}")
-        icon18 = QIcon()
-        icon18.addFile(u":/credits/LeminLimez.png", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
-        self.leminBtn.setIcon(icon18)
+        icon19 = QIcon()
+        icon19.addFile(u":/credits/LeminLimez.png", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
+        self.leminBtn.setIcon(icon19)
         self.leminBtn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
 
         self.horizontalLayout_86.addWidget(self.leminBtn)
@@ -784,9 +799,9 @@ class Ui_Nugget(object):
 "    background-color: #535353;\n"
 "    color: #FFFFFF;\n"
 "}")
-        icon19 = QIcon()
-        icon19.addFile(u":/icon/twitter.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
-        self.leminTwitterBtn.setIcon(icon19)
+        icon20 = QIcon()
+        icon20.addFile(u":/icon/twitter.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
+        self.leminTwitterBtn.setIcon(icon20)
 
         self.horizontalLayout_86.addWidget(self.leminTwitterBtn)
 
@@ -804,7 +819,7 @@ class Ui_Nugget(object):
 "    background-color: #535353;\n"
 "    color: #FFFFFF;\n"
 "}")
-        self.leminGithubBtn.setIcon(icon17)
+        self.leminGithubBtn.setIcon(icon18)
 
         self.horizontalLayout_86.addWidget(self.leminGithubBtn)
 
@@ -823,9 +838,9 @@ class Ui_Nugget(object):
 "    background-color: #535353;\n"
 "    color: #FFFFFF;\n"
 "}")
-        icon20 = QIcon()
-        icon20.addFile(u":/icon/currency-dollar.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
-        self.leminKoFiBtn.setIcon(icon20)
+        icon21 = QIcon()
+        icon21.addFile(u":/icon/currency-dollar.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
+        self.leminKoFiBtn.setIcon(icon21)
 
         self.horizontalLayout_86.addWidget(self.leminKoFiBtn)
 
@@ -953,7 +968,7 @@ class Ui_Nugget(object):
 "    background-color: #535353;\n"
 "    color: #FFFFFF;\n"
 "}")
-        self.wind0ws11AeroBtn.setIcon(icon17)
+        self.wind0ws11AeroBtn.setIcon(icon18)
         self.wind0ws11AeroBtn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
 
         self.horizontalLayout_2.addWidget(self.wind0ws11AeroBtn)
@@ -1132,6 +1147,7 @@ class Ui_Nugget(object):
         self.internalOptionsPageBtn.setText(QCoreApplication.translate("Nugget", u"    Internal", None))
         self.liquidGlassPageBtn.setText(QCoreApplication.translate("Nugget", u"    Liquid Glass", None))
         self.daemonsPageBtn.setText(QCoreApplication.translate("Nugget", u"    Daemons", None))
+        self.iconThemesPageBtn.setText(QCoreApplication.translate("Nugget", u"    Icon Themes", None))
         self.applyPageBtn.setText(QCoreApplication.translate("Nugget", u"    Apply", None))
         self.settingsPageBtn.setText(QCoreApplication.translate("Nugget", u"    Settings", None))
         self.bigNuggetBtn.setText(QCoreApplication.translate("Nugget", u"...", None))

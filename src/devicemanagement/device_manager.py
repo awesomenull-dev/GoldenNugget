@@ -570,6 +570,12 @@ class DeviceManager:
                 prompt_choice=prompt_choice,
                 skip_protective_backup=self._protective_backup_skipped,
             )
+            # Record what just got applied so a later "unchanged tweaks +
+            # added wallpapers only" apply can skip the Phase 2 sparse pass.
+            from src.restore.lastapply import sparse_signature, write_lastapply
+            udid = self.get_current_device_udid()
+            if udid:
+                write_lastapply(udid, sparse_signature(files_to_restore))
             update_label(QCoreApplication.tr("Success!"))
         except Exception as e:
             final_alert = show_apply_error(e, update_label, files_list=files_to_restore)
@@ -1143,6 +1149,12 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
             # restore to the device
             final_alert = await self.start_restore(files_to_restore, update_label,
                                                    prompt_choice=prompt_choice)
+            # the device is back to stock — drop the apply record so a future
+            # apply never skips Phase 2 against a reset device
+            from src.restore.lastapply import clear_lastapply
+            udid = self.get_current_device_udid()
+            if udid:
+                clear_lastapply(udid)
             update_label(QCoreApplication.tr("Success!"))
         except Exception as e:
             final_alert = show_apply_error(e, update_label, files_list=files_to_restore)

@@ -254,6 +254,22 @@ backup in the persistent app-data store
 **Phase 2 (40-60%)**: Sparse Restore + Reboot
 - `perform_restore()` — applies tweaks via sparse restore; if it drops at 0% it waits 25 s and retries once on a fresh connection
 - Triggers the iOS 27 "safe state recovery" wipe on reboot
+- **Skipped for PosterBoard-only applies**: `restore_files()` diverts every
+  payload to `pb_inject_files`, drops the incidental iOS 27 scaffolding files
+  (HomeDomain `.GlobalPreferences.plist` copy + skip-setup plists —
+  `_is_ios27_scaffolding`), and Phase 2 sees an empty sparse list, so the
+  protective restore (Phase 3) delivers the wallpapers right after Phase 1 —
+  no partial restore, no wipe.
+- **Skipped for unchanged tweaks + new wallpapers**: the apply record in
+  `lastapply.json` (`src/restore/lastapply.py`, per-UDID under the persistent
+  app-data store) holds the sha1 signature of the last successfully applied
+  sparse payload. When the freshly generated sparse signature matches it AND
+  wallpapers are pending (`pb_inject_files` non-empty), Phase 2 is skipped the
+  same way — the device already carries the (unchanged) tweak files and Phase
+  3 delivers the wallpapers. The record is written after every successful
+  apply and cleared after a reset; `sparse_signature` excludes PosterBoard
+  AppDomain files and the iOS 27 scaffolding, so only real tweak content is
+  compared.
 
 **Phase 3 (60-90%)**: Protective Restore
 - `_wait_for_device()` — reconnects after reboot (default 20 min timeout). On
@@ -266,7 +282,13 @@ backup in the persistent app-data store
   case (`PasswordRequiredError` seen during the cycle) and a plain no-show.
 - `_restore_protective_backup()` — restores the Phase 1 backup, with password if encrypted; retries **18 times at fixed 3 s**, only for `_is_transient_restore_error` results
 
-**Phase 4 (90-95%)**: `skip_all_setup27()` — only when skip-setup is requested
+**Phase 4 (90-95%)**: `skip_all_setup27()` — runs whenever skip-setup is
+  requested, on every apply including the Phase 2-skipped ones (PosterBoard-only
+  / unchanged tweaks + added wallpapers). When the device was never wiped it
+  typically already carries a cloud configuration and
+  `SetCloudConfiguration` raises `CloudConfigurationAlreadyPresentError`,
+  which is caught and treated as success (setup already handled) instead of
+  aborting the apply.
 
 **Phase 5 (95-100%)**: `reboot_device()` — only when auto-reboot is on
 

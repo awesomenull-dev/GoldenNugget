@@ -56,12 +56,14 @@ class _ThemeCard(QFrame):
         self.preview_lbl.setFixedHeight(PREVIEW_H)
         self.preview_lbl.setAlignment(Qt.AlignCenter)
         self.preview_lbl.setText(QCoreApplication.translate("Nugget", "Loading..."))
+        self.preview_lbl.setAttribute(Qt.WA_TransparentForMouseEvents)
         layout.addWidget(self.preview_lbl)
 
         name = QLabel(theme.name, self)
         name.setObjectName("ipName")
         name.setWordWrap(True)
         name.setAlignment(Qt.AlignCenter)
+        name.setAttribute(Qt.WA_TransparentForMouseEvents)
         layout.addWidget(name)
 
         meta_parts = [theme.author, theme.version]
@@ -70,6 +72,7 @@ class _ThemeCard(QFrame):
         meta_lbl.setObjectName("ipMeta")
         meta_lbl.setAlignment(Qt.AlignCenter)
         meta_lbl.setWordWrap(True)
+        meta_lbl.setAttribute(Qt.WA_TransparentForMouseEvents)
         layout.addWidget(meta_lbl)
 
         if theme.description:
@@ -77,8 +80,15 @@ class _ThemeCard(QFrame):
             desc.setObjectName("ipDesc")
             desc.setWordWrap(True)
             desc.setAlignment(Qt.AlignCenter)
+            desc.setAttribute(Qt.WA_TransparentForMouseEvents)
             layout.addWidget(desc)
         layout.addStretch()
+
+    def mouseReleaseEvent(self, event):
+        if (event.button() == Qt.LeftButton
+                and self._on_click is not None):
+            self._on_click(self)
+        super().mouseReleaseEvent(event)
 
     def _retheme(self):
         c = ColorThemeManager.instance().colors

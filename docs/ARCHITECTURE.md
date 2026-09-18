@@ -275,10 +275,11 @@ retries once on a fresh connection (`max_sparse_attempts = 2`).
 A 1-hour stale-working-copy GC removes old `nugget_protective_*` temp dirs at
 the start of `_restore_ios27`.
 
-Sparse staging itself lives in `backup.py` + `mbdb.py` (MBDB/Manifest
-construction) and `__init__.py::perform_restore` (with `GOLDENNUGGET_KEEP_SPARSE`
-debug copy support). `_Mobilebackup2NoEscrow` is used when a fresh post-wipe
-re-pair carries no EscrowBag.
+Sparse staging itself lives in `backup.py` (Status.plist `Version: 3.3` +
+sqlite `Manifest.db`, the same format as the protective backup) and
+`__init__.py::perform_restore` (with `GOLDENNUGGET_KEEP_SPARSE` debug copy
+support). `_Mobilebackup2NoEscrow` is used when a fresh post-wipe re-pair
+carries no EscrowBag.
 
 ### The `restore/` package — protective backup, injection and the cache
 The protective backup pipeline lives in `protective.py` (live backup,

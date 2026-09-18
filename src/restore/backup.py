@@ -2,10 +2,10 @@ from dataclasses import dataclass
 from datetime import datetime
 import plistlib
 from pathlib import Path
+import sqlite3
 from base64 import b64decode
 from hashlib import sha1
-from . import mbdb
-from .mbdb import _FileMode
+from src.utils.file_to_restore import _FileMode
 from random import randbytes
 from typing import Optional
 
@@ -17,9 +17,6 @@ DEFAULT = _FileMode.S_IRUSR | _FileMode.S_IWUSR | _FileMode.S_IXUSR | _FileMode.
 class BackupFile:
     path: str
     domain: str
-
-    def to_record(self) -> mbdb.MbdbRecord:
-        raise NotImplementedError()
 
 @dataclass
 class ConcreteFile(BackupFile):
@@ -45,57 +42,11 @@ class ConcreteFile(BackupFile):
         self.size = len(contents)
         return contents
 
-    def to_record(self) -> mbdb.MbdbRecord:
-        if self.inode is None:
-            self.inode = int.from_bytes(randbytes(8), "big")
-        if self.hash == None or self.size == None:
-            self.read_contents()
-        return mbdb.MbdbRecord(
-            domain=self.domain,
-            filename=self.path,
-            link="",
-            hash=self.hash,
-            key=self.key,
-            mode=self.mode | _FileMode.S_IFREG,
-            #unknown2=0,
-            #unknown3=0,
-            inode=self.inode,
-            user_id=self.owner,
-            group_id=self.group,
-            mtime=int(datetime.now().timestamp()),
-            atime=int(datetime.now().timestamp()),
-            ctime=int(datetime.now().timestamp()),
-            size=self.size,
-            flags=self.flags,
-            properties=[]
-        )
-
 @dataclass
 class Directory(BackupFile):
     owner: int = 0
     group: int = 0
     mode: _FileMode = DEFAULT
-
-    def to_record(self) -> mbdb.MbdbRecord:
-        return mbdb.MbdbRecord(
-            domain=self.domain,
-            filename=self.path,
-            link="",
-            hash=b"",
-            key=b"",
-            mode=self.mode | _FileMode.S_IFDIR,
-            #unknown2=0,
-            #unknown3=0,
-            inode=0, # inode is not respected for directories
-            user_id=self.owner,
-            group_id=self.group,
-            mtime=int(datetime.now().timestamp()),
-            atime=int(datetime.now().timestamp()),
-            ctime=int(datetime.now().timestamp()),
-            size=0,
-            flags=4,
-            properties=[]
-        )
     
 @dataclass
 class AppBundle:
@@ -112,12 +63,13 @@ class Backup:
     def write_to_directory(self, directory: Path):
         for file in self.files:
             if isinstance(file, ConcreteFile):
-                #print("Writing", file.path, "to", directory / sha1((file.domain + "-" + file.path).encode()).digest().hex())
-                with open(directory / sha1((file.domain + "-" + file.path).encode()).digest().hex(), "wb") as f:
+                file_id = sha1((file.domain + "-" + file.path).encode()).digest().hex()
+                payload = directory / file_id[:2] / file_id
+                payload.parent.mkdir(parents=True, exist_ok=True)
+                with open(payload, "wb") as f:
                     f.write(file.read_contents())
-            
-        with open(directory / "Manifest.mbdb", "wb") as f:
-            f.write(self.generate_manifest_db().to_bytes())
+
+        self._write_manifest_db(directory)
 
         with open(directory / "Status.plist", "wb") as f:
             f.write(self.generate_status())
@@ -129,11 +81,76 @@ class Backup:
             f.write(plistlib.dumps({}))
         
 
-    def generate_manifest_db(self): # Manifest.mbdb
+    def _mb_file_blob(self, relative_path: str, mode: int, size: int,
+                      mtime: int, inode: int, uid: int, gid: int,
+                      protection_class: int) -> bytes:
+        # NSKeyedArchiver-encoded MBFile plist — the exact shape the device
+        # writes into a real Manifest.db (backup format 3.3 / sqlite).
+        return plistlib.dumps({
+            "$version": 100000,
+            "$archiver": "NSKeyedArchiver",
+            "$top": {"root": plistlib.UID(1)},
+            "$objects": [
+                None,
+                {
+                    "LastModified": mtime,
+                    "Flags": 0,
+                    "GroupID": gid,
+                    "$class": plistlib.UID(3),
+                    "LastStatusChange": mtime,
+                    "RelativePath": plistlib.UID(2),
+                    "Birth": mtime,
+                    "Size": size,
+                    "InodeNumber": inode,
+                    "Mode": mode,
+                    "UserID": uid,
+                    "ProtectionClass": protection_class,
+                },
+                relative_path,
+                {"$classname": "MBFile", "$classes": ["MBFile", "NSObject"]},
+            ],
+        }, fmt=plistlib.FMT_BINARY)
+
+    def _write_manifest_db(self, directory: Path) -> None:  # Manifest.db
+        file_id_of = lambda f: sha1((f.domain + "-" + f.path).encode()).digest().hex()
         records = []
+        now = int(datetime.now().timestamp())
         for file in self.files:
-            records.append(file.to_record())
-        return mbdb.Mbdb(records=records)
+            file_id = file_id_of(file)
+            if isinstance(file, ConcreteFile):
+                if file.inode is None:
+                    file.inode = int.from_bytes(randbytes(8), "big")
+                if file.size is None:
+                    file.read_contents()
+                blob = self._mb_file_blob(file.path, int(_FileMode.S_IFREG | file.mode),
+                                          file.size, now, file.inode,
+                                          file.owner, file.group, 3)
+                records.append((file_id, file.domain, file.path, 1, blob))
+            else:
+                # Directory row (flags=2) — no payload file, dirs are created
+                # by the restore agent from the row alone.
+                blob = self._mb_file_blob(file.path, int(_FileMode.S_IFDIR | file.mode),
+                                          0, now, 0, file.owner, file.group, 0)
+                records.append((file_id, file.domain, file.path, 2, blob))
+
+        conn = sqlite3.connect(str(directory / "Manifest.db"))
+        try:
+            cur = conn.cursor()
+            cur.executescript("""
+                CREATE TABLE Files (fileID TEXT PRIMARY KEY,
+                                    domain TEXT, relativePath TEXT,
+                                    flags INTEGER, file BLOB);
+                CREATE TABLE Properties (key TEXT PRIMARY KEY, value BLOB);
+                CREATE INDEX FilesDomainsRelativePathIdx ON Files(domain, relativePath);
+                CREATE INDEX FilesFlagsIdx ON Files(flags);
+                CREATE INDEX FilesRelativePathIdx ON Files(relativePath);
+            """)
+            cur.executemany(
+                "INSERT INTO Files (fileID, domain, relativePath, flags, file) "
+                "VALUES (?, ?, ?, ?, ?)", records)
+            conn.commit()
+        finally:
+            conn.close()
     
     def generate_status(self) -> bytes: # Status.plist
         return plistlib.dumps({
@@ -142,7 +159,7 @@ class Backup:
             "IsFullBackup": False,
             "SnapshotState": "finished",
             "UUID": "00000000-0000-0000-0000-000000000000",
-            "Version": "2.4"
+            "Version": "3.3"
         })
     
     def generate_manifest(self) -> bytes: # Manifest.plist

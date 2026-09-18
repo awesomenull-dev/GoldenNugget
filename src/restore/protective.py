@@ -66,6 +66,11 @@ class PreparedBackup:
     """A protective backup prepared ahead of the three-phase restore."""
     root: str
     manifest_password: str = ""  # required to prune/inject encrypted manifests
+    # True when ``root`` is the CACHE MASTER — an immutable, incrementally
+    # refreshed store. Restores must never prune/inject it in place; the caller
+    # makes a hardlink working copy instead. False for a fresh live backup,
+    # which the restore prunes and restores from directly (no temp copy).
+    master: bool = False
 
 
 # Minimum free disk space required before any device backup is started.
@@ -668,8 +673,11 @@ PROTECTIVE_PERSIST_DIRNAME = "protective"
 # in restore.py can never match a real backup.
 WORKING_COPY_PREFIX = "nugget_working_"
 
-# Retention for finished live backups: how many to keep per device.
-PROTECTIVE_KEEP_RUNS = 2
+# Retention for finished live backups: how many to keep per device. A new run
+# replaces the previous one — old full copies just burn the very disk space an
+# apply needs (the fresh run is what actually gets restored), and a retained
+# run is pruned in place anyway once the restore consumes it.
+PROTECTIVE_KEEP_RUNS = 1
 
 
 def protective_persistent_base() -> Path:

@@ -686,7 +686,6 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
             # a temp leftover. A fresh directory per run also means a failed
             # backup cannot damage the previous run's copy.
             backup_root = new_protective_backup_dir(udid)
-            prune_protective_backups(udid)
             update_label(QCoreApplication.tr("Backing up device..."))
             # include_keychain is left None (auto) so it follows the device's
             # live encryption state — one less round-trip before the backup.
@@ -694,19 +693,19 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
                 lc, backup_root, progress_callback=self._backup_progress(update_label),
                 include_photos=True, include_posterboard=needs_posterboard,
                 include_keychain=None)
+            # Only retire the previous run once this one is solid — pruning
+            # early would delete the last good backup before the new run exists.
+            prune_protective_backups(udid)
             self._known_backup_encryption = is_encrypted
             log_info(f"Phase 0: live protective backup ready (always fresh; "
                      f"PosterBoard container {'included' if needs_posterboard else 'not needed'}; "
                      f"keychain {'included' if is_encrypted else 'excluded (backup not encrypted)'})")
-            prepared = PreparedBackup(root=backup_root, manifest_password="")
+            prepared = PreparedBackup(root=backup_root, manifest_password="", master=False)
             if needs_posterboard and is_encrypted:
                 log_warn("Encrypted backup cannot yield a readable PosterBoard DB — "
                          "falling back to a separate backup")
                 return prepared, False
             return prepared, _register_pb_db(backup_root)
-    
-        cache_enabled = (self.pref_manager.use_backup_cache
-                         and not os.environ.get("GOLDENNUGGET_NO_BACKUP_CACHE"))
     
         async with lockdown_session(udid) as lc:
             if not cache_enabled:
@@ -747,7 +746,7 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
                     include_photos=True, include_posterboard=needs_posterboard,
                     include_keychain=encrypted)
     
-            prepared = PreparedBackup(root=master_root, manifest_password=manifest_password)
+            prepared = PreparedBackup(root=master_root, manifest_password=manifest_password, master=True)
             if needs_posterboard and encrypted:
                 log_warn("Encrypted cache cannot yield a readable PosterBoard DB — "
                          "falling back to a separate backup")

@@ -461,7 +461,7 @@ def is_protective_device_file(device_name: str, include_photos: bool = True,
     do not re-upload them.
     """
     for domain in (("CameraRollDomain", "MediaDomain") if include_photos else ()) + \
-            ("SystemPreferencesDomain", "MessagesDomain"):
+            ("SystemPreferencesDomain", "MessagesDomain", "AddressBookDomain"):
         if _domain_match(device_name, domain):
             return True
     if include_photos and _tree_match(device_name, "Media"):

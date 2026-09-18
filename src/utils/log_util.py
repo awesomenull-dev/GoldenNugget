@@ -21,3 +21,8 @@ def log_warn(msg: str) -> None:
 def log_error(msg: str) -> None:
     """Log an error through the session logger."""
     _logger.error(msg)
+
+
+def log_debug(msg: str) -> None:
+    """Log a debug message through the session logger (verbose file only)."""
+    _logger.debug(msg)

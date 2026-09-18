@@ -8,10 +8,8 @@ Two mechanisms, both kept GUI-independent so the backend apply path
 * ``targeted_posterboard_database_backup`` — modern channel: backs up ONLY the
   PosterBoard container (everything else the device uploads is drained
   mid-stream, never written to disk) and hands back a WAL-merged copy of the
-  sqlite. This is what iOS 26 applies use instead of the full Phase 0 backup.
-
-``src/gui/dialogs/pb_dialog.py`` imports the legacy function for its
-"Fetch Database File" wizard.
+  sqlite. This is what iOS 26 applies use instead of the full Phase 0 backup,
+  and what the "Fetch Database File" wizard calls.
 """
 
 import os

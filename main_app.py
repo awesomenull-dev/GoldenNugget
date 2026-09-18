@@ -106,7 +106,8 @@ def main() -> int:
 
     # Setup logging
     log_file = os.environ.get("GOLDENNUGGET_LOG_FILE")
-    if "--debug" in sys.argv:
+    verbose = "--debug" in sys.argv or os.environ.get("GOLDENNUGGET_VERBOSE") not in (None, "", "0")
+    if verbose:
         setup_logging(log_file, logging.DEBUG, capture_pymobiledevice3=True)
     else:
         setup_logging(log_file)

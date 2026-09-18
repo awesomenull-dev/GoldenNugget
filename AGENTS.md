@@ -185,7 +185,10 @@ backup in the persistent app-data store
   (`extract_posterboard_db`); pruned from the restore copy so Phase 3 never
   clobbers the tweaked DB from Phase 2. The DB is resolved by FILE NAME —
   the store dir's structure version (61, 62, ...) varies between iOS
-  releases. The on-device DB runs in WAL mode: `-wal` is extracted and folded
+  releases and its name is not even present in some iOS 27.x upload paths
+  (confirmed by the macOS bug report on iOS 27.0 build 24A435), so both the
+  manifest query and the mid-stream filter match on the database filename
+  `PBFPosterExtensionDataStoreSQLiteDatabase.sqlite3` alone. The on-device DB runs in WAL mode: `-wal` is extracted and folded
   into one consolidated database via the SQLite online-backup API (the `-shm`
   is NEVER copied — a stale shm desyncs against the wal and is a classic
   source of "database disk image is malformed"); on failure it degrades to
@@ -342,11 +345,19 @@ backup in the persistent app-data store
 
 ## PosterBoard Backup (src/gui/dialogs/pb_dialog.py)
 
-### `backup_posterboard_database()`
-- Backs up the PosterBoard SQLite database for animated wallpapers
-- Uses incremental backup if a previous backup exists
+### `targeted_posterboard_database_backup` (wizard channel)
+- The "Fetch Database File" wizard (`PosterBoardDBWizard`) backs up ONLY the
+  PosterBoard container via `targeted_posterboard_database_backup` in
+  `src/restore/posterboard_backup.py` — no full-device backup, nothing extra
+  written to disk (mid-stream drain), result is a WAL-merged sqlite at
+  `<AppData>/PosterBoard/<udid>.sqlite3`, identical to the apply path.
 - Retry logic: 3 attempts, backoff `min(2**attempt, 15)`s (2s, 4s) for connection errors
-- Validates Manifest.db before extracting the database
+- Validates the extracted database before handing it to `update_database_file`
+
+### `backup_posterboard_database()` (legacy)
+- Backs up the whole device and extracts the PosterBoard SQLite database.
+  Full-device backup; only kept as a fallback (whole-device backup is what
+  used to make the wizard fail with "Backup Failed!", especially on macOS).
 
 ## Error Handling
 

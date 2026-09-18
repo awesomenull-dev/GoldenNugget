@@ -1,10 +1,7 @@
 import asyncio
 
-from PySide6.QtWidgets import QWizard, QWizardPage, QLabel, QVBoxLayout, QProgressBar, QSizePolicy, QCheckBox, QMessageBox
-from PySide6.QtCore import QSize, Qt, QStandardPaths
-
-from os import path
-from shutil import rmtree
+from PySide6.QtWidgets import QWizard, QWizardPage, QLabel, QVBoxLayout, QProgressBar, QSizePolicy, QMessageBox
+from PySide6.QtCore import QSize, Qt
 
 from src.exceptions.nugget_exception import NuggetException
 from src.gui.thread_workers.apply_worker import ApplyAlertMessage
@@ -17,7 +14,6 @@ class PosterBoardDBWizard(QWizard):
         self.udid = udid
         self.pbDBLbl = pbDBLbl
         self.backup_in_progress = False
-        self.delete_backup_when_done = False
         self.backup_successful = False
         self.update_savedIds_list = update_savedIds_list
 
@@ -43,21 +39,14 @@ class PosterBoardDBWizard(QWizard):
         self.setWindowTitle("Fetch Database File")
 
     # PAGES
-    def on_deleteBackupChk_toggled(self, enabled: bool):
-        self.delete_backup_when_done = enabled
     def createPage1(self) -> QWizardPage:
         # information page telling the user about backing up
         page = QWizardPage()
         page.setTitle("Notice")
-        message = QLabel("In order to get the file, Nugget needs to back up your device.")
-        delBkLbl = QLabel("If you do not delete the backup, this process will be faster when getting the file again.")
-        delBkChk = QCheckBox("Delete Backup When Complete")
-        delBkChk.toggled.connect(self.on_deleteBackupChk_toggled)
-        contLbl = QLabel("\nWould you like to continue?")
+        message = QLabel("GoldenNugget needs to download the PosterBoard database from your device.")
+        contLbl = QLabel("\nYour device is not erased or wiped — only the PosterBoard data is fetched.")
         layout = QVBoxLayout(page)
         layout.addWidget(message)
-        layout.addWidget(delBkLbl)
-        layout.addWidget(delBkChk)
         layout.addWidget(contLbl)
         page.setLayout(layout)
         return page
@@ -116,18 +105,11 @@ class PosterBoardDBWizard(QWizard):
         try:
             # Local import: the restore chain pulls in pymobiledevice3, which
             # must not be loaded while the GUI is still starting up.
-            from src.restore.posterboard_backup import backup_posterboard_database
-            app_data_path = path.join(QStandardPaths.writableLocation(QStandardPaths.AppDataLocation), 'Backups')
-            backup_folder = path.join(app_data_path, self.udid)
-            db_file_path = await backup_posterboard_database(self.udid, update_label, update_progress)
+            from src.restore.posterboard_backup import targeted_posterboard_database_backup
+            db_file_path = await targeted_posterboard_database_backup(self.udid, update_label, update_progress)
             if not tweaks[TweakID.PosterBoard].config_manager.update_database_file(db_file_path, self.udid):
                 raise NuggetException("The database is not of the correct format!")
             update_label("sqlite: Selected")
-
-            # delete backup files if wanted
-            if self.delete_backup_when_done:
-                update_label("Deleting backup...")
-                rmtree(backup_folder)
 
             # re-enable next button
             self.backup_successful = True

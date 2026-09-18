@@ -56,7 +56,7 @@ from src.tweaks.basic_plist_locations import FileLocation
 
 from src.restore.restore import restore_files, FileToRestore
 from src.restore.original_plist import psysbackup, materialize_plist, is_empty_plist, mobile_user_fallback_path
-from src.restore.protective import log_info, log_warn
+from src.restore.protective import log_error, log_info, log_warn
 
 def get_files_list_str(files_list: list[FileToRestore] = None) -> str:
     files_str: str = ""
@@ -796,6 +796,7 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
             pb.config_manager.update_for_saved_database(udid)
             update_label(QCoreApplication.tr("PosterBoard database backed up successfully."))
         except Exception as e:
+            log_error(f"Failed to back up PosterBoard database: {e}\n{traceback.format_exc()}")
             print(f"Failed to back up PosterBoard database: {e}")
             print(traceback.format_exc())
             if _is_device_locked_error(e):

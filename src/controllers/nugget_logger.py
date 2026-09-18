@@ -25,9 +25,10 @@ from logging.handlers import RotatingFileHandler
 _active_log_path: str | None = None
 _file_handler: logging.Handler | None = None
 
-# Keep 5 x 8 MiB = 40 MiB max on disk per run.
-_MAX_BYTES = 8 * 1024 * 1024
-_BACKUP_COUNT = 5
+# Keep 6 x 16 MiB = 96 MiB max on disk per run (verbose DEBUG sessions can get
+# chatty, and a rotated-away early line is exactly what a bug report needs).
+_MAX_BYTES = 16 * 1024 * 1024
+_BACKUP_COUNT = 6
 
 
 def get_log_dir() -> str:

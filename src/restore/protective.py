@@ -32,6 +32,7 @@ import asyncio
 import os
 import shutil
 import sqlite3
+import sys
 import tempfile
 import time
 import uuid as _uuid
@@ -165,7 +166,7 @@ async def check_disk_space_for_backup(lockdown_client=None, path: str = None,
 # Importing this module applies it process-wide.
 _sc.DEFAULT_SSL_HANDSHAKE_TIMEOUT = 60
 
-from src.utils.log_util import log_info, log_warn, log_error
+from src.utils.log_util import log_info, log_warn, log_error, log_debug
 
 # --- DeviceLink protocol constants (from pymobiledevice3.services.device_link) ---
 
@@ -392,10 +393,58 @@ def _posterboard_db_match(device_name: str) -> bool:
     between iOS releases and lives inside an app container either as
     ``AppDomain-com.apple.PosterBoard/...`` (iOS 26) or under the raw file tree
     ``/.b/<n>/Containers/...`` (iOS 27), so matching is done by file name, not
-    path or domain.
+    path or domain. Matching is pinned to the (unique) database file name only —
+    the ``PRBPosterExtensionDataStore`` store-dir name also varies across iOS
+    releases and is missing entirely from some iOS 27.x upload paths.
     """
     name = _norm_device_name(device_name)
-    return "PRBPosterExtensionDataStore" in name and POSTERBOARD_DB_NAME in name
+    return POSTERBOARD_DB_NAME in name
+
+
+def _install_device_link_verbose() -> None:
+    """Log DeviceLink free-space / purge traffic once, process-wide.
+
+    The device decides how much it uploads (and whether it trims large app
+    containers like PosterBoard) based on the free-space value the host reports
+    on ``DLMessageGetFreeDiskSpace`` — the only platform-forked part of the
+    whole backup path (APFS purgeable space on macOS). This wrapper keeps the
+    upstream behaviour identical and only adds visibility into the exchanged
+    values, so a failing run shows whether the device was told there was too
+    little room.
+    """
+    try:
+        from pymobiledevice3.services.device_link import DeviceLink
+    except Exception as e:  # pragma: no cover - defensive
+        log_debug(f"DeviceLink verbose hook not installed: {e}")
+        return
+    if getattr(DeviceLink, "_gn_verbose_installed", False):
+        return
+
+    async def get_free_disk_space(self, _message):
+        statvfs = shutil.disk_usage(self.root_path).free
+        important = None
+        if sys.platform == "darwin":
+            try:
+                from pymobiledevice3.services.device_link import _darwin_important_available_capacity
+                important = _darwin_important_available_capacity(self.root_path)
+            except Exception as e:
+                log_debug(f"darwin important-capacity lookup failed: {e}")
+        freespace = max(statvfs, important) if important is not None else statvfs
+        log_info(f"DeviceLink free-space query | root={self.root_path} | "
+                 f"statvfs={statvfs} | purgeable_aware={important} | reported={freespace}")
+        await self.status_response(0, status_dict=freespace)
+
+    async def purge_disk_space(self, _message):
+        log_warn("DeviceLink: device requested DISK PURGE — it believes the host "
+                 "is low on free space; a full backup would likely be refused/trimmed")
+        raise NotEnoughDiskSpaceError()
+
+    DeviceLink.get_free_disk_space = get_free_disk_space
+    DeviceLink.purge_disk_space = purge_disk_space
+    DeviceLink._gn_verbose_installed = True
+
+
+_install_device_link_verbose()
 
 
 def is_protective_device_file(device_name: str, include_photos: bool = True,
@@ -522,6 +571,9 @@ class ProtectiveBackupService(Mobilebackup2Service):
                 entry["PlaceholderIcon"] = b""
             info["Installed Applications"] = [bundle_id]
             info["Applications"] = {bundle_id: entry}
+            log_debug(f"PosterBoard container added to factory info: "
+                      f"bundle={bundle_id} Container={app_info.get('Container')} "
+                      f"keys={sorted(entry.keys())}")
         except Exception as e:
             log_warn(f"PosterBoard container inclusion failed: {e}")
 
@@ -538,12 +590,25 @@ async def perform_protective_backup(
     if not incremental_ok:
         Path(backup_root).mkdir(parents=True, exist_ok=True)
 
+    _pb_names_to_db: list = []
+    _totals = {"seen": 0, "kept": 0, "containers": 0}
+
     def _filter_callback(backup_file):
-        return is_protective_device_file(
-            backup_file.device_name or "",
+        name = backup_file.device_name or ""
+        keep = is_protective_device_file(
+            name,
             include_photos=include_photos,
             include_posterboard=include_posterboard,
             include_keychain=include_keychain)
+        _totals["seen"] += 1
+        _totals["kept"] += int(keep)
+        low = name.lower()
+        if "containers/" in low or "/.b/" in low:
+            _totals["containers"] += 1
+        if include_posterboard and ("poster" in low or POSTERBOARD_DB_NAME.lower() in low):
+            _pb_names_to_db.append((name, keep))
+            log_debug(f"PB filter {'KEEP' if keep else 'drop'}: {name}")
+        return keep
 
     is_encrypted = False
     async with ProtectiveBackupService(lockdown_client, include_posterboard=include_posterboard) as mb:
@@ -568,6 +633,11 @@ async def perform_protective_backup(
                             filter_callback=_filter_callback)
         except NotEnoughDiskSpaceError:
             log_warn("Device sent disk space purge request — ignoring, backup data is preserved")
+
+    kept = sum(1 for _, keep in _pb_names_to_db if keep)
+    log_info(f"Backup upload tally: seen={_totals['seen']} kept={_totals['kept']} "
+             f"container_paths={_totals['containers']} | PosterBoard names seen="
+             f"{len(_pb_names_to_db)} (kept {kept}, dropped {len(_pb_names_to_db) - kept})")
 
     return is_encrypted
 
@@ -799,30 +869,47 @@ def extract_posterboard_db(backup_root: str, udid: str, dest_path: str) -> Optio
         if (Path(backup_root) / "Manifest.db").is_file():
             device_dir = Path(backup_root)
         else:
+            log_debug(f"extract_posterboard_db: no device dir and no Manifest.db under {backup_root}")
             return None
     manifest_db = device_dir / "Manifest.db"
     if not _validate_sqlite_db(manifest_db):
+        log_warn(f"extract_posterboard_db: Manifest.db at {manifest_db} is missing/encrypted/"
+                 f"not a valid SQLite db (backup may be incomplete)")
         return None
+    log_debug(f"extract_posterboard_db: scanning {manifest_db}")
     conn = sqlite3.connect(str(manifest_db))
     try:
         pb_rows = conn.execute(
             "SELECT fileID, relativePath FROM Files "
-            "WHERE relativePath LIKE ? ORDER BY relativePath",
-            (f"%{POSTERBOARD_DB_STORE_DIR}%",),
+            "WHERE relativePath LIKE ? OR relativePath LIKE ? "
+            "ORDER BY relativePath",
+            (f"%{POSTERBOARD_DB_NAME}%", f"%{POSTERBOARD_DB_STORE_DIR}%"),
         ).fetchall()
+        if not pb_rows:
+            # Diagnostics: was the container just not uploaded (no Containers/
+            # rows and no Poster-ish rows) or uploaded under an unexpected name
+            # (Containers exist, but no row matches the DB name)?
+            total_rows = conn.execute("SELECT COUNT(*) FROM Files").fetchone()[0]
+            container_count = conn.execute(
+                "SELECT COUNT(*) FROM Files WHERE relativePath LIKE '%Containers/%'").fetchone()[0]
+            poster_rows = conn.execute(
+                "SELECT relativePath FROM Files WHERE relativePath LIKE '%Poster%' "
+                "ORDER BY relativePath LIMIT 20").fetchall()
+            log_warn(
+                f"Master manifest has NO PosterBoard rows ({total_rows} rows total, "
+                f"{container_count} under Containers/; Poster-ish sample: "
+                f"{[r[0] for r in poster_rows]})")
+            return None
     finally:
         conn.close()
-
-    if not pb_rows:
-        log_warn("Master manifest has NO PosterBoard rows — the device did not back up the container")
-        return None
 
     # resolve by FILE NAME: the store dir carries a structure version that
     # varies between iOS releases; prefer the highest-versioned match
     candidates = sorted((r for r in pb_rows if r[1].endswith(POSTERBOARD_DB_NAME)),
                         key=lambda r: r[1], reverse=True)
     if not candidates:
-        log_warn(f"No {POSTERBOARD_DB_NAME} among the PosterBoard rows")
+        log_warn(f"No {POSTERBOARD_DB_NAME} among the PosterBoard rows; "
+                 f"sample rows: {[r[1] for r in pb_rows[:5]]}")
         return None
     file_id, rel_path = candidates[0]
 
@@ -836,10 +923,14 @@ def extract_posterboard_db(backup_root: str, udid: str, dest_path: str) -> Optio
 
     main_payload = _payload_for("")
     if main_payload is None:
+        log_warn(f"extract_posterboard_db: manifest row for {rel_path} exists but its "
+                 f"payload file {device_dir / file_id[:2] / file_id} is missing "
+                 f"(mid-stream filter dropped it?)")
         return None
 
     dest = Path(dest_path)
     dest.parent.mkdir(parents=True, exist_ok=True)
+    log_debug(f"extract_posterboard_db: using {rel_path} (fileID={file_id}) -> {dest}")
 
     wal_payload = _payload_for("-wal")
     if wal_payload is None:

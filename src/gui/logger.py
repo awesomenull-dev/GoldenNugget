@@ -78,7 +78,10 @@ def setup_logging(log_file: str = None, level: int = logging.INFO,
     init_logging()
 
     logger = logging.getLogger("GoldenNugget")
-    logger.setLevel(level)
+    # The session FILE always captures DEBUG (the file handler is created at
+    # DEBUG in nugget_logger); only the console handler honours ``level`` so a
+    # normal launch stays quiet on screen while the log stays verbose.
+    logger.setLevel(logging.DEBUG)
     logger.propagate = False
 
     # Clear only previously-added console handlers; keep the file handler that

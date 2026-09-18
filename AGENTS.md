@@ -173,7 +173,10 @@ backup in the persistent app-data store
   incremental refresh — repeat applies upload only what changed on the device.
 - Restores never touch the master: `make_protective_working_copy()` builds a
   throwaway hardlink copy (metadata files are real copies — pruning rewrites
-  Manifest.db and a hardlink would corrupt the master).
+  Manifest.db and a hardlink would corrupt the master). Only the CACHE master
+  goes through a working copy; a fresh Phase-0 live backup is pruned **in
+  place** in the restore (no /tmp copy to spill onto another volume and OSError
+  with ENOSPC), and the retained run IS that pruned backup.
 - Invalidated by UDID/iOS-version change. The master ALWAYS lives in the
   persistent store (never temp): it is the only copy of user data between
   Phase 2 (device wipe) and Phase 3 (restore), so a temp placement would
@@ -249,7 +252,7 @@ backup in the persistent app-data store
 > Phase 3 ends at 90% and the last 10% belongs to skip-setup and reboot.
 
 **Phase 1 (0-40%)**: Protective Backup
-- With `prepared_backup_root` (cached master OR the fresh Phase-0 live backup): builds a hardlink working copy — no device backup runs here. Without it: `perform_protective_backup()` runs live. With `skip_protective_backup`: the phase is skipped entirely (user opted out on low disk space)
+- With `prepared_backup_root` (cached master -> hardlink working copy; fresh Phase-0 live backup -> pruned in place, no copy): no device backup runs here. Without it: `perform_protective_backup()` runs live. With `skip_protective_backup`: the phase is skipped entirely (user opted out on low disk space)
 - Otherwise: `perform_protective_backup()` — selective backup of photos, Apple ID, settings
 - `clean_backup_for_restore()` — prunes manifest to protective files only
 - Injects PosterBoard files (`pb_inject_files`, AppDomain) — the only injected tweak payload today
@@ -310,7 +313,7 @@ backup in the persistent app-data store
   itself has no retry loop
 
 ### Live backup retention (src/restore/protective.py)
-- `prune_protective_backups()` keeps the newest `PROTECTIVE_KEEP_RUNS=2` runs and
+- `prune_protective_backups()` keeps the newest `PROTECTIVE_KEEP_RUNS=1` run and
   deletes every older run outright (no age guard, no payload dedupe).
 
 ### `clean_backup_for_restore()` (src/restore/protective.py)
@@ -452,7 +455,7 @@ _apply_changes()
          |_ start_restore(prepared_backup_root)
               |_ restore_files()
                    |_ _restore_ios27()
-                        Phase 1 (0-40%):  hardlink working copy of prepared backup (cache master OR fresh Phase-0 live)
+                        Phase 1 (0-40%):  cache master -> hardlink working copy; fresh Phase-0 live -> prune in place
                                          + clean_backup_for_restore() + inject PosterBoard (AppDomain)
                                          (skipped entirely if the user opted out on low disk space)
                         Phase 2 (40-60%): perform_restore() (sparse) -> reboot (25s+retry if drop at 0%)

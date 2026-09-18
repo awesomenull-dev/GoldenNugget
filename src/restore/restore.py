@@ -442,9 +442,19 @@ skip_setup: bool = True,
     manifest_password = ((prepared_backup_root.manifest_password if using_cache else "")
                          or backup_password)
     protective_dir = None
-    if using_cache:
+    need_working_copy = using_cache and prepared_backup_root.master
+    if need_working_copy:
+        # Cache master is immutable (incremental store): prune/inject happens on
+        # a throwaway hardlink copy so the master keeps its full manifest.
         backup_root = await asyncio.to_thread(
             make_protective_working_copy, prepared_backup_root.root, udid)
+        protective_dir = os.path.dirname(backup_root)
+    elif using_cache:
+        # A fresh Phase-0 live backup is disposable by nature — prune it in
+        # place, no /tmp copy (a hardlink copy can spill onto another volume
+        # via copy2 and OSError with ENOSPC, and a real full backup on a tight
+        # disk is exactly the case this path must survive).
+        backup_root = prepared_backup_root.root
         protective_dir = os.path.dirname(backup_root)
     else:
         # Live backup taken here rather than pre-prepared. It still has to go
@@ -452,7 +462,6 @@ skip_setup: bool = True,
         # which this directory is the sole copy of the user's data. A temp dir
         # would be swept by the cleanup below (or lost on reboot).
         backup_root = new_protective_backup_dir(udid)
-        prune_protective_backups(udid)
         protective_dir = os.path.dirname(backup_root)
     backup_complete = False
     try:
@@ -502,6 +511,9 @@ skip_setup: bool = True,
                 include_photos=True,
                 include_keychain=include_keychain,
             )
+            # Only retire the previous run once this one is solid (see the same
+            # after-success prune in device_manager._live_backup).
+            prune_protective_backups(udid)
         backup_complete = not skip_protective_backup
 
         # Prune Manifest.db + orphan payloads in a worker thread
@@ -705,22 +717,23 @@ skip_setup: bool = True,
                 e.add_note(f"Protective backup kept at: {kept}")
             except AttributeError:
                 pass
-            if using_cache:
+            if need_working_copy:
                 # the master stays for debugging; drop only the pruned working copy
                 shutil.rmtree(protective_dir, ignore_errors=True)
             raise
         log_error(f"Restore failed before backup completed: {e}")
-        shutil.rmtree(protective_dir, ignore_errors=True)
+        if protective_dir:
+            shutil.rmtree(protective_dir, ignore_errors=True)
         raise
 
-    if using_cache:
+    if need_working_copy:
         # working copy was fully restored; the master cache stays for next apply
         shutil.rmtree(protective_dir, ignore_errors=True)
     elif skip_protective_backup:
         # user opted out of data protection — nothing was kept
         shutil.rmtree(protective_dir, ignore_errors=True)
     else:
-        log_info(f"Protective backup kept at: {backup_root}")
+        log_info(f"Protective backup kept at: {protective_dir}")
     log_info(f"iOS 27 restore completed successfully in {time.monotonic() - started:.1f}s")
     progress_callback(100)
 

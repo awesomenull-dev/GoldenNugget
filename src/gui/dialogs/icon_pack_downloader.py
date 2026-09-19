@@ -161,7 +161,7 @@ class IconPackDownloaderDialog(QDialog):
         self._preview_replies = []
         self._preview_queue = []
         self._download_reply = None
-        self._download_theme = None
+        self._downloading_theme = None
         self._downloading = False
 
         self._cards = []
@@ -275,7 +275,7 @@ class IconPackDownloaderDialog(QDialog):
 
     def _download_theme(self, theme):
         self._downloading = True
-        self._download_theme = theme
+        self._downloading_theme = theme
         self.status_lbl.setText(QCoreApplication.translate(
             "Nugget", "Downloading \"{0}\"...").format(theme.name))
         self._download_reply = self._nam.get(
@@ -291,8 +291,8 @@ class IconPackDownloaderDialog(QDialog):
         data = bytes(reply.readAll())
         err = reply.error()
         reply.deleteLater()
-        theme = self._download_theme
-        self._download_theme = None
+        theme = self._downloading_theme
+        self._downloading_theme = None
         if err != QNetworkReply.NetworkError.NoError or not data:
             self.status_lbl.setText(QCoreApplication.translate(
                 "Nugget", "Download failed for \"{0}\".").format(theme.name if theme else ""))

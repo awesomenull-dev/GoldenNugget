@@ -380,10 +380,16 @@ class SettingsMixin:
 class NavigationMixin:
     """Page structure, shared IOS nav bar and sidebar selection."""
 
+    # Pages allowed to keep the iOS-style header inside the CLASSIC shell.
+    # Each one has a right action that is otherwise unreachable on the page
+    # itself (Icon Themes "+ Add Icon"). The PosterBoard page keeps its header
+    # in iOS mode only: it already has its own in-page "Import Files" card,
+    # so the header's "+ Add Tendies" would be redundant chrome in classic.
+    _classic_nav_pages = (10,)
+
     def _update_shared_nav(self, index: int):
         if self.theme_manager.current_theme == ThemeManager.CLASSIC:
-            # Icon Themes needs the header for its "+ Add Icon" right action
-            use_nav = index in self._nav_right_actions and index != 0
+            use_nav = index in self._classic_nav_pages
             self.ios_nav.setVisible(use_nav)
             if not use_nav:
                 return

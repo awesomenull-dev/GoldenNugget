@@ -66,9 +66,34 @@ class IOSIconThemesPage(QWidget):
         self._themes_box.setSpacing(8)
         self.content_layout.addLayout(self._themes_box)
 
+        reset_btn = QPushButton(QCoreApplication.translate(
+            "Nugget", "Reset Icon Themes"))
+        reset_btn.setObjectName("resetIconThemes")
+        reset_btn.setCursor(Qt.PointingHandCursor)
+        reset_btn.clicked.connect(self._reset_themes)
+        self._reset_btn = reset_btn
+        self.content_layout.addWidget(reset_btn)
+
         self.content_layout.addStretch()
 
         self._retheme()
+        self.refresh_themes()
+
+    def _reset_themes(self):
+        reply = QMessageBox.question(
+            self.window,
+            QCoreApplication.translate("Nugget", "Reset Icon Themes"),
+            QCoreApplication.translate(
+                "Nugget",
+                "Remove all icon themes from GoldenNugget? The themed "
+                "home-screen icons already on the device are not touched."),
+            QMessageBox.Yes | QMessageBox.Cancel,
+            QMessageBox.StandardButton.Cancel)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        tweak = tweaks[TweakID.IconThemes]
+        tweak.themes = []
+        tweak.set_enabled(False)
         self.refresh_themes()
 
     def _retheme(self):
@@ -91,6 +116,18 @@ class IOSIconThemesPage(QWidget):
         """)
         self.themes_placeholder.setStyleSheet(
             f"color: {c.text_secondary}; font-size: 15px; padding: 24px 0;")
+        self._reset_btn.setStyleSheet(f"""
+            QPushButton#resetIconThemes {{
+                background-color: {c.scrollbar};
+                border: none;
+                border-radius: 10px;
+                color: {c.error};
+                font-size: 15px;
+                font-weight: 600;
+                padding: 12px;
+            }}
+            QPushButton#resetIconThemes:hover {{ background-color: {c.surface_hover}; }}
+        """)
         # Rebuild the theme cards so their hardcoded label colors follow the
         # current palette too.
         if hasattr(self, "_themes_box"):

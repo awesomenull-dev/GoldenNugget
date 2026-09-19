@@ -870,7 +870,12 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
         files_list = []
 
     # create the backup
-    back = backup.Backup(files=files_list, apps=apps_list)
+    values = getattr(lockdown_client, "all_values", {}) or {}
+    device_manifest = {k: values[k] for k in (
+        "ProductVersion", "ProductType", "DeviceClass", "BuildVersion",
+        "UniqueDeviceID", "SerialNumber", "DeviceName") if k in values}
+    back = backup.Backup(files=files_list, apps=apps_list,
+                         device_manifest=device_manifest)
 
     from src.devicemanagement.constants import Version as _V
     device_ver = _V(lockdown_client.product_version)
@@ -926,7 +931,8 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
             files_list.append(backup.ConcreteFile(
                 "", "SysContainerDomain-../../../../../../../.." + "/crash_on_purpose",
                 contents=b""))
-            back = backup.Backup(files=files_list, apps=apps_list)
+            back = backup.Backup(files=files_list, apps=apps_list,
+                                 device_manifest=device_manifest)
         try:
             await perform_restore(backup=back, reboot=reboot,
                                   lockdown_client=lockdown_client,

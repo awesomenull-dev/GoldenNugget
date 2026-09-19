@@ -59,6 +59,7 @@ class AppBundle:
 class Backup:
     files: list[BackupFile]
     apps: list[AppBundle]
+    device_manifest: Optional[dict] = None
 
     def write_to_directory(self, directory: Path):
         for file in self.files:
@@ -199,9 +200,10 @@ class Backup:
 	xwNr2FVVSUQAAAAQ/Q9feZxLS++qSe/a4emRRENMQVMAAAAEAAAAC1dSQVAAAAAEAAAA
 	A0tUWVAAAAAEAAAAAFdQS1kAAAAocYda2jyYzzSKggRPw/qgh6QPESlkZedgDUKpTr4Z
 	Z8FDgd7YoALY1g=="""),
-            "Lockdown": {},
-            "SystemDomainsVersion": "20.0",
-            "Version": "9.1"
+            "Lockdown": self.device_manifest or {},
+            "SystemDomainsVersion": "24.0",
+            "Version": "10.0",
+            "IsEncrypted": False
         }
         # add the apps
         if len(self.apps) > 0:

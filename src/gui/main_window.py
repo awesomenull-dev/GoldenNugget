@@ -376,6 +376,10 @@ class MainWindow(QtWidgets.QMainWindow, DeviceBarMixin, SettingsMixin,
         pt_worker = getattr(getattr(self, "ios_passthemes", None), "_worker", None)
         if _still_running(pt_worker):
             terminating.append("passcode theme write")
+        pairing_worker = getattr(
+            getattr(self, "ios_settings", None), "_reset_pairing_thread", None)
+        if _still_running(pairing_worker):
+            terminating.append("pairing reset")
         if terminating:
             reply = QtWidgets.QMessageBox.question(
                 self,
@@ -398,6 +402,7 @@ class MainWindow(QtWidgets.QMainWindow, DeviceBarMixin, SettingsMixin,
             for worker in (
                 getattr(self, "worker_thread", None),
                 getattr(self, "_cache_restore_thread", None),
+                pairing_worker,
                 pt_worker,
             ):
                 if _still_running(worker):

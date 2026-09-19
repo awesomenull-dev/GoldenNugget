@@ -306,10 +306,29 @@ class IOSSettingsPage(QWidget):
                 QCoreApplication.translate("Nugget", "No device selected."),
             )
             return
+        current = getattr(self, "_reset_pairing_thread", None)
+        if current is not None and getattr(current, "isRunning", lambda: False)():
+            # already resetting — never spawn a second thread over the device
+            return
         thread = ResetPairingThread(self.window.device_manager)
+        # Hold the thread on this page like the other workers (ApplyThread,
+        # RefreshDevicesThread, RestoreCacheThread, PasscodeThemeWriteThread):
+        # a bare local reference lets the Python wrapper be garbage-collected
+        # while the native thread is still running, which Qt reports as
+        # "QThread: Destroyed while thread '' is still running" and aborts.
+        self._reset_pairing_thread = thread
         thread.done.connect(self._on_reset_pairing_done)
+        thread.finished.connect(self._on_reset_pairing_thread_finished)
         thread.finished.connect(thread.deleteLater)
         thread.start()
+
+    def _on_reset_pairing_thread_finished(self):
+        # run() returned, so the native thread is done; drop the page's
+        # reference (deleteLater is already queued via the other connection).
+        try:
+            self._reset_pairing_thread = None
+        except Exception:
+            pass
 
     def _on_reset_pairing_done(self, ok: bool, error: str):
         title = QCoreApplication.translate("Nugget", "Pairing Reset")

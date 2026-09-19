@@ -194,6 +194,7 @@ See [CONTRIBUTING.md](https://github.com/awesomenull-dev/GoldenNugget/blob/main/
 - [LEGACY] Old translations was crowdsourced using [Nugget POEditor][POEditorJoin]. Thank you everyone who assisted in the translation effort!
 - [LeminLimez] for creating Nugget.
 - [Wind0ws11Aero] for helping with development a lot.
+- [0xjonhnnydev] for [AirLift]
 - [PosterRestore][PosterRestoreDiscord] for their help with PosterBoard
   - Special thanks to [dootskyre][dootskyreX], [Middo][MiddoX], [dulark][dularkGitHub], forcequitOS, and pingubow for their work on nugget. It would not have been possible without them!
   - Thanks to [Snoolie for aar handling][python-aar-stuffGitHub]!
@@ -239,3 +240,5 @@ See [CONTRIBUTING.md](https://github.com/awesomenull-dev/GoldenNugget/blob/main/
 [HuyTwitter]: https://x.com/Little_34306
 [iTechExpertTwitter]: https://twitter.com/iTechExpert21
 [server]: https://discord.gg/Rm6r4zeE3y
+[0xjonhnnydev]: https://github.com/0xjohnnydev
+[AirLift]: https://github.com/0xjohnnydev/airlift

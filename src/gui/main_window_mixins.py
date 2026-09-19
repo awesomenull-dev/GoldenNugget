@@ -108,6 +108,12 @@ class DeviceBarMixin:
 
     def refresh_devices_finished(self):
         self.refresh_in_progress = False
+        # The thread's own ``finished -> deleteLater`` already freed the C++
+        # object; drop our reference so closeEvent never probes a dead wrapper.
+        try:
+            self.refresh_worker_thread = None
+        except Exception:
+            pass
         self.toggle_thread_btns(disabled=False)
         # clear the picker
         self.ui.devicePicker.clear()
@@ -744,11 +750,27 @@ class ApplyMixin:
         from src.gui.thread_workers.apply_worker import RestoreCacheThread
         if getattr(self, '_cache_restore_in_progress', False):
             return
+        if self.apply_in_progress:
+            # A restore and an apply/reset must never drive the device at the
+            # same time — both open their own lockdown sessions.
+            self.alert_message(ApplyAlertMessage(
+                txt="Cannot restore data while an apply/reset is in progress.",
+                title="Restore data",
+                icon=QtWidgets.QMessageBox.Warning,
+            ), log_to_console=False)
+            return
         self._cache_restore_in_progress = True
+        # Hold the thread on the window like ApplyThread/RefreshDevicesThread
+        # do. A bare local reference lets the Python wrapper be garbage-
+        # collected while the native thread is still running, which Qt reports
+        # as the "QThread: Destroyed while thread '' is still running" crash
+        # in the middle of a device restore.
         worker = RestoreCacheThread(manager=self.device_manager)
+        self._cache_restore_thread = worker
         worker.progress.connect(self._update_restore_label)
         worker.alert.connect(self.alert_message)
         worker.finished_with_result.connect(self._finish_cache_restore)
+        worker.finished.connect(self._cache_restore_thread_finished)
         worker.finished.connect(worker.deleteLater)
         worker.start()
 
@@ -763,11 +785,23 @@ class ApplyMixin:
     def _finish_cache_restore(self, success: bool, error_msg: str = ""):
         self._cache_restore_in_progress = False
         if not success or error_msg:
-            self.alert_message(ApplyAlertMessage(
-                txt=f"Restore data: {error_msg or 'failed'}",
-                title="Restore data",
-                icon=QtWidgets.QMessageBox.Critical,
-            ), log_to_console=False)
+            try:
+                self.alert_message(ApplyAlertMessage(
+                    txt=f"Restore data: {error_msg or 'failed'}",
+                    title="Restore data",
+                    icon=QtWidgets.QMessageBox.Critical,
+                ), log_to_console=False)
+            except Exception:
+                pass
+
+
+    def _cache_restore_thread_finished(self):
+        # run() returned, so the native thread is done; drop the window's
+        # reference (deleteLater is already queued via the other connection).
+        try:
+            self._cache_restore_thread = None
+        except Exception:
+            pass
 
 
     def on_password_request(self, title: str, label: str, box):

@@ -162,10 +162,12 @@ class IOSHomePage(QWidget):
             self._make_card(
             "Status Bar", "Customize the status bar", 5),
             self._make_card(
-            "Icon Themes", "Themed app icons & labels", 10)]
+            "Icon Themes", "Themed app icons & labels", 10),
+            self._make_card(
+            "Passcode Theme", "Custom keypad theme (.passthm)", 11)]
         (self.posterboard_card, self.tweaks_card,
          self.daemons_card, self.statusbar_card,
-         self.icon_themes_card) = cards_row
+         self.icon_themes_card, self.passcode_theme_card) = cards_row
         self.cards_grid = _CardGrid(cards_row)
         layout.addWidget(self.cards_grid)
 
@@ -239,6 +241,7 @@ class IOSHomePage(QWidget):
             (self.daemons_card, "Daemons", "Disable system daemons"),
             (self.statusbar_card, "Status Bar", "Customize the status bar"),
             (self.icon_themes_card, "Icon Themes", "Themed app icons & labels"),
+            (self.passcode_theme_card, "Passcode Theme", "Custom keypad theme (.passthm)"),
         ]:
             header = card.findChild(QFrame)
             if header:

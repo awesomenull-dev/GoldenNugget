@@ -219,6 +219,23 @@ class RestoreCacheThread(QThread):
                 "No protective backup found for this device. Live backups are "
                 "kept in the app data folder; cache masters live in a temp "
                 "folder and are lost on reboot.")
+        # Pre-flight: refuse a half-written source manifest up front instead of
+        # failing mid-device-restore with an opaque MBErrorDomain/205. The
+        # restore only ever prunes/injects on a temp working copy, so a corrupt
+        # Manifest.db here means an earlier apply/restore left the source
+        # damaged; an encrypted manifest is skipped (it is not valid sqlite
+        # until decrypted with the password below).
+        if not self._backup_password():
+            from src.restore.protective import _validate_sqlite_db
+            src_manifest = Path(source_root) / udid / "Manifest.db"
+            if not src_manifest.is_file():
+                src_manifest = Path(source_root) / "Manifest.db"
+            if not _validate_sqlite_db(src_manifest):
+                raise RuntimeError(
+                    "The protective backup's Manifest.db is corrupted or "
+                    "incomplete (left half-written by an interrupted restore). "
+                    "Apply tweaks again to rebuild a fresh backup, or remove "
+                    "the cached backup from Settings → Backup Cache.")
         self.update_label("Building working copy of the backup...")
         working_root = await asyncio.to_thread(
             make_protective_working_copy, source_root, udid)

@@ -3,6 +3,31 @@ from typing import TYPE_CHECKING
 from PySide6 import QtCore, QtWidgets
 from PySide6.QtCore import QCoreApplication
 
+try:
+    from shiboken6 import isValid as _shiboken_is_valid
+except Exception:
+    # Non-*/shiboken-less environments (some frozen builds) always report valid.
+    _shiboken_is_valid = lambda _obj: True
+
+
+def _still_running(worker) -> bool:
+    """True when ``worker`` is a live QThread still executing.
+
+    These workers all wire ``finished -> deleteLater``, which frees the C++
+    object before the window ever drops its stored reference — so a saved
+    worker can already be a dead shiboken wrapper. Probing that wrapper
+    raises ``RuntimeError`` ("Internal C++ object already deleted"), which
+    must never escape from a closeEvent.
+    """
+    if worker is None:
+        return False
+    try:
+        if not _shiboken_is_valid(worker):
+            return False
+        return worker.isRunning()
+    except RuntimeError:
+        return False
+
 from src.qt.mainwindow_ui import Ui_Nugget
 import src.gui.pages as Pages
 
@@ -23,6 +48,7 @@ from src.gui.ios.apply import IOSApplyPage
 from src.gui.ios.settings import IOSSettingsPage
 from src.gui.ios.statusbar import IOSStatusBarPage
 from src.gui.ios.icon_themes import IOSIconThemesPage
+from src.gui.ios.passcode_theme import IOSPasscodeThemePage
 from src.tweaks.registry import Section
 
 from src.gui.theme import ColorThemeManager, t, theme_icon, themed_stylesheet
@@ -79,6 +105,8 @@ class MainWindow(QtWidgets.QMainWindow, DeviceBarMixin, SettingsMixin,
         self.noneText = self.tr("None")
         self.apply_in_progress = False
         self.refresh_in_progress = False
+        self._cache_restore_in_progress = False
+        self._cache_restore_thread = None
         self.threadpool = QtCore.QThreadPool()
 
         self.preset_manager = PresetManager()
@@ -121,7 +149,7 @@ class MainWindow(QtWidgets.QMainWindow, DeviceBarMixin, SettingsMixin,
         # build the iOS-style pages stack
         # 0 = home, 1 = tweaks, 2 = posterboard, 3 = daemons, 4 = settings,
         # 5 = statusbar, 6 = apply, 7 = springboard, 8 = internal, 9 = liquidglass,
-        # 10 = icon themes
+        # 10 = icon themes, 11 = passcode themes
         self.ios_pages = QtWidgets.QStackedWidget(self)
         self.ios_pages.setStyleSheet(t("page_bg"))
         self.ios_home = IOSHomePage(self)
@@ -135,6 +163,7 @@ class MainWindow(QtWidgets.QMainWindow, DeviceBarMixin, SettingsMixin,
         self.ios_internal = IOSSectionPage(self, Section.INTERNAL)
         self.ios_liquidglass = IOSSectionPage(self, Section.LIQUID_GLASS)
         self.ios_iconthemes = IOSIconThemesPage(self)
+        self.ios_passthemes = IOSPasscodeThemePage(self)
         self.ios_pages.addWidget(self.ios_home)
         self.ios_pages.addWidget(self.ios_tweaks)
         self.ios_pages.addWidget(self.ios_posterboard)
@@ -146,6 +175,7 @@ class MainWindow(QtWidgets.QMainWindow, DeviceBarMixin, SettingsMixin,
         self.ios_pages.addWidget(self.ios_internal)
         self.ios_pages.addWidget(self.ios_liquidglass)
         self.ios_pages.addWidget(self.ios_iconthemes)
+        self.ios_pages.addWidget(self.ios_passthemes)
 
         # Shared reusable header: one instance for every iOS subpage,
         # reconfigured on page change (title / back / right action).
@@ -163,11 +193,14 @@ class MainWindow(QtWidgets.QMainWindow, DeviceBarMixin, SettingsMixin,
             8: QtCore.QCoreApplication.translate("Nugget", "Internal"),
             9: QtCore.QCoreApplication.translate("Nugget", "Liquid Glass"),
             10: QtCore.QCoreApplication.translate("Nugget", "Icon Themes"),
+            11: QCoreApplication.translate("Nugget", "Passcode Themes"),
         }
         self._nav_right_actions = {
             2: ("+ Add Tendies", self.ios_posterboard.show_add_tendies_dialog),
             10: (QtCore.QCoreApplication.translate("Nugget", "+ Add Icon"),
                  self.ios_iconthemes.show_add_icon_dialog),
+            11: (QCoreApplication.translate("Nugget", "+ Theme"),
+                 self.ios_passthemes.choose_theme_dialog),
         }
         self.ios_pages.currentChanged.connect(self._update_shared_nav)
 
@@ -325,3 +358,57 @@ class MainWindow(QtWidgets.QMainWindow, DeviceBarMixin, SettingsMixin,
             page = self.ios_pages.widget(i)
             if page and hasattr(page, '_retheme'):
                 page._retheme()
+
+    def closeEvent(self, event):
+        """Guard window close so device threads never get destroyed mid-run.
+
+        Destroying a QThread object while its native thread is still running
+        is what produces the "QThread: Destroyed while thread '' is still
+        running" crash — and for a restore/apply it can cut the device
+        operation short right in the middle of a Manifest.db write, leaving
+        the backup corrupted (the reported MBErrorDomain/205 fallout).
+        """
+        terminating = []
+        if getattr(self, "apply_in_progress", False):
+            terminating.append("apply/reset")
+        if getattr(self, "_cache_restore_in_progress", False):
+            terminating.append("data restore")
+        pt_worker = getattr(getattr(self, "ios_passthemes", None), "_worker", None)
+        if _still_running(pt_worker):
+            terminating.append("passcode theme write")
+        if terminating:
+            reply = QtWidgets.QMessageBox.question(
+                self,
+                QCoreApplication.tr("Background device operation"),
+                QCoreApplication.translate(
+                    "Nugget",
+                    "A device %1 is running. Closing now can interrupt it "
+                    "mid-write and leave the protective backup corrupted.\n\n"
+                    "Close anyway?").replace(
+                        "%1", " and ".join(terminating)),
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.Cancel,
+                QtWidgets.QMessageBox.StandardButton.Cancel,
+            )
+            if reply != QtWidgets.QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+            # User insisted: let the operation wind down on its own so the
+            # thread is not destroyed mid-run. Device loops all have bounded
+            # timeouts, so this terminates.
+            for worker in (
+                getattr(self, "worker_thread", None),
+                getattr(self, "_cache_restore_thread", None),
+                pt_worker,
+            ):
+                if _still_running(worker):
+                    try:
+                        worker.wait()
+                    except RuntimeError:
+                        pass
+        scan_worker = getattr(self, "refresh_worker_thread", None)
+        if _still_running(scan_worker):
+            try:
+                scan_worker.wait(8000)
+            except RuntimeError:
+                pass
+        super().closeEvent(event)

@@ -257,9 +257,16 @@ backup in the persistent app-data store
 - `clean_backup_for_restore()` — prunes manifest to protective files only
 - Injects PosterBoard files (`pb_inject_files`, AppDomain) — the only injected tweak payload today
 
-**Phase 2 (40-60%)**: Sparse Restore + Reboot
-- `perform_restore()` — applies tweaks via sparse restore; if it drops at 0% it waits 25 s and retries once on a fresh connection
-- Triggers the iOS 27 "safe state recovery" wipe on reboot
+**Phase 2 (40-60%)**: Sparse Restore — **no reboot** (default, merged phases)
+- `perform_restore()` applies tweaks via sparse restore with `reboot=not merge_phases`; if it drops at 0% it waits 25 s and retries once on a fresh connection.
+- **Default (`merge_phases=True`, merged phases)**: the device is NOT rebooted
+  after the sparse restore, so it never enters the iOS 27 "safe state recovery"
+  and never wipes. The Phase 3 protective restore then lands on the
+  still-live device in the same session — the same delivery the
+  PosterBoard-only path already used (to iOS it looks like a normal full
+  restore, not a tamper). One session, no 20-minute wait, no data wipe.
+- **`GOLDENNUGGET_NO_MERGE_PHASES=1`** restores the classic flow: sparse
+  restore → reboot → "safe state recovery" wipe → reconnect → restore.
 - **Skipped for PosterBoard-only applies**: `restore_files()` diverts every
   payload to `pb_inject_files`, drops the incidental iOS 27 scaffolding files
   (HomeDomain `.GlobalPreferences.plist` copy + skip-setup plists —
@@ -278,7 +285,13 @@ backup in the persistent app-data store
   compared.
 
 **Phase 3 (60-90%)**: Protective Restore
-- `_wait_for_device()` — reconnects after reboot (default 20 min timeout). On
+- Merged mode (default): reuses the SAME live `lockdown_client` from Phase 2 —
+  no reconnect, no `_wait_for_device`. If the device still rebooted itself
+  (a tweak that demands the security recovery), the dead session is caught
+  (`ConnectionTerminatedError`/`OSError`/`TimeoutError`), it falls back to
+  the classic reconnect path below, and the apply continues.
+- Classic mode (`GOLDENNUGGET_NO_MERGE_PHASES=1`): `_wait_for_device()` —
+  reconnects after reboot (default 20 min timeout). On
   timeout it no longer aborts the restore outright: if the caller passed a
   `prompt_choice` callback (apply/reset from the GUI do), it shows an
   **Abort/Resume** pop-up ("device too long without unlock after the security
@@ -458,8 +471,10 @@ _apply_changes()
                         Phase 1 (0-40%):  cache master -> hardlink working copy; fresh Phase-0 live -> prune in place
                                          + clean_backup_for_restore() + inject PosterBoard (AppDomain)
                                          (skipped entirely if the user opted out on low disk space)
-                        Phase 2 (40-60%): perform_restore() (sparse) -> reboot (25s+retry if drop at 0%)
-                        Phase 3 (60-90%): _wait_for_device() -> _restore_protective_backup(password) [18x3s]
+                        Phase 2 (40-60%): perform_restore() (sparse) -> NO reboot (default, merged phases)
+                                         (25s+retry if drop at 0%); GOLDENNUGGET_NO_MERGE_PHASES=1 restores the classic reboot+wipe
+                        Phase 3 (60-90%): [merged] reuse live session -> _restore_protective_backup(password) [18x3s]
+                                         [classic] _wait_for_device() -> _restore_protective_backup(password) [18x3s]
                                          (skipped when data protection was opted out)
                         Phase 4 (90-95%): skip_all_setup27()      (only if skip-setup)
                         Phase 5 (95-100%): reboot_device()        (only if auto_reboot)

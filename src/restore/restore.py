@@ -408,7 +408,8 @@ skip_setup: bool = True,
                            skip_protective_backup: bool = False,
                           include_keychain: bool = False,
                           prompt_choice=None,
-                          afc_media: bool = False):
+                          afc_media: bool = False,
+                          merge_phases: bool = True):
     """iOS 27+ restore: backup → tweak → wipe → restore → skip setup → reboot.
 
     Phase 1 (0-40%):  Selective backup of photos, Apple ID, user
@@ -425,10 +426,19 @@ skip_setup: bool = True,
                       (and Phase 3) is skipped — the user opted out on low
                       disk space.
     Phase 2 (40-60%): Apply tweaks via sparse restore → reboot, which
-                      triggers the iOS 27 "safe state recovery" wipe.
+                      triggers the iOS 27 "safe state recovery" wipe. By
+                      default (``merge_phases``) the reboot is skipped: the
+                      device stays up and never enters safe-state recovery,
+                      so no wipe happens — the protective restore lands on
+                      the still-live device (the same delivery the
+                      PosterBoard-only path already uses). Set
+                      GOLDENNUGGET_NO_MERGE_PHASES=1 to restore the classic
+                      reboot-then-wipe flow.
     Phase 3 (60-90%):  Reconnect and restore the pruned Phase 1 backup so
                       user data survives the wipe. The restore itself does
-                      not reboot; that happens after setup skip.
+                      not reboot; that happens after setup skip. In merged
+                      mode there is no reconnect — the live session from
+                      Phase 2 is reused (the device was never rebooted).
     Phase 4 (90-95%): Skip the iOS setup panes via cloud configuration.
     Phase 5 (95-100%): Reboot the device so the changes take effect.
     """
@@ -614,7 +624,12 @@ skip_setup: bool = True,
                 sparse_progress["calls"] = 0
                 try:
                     await perform_restore(
-                        backup=back, reboot=True,
+                        # Merged mode skips the security-recovery reboot: the
+                        # device stays up, iOS never enters safe-state recovery
+                        # and never wipes, and Phase 3's protective restore
+                        # lands on the LATER-STILL-LIVE device (the same
+                        # delivery the PosterBoard-only path already uses).
+                        backup=back, reboot=not merge_phases,
                         lockdown_client=lockdown_client if sparse_attempt == 0 else None,
                         progress_callback=_tracking_callback)
                     log_info(f"Phase 2: sparse restore completed cleanly "
@@ -640,8 +655,23 @@ skip_setup: bool = True,
             progress_callback(_PHASE_TWEAK_END)
 
         # === Phase 3: reconnect + restore protective backup (60-90%) ===
-        log_info("Phase 3: Waiting for device to reconnect after security recovery")
-        lc = await _wait_for_device(udid, progress_callback, prompt_choice=prompt_choice)
+        merge_fallback_done = False
+        if merge_phases:
+            # Merged mode: the sparse restore never rebooted, so there is no
+            # security recovery to wait for — the device is still connected and
+            # its data was never wiped. Reuse the SAME session for the
+            # protective restore, exactly like the PosterBoard-only path does
+            # (that path proves a protective restore over a live, un-wiped
+            # device works — to iOS it looks like a normal full restore).
+            log_info("Phase 3: merged mode — device never rebooted, restoring "
+                     "protective backup on the live session (no security "
+                     "recovery, no data wipe)")
+            lc = lockdown_client
+            await asyncio.sleep(1)
+        else:
+            log_info("Phase 3: Waiting for device to reconnect after security recovery")
+            lc = await _wait_for_device(udid, progress_callback,
+                                        prompt_choice=prompt_choice)
         try:
             # brief settle time after reconnect — _restore_protective_backup
             # retries handle any remaining startup delay
@@ -690,6 +720,25 @@ skip_setup: bool = True,
                             pass
                         lc = await _wait_for_device(udid, progress_callback,
                                                     prompt_choice=prompt_choice)
+                    except (ConnectionTerminatedError, ConnectionError,
+                            OSError, asyncio.TimeoutError) as e:
+                        # Merged mode reuses the Phase 2 session; if the device
+                        # rebooted itself anyway (a tweak that demands the
+                        # security-recovery wipe), that client is now dead —
+                        # fall back to the classic reconnect + fresh session
+                        # instead of failing the whole apply.
+                        if not merge_phases or merge_fallback_done:
+                            raise
+                        log_warn(f"Phase 3: merged-mode session dropped "
+                                 f"({type(e).__name__}: {e}) — falling back to "
+                                 "the classic reconnect path")
+                        try:
+                            await lc.close()
+                        except Exception:
+                            pass
+                        lc = await _wait_for_device(udid, progress_callback,
+                                                    prompt_choice=prompt_choice)
+                        merge_fallback_done = True
                 log_info("Phase 3: Protective backup restored successfully")
 
             # Photos/videos pulled over AFC are pushed back now that the device
@@ -780,7 +829,7 @@ def _is_ios27_scaffolding(file) -> bool:
 
 
 # files is a list of FileToRestore objects
-async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdown_client: LockdownClient = None, progress_callback = lambda x: None, backup_password: str = "", prepared_backup_root: PreparedBackup = None, skip_setup: bool = True, skip_protective_backup: bool = False, include_keychain: bool = False, prompt_choice=None, afc_media: bool = False):
+async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdown_client: LockdownClient = None, progress_callback = lambda x: None, backup_password: str = "", prepared_backup_root: PreparedBackup = None, skip_setup: bool = True, skip_protective_backup: bool = False, include_keychain: bool = False, prompt_choice=None, afc_media: bool = False, merge_phases: bool = True):
     # create the files to be backed up
     files_list = [
     ]
@@ -908,6 +957,14 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
     from src.devicemanagement.constants import Version as _V
     device_ver = _V(lockdown_client.product_version)
 
+    if merge_phases and os.environ.get("GOLDENNUGGET_NO_MERGE_PHASES") == "1":
+        # Kill switch: fall back to the classic three-phase flow with the
+        # security-recovery reboot between tweaks and the data restore.
+        merge_phases = False
+        log_warn("GOLDENNUGGET_NO_MERGE_PHASES=1 — restoring the classic "
+                 "reboot-then-wipe flow (sparse restore reboots the device "
+                 "and iOS fully wipes before the protective restore)")
+
     if os.environ.get("GOLDENNUGGET_NO_PROTECTIVE_BACKUP") == "1":
         # Kill switch: force the iOS 26-style apply — a single-pass sparse
         # restore with NO three-phase restore at all (no Phase 0/1/3 backup,
@@ -950,7 +1007,8 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
                                  skip_protective_backup=skip_protective_backup,
                                  include_keychain=include_keychain,
                                  prompt_choice=prompt_choice,
-                                 afc_media=afc_media)
+                                 afc_media=afc_media,
+                                 merge_phases=merge_phases)
     else:
         # iOS 26.x: plain sparse restore — no security recovery wipe,
         # no protective backup needed.  When all files use the path-traversal

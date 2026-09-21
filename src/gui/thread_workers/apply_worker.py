@@ -200,6 +200,7 @@ class RestoreCacheThread(QThread):
             find_latest_protective_backup,
         )
         from src.restore.restore import _restore_protective_backup
+        from src.restore.afc_media import afc_media_dir_for, restore_media_via_afc
         from src.devicemanagement.session import lockdown_session
 
         udid = self.manager.get_current_device_udid()
@@ -239,10 +240,16 @@ class RestoreCacheThread(QThread):
         self.update_label("Building working copy of the backup...")
         working_root = await asyncio.to_thread(
             make_protective_working_copy, source_root, udid)
+        # A live backup taken with the AFC channel kept bulk photo trees beside
+        # the run dir (never uploaded to mobilebackup2), so its manifest rows
+        # for those trees must be pruned the same way or the restore fails with
+        # payload-missing rows. A cache master never used AFC, so no exclusion.
+        media_dir = afc_media_dir_for(source_root)
         removed_rows, removed_files = await asyncio.to_thread(
             clean_backup_for_restore, working_root, udid,
             include_keychain=bool(self._backup_password()),
-            manifest_password=self._backup_password())
+            manifest_password=self._backup_password(),
+            exclude_afc_media_trees=os.path.isdir(media_dir) and bool(os.listdir(media_dir)))
         self.update_label(
             f"Prepared backup (-{removed_rows} pruned rows). Connecting to device...")
         missing = await asyncio.to_thread(
@@ -264,6 +271,14 @@ class RestoreCacheThread(QThread):
                 progress_callback=self._progress_cb,
                 backup_password=self._backup_password(),
                 skip_apps=True)
+            # A live backup taken with the AFC media channel keeps photos/videos
+            # beside the device_backup dir (the cache master never does — its
+            # media rides the mobilebackup2 rows). Only the live-branch media
+            # dir needs pushing back over AFC; the cache-master case has none.
+            if os.path.isdir(media_dir) and os.listdir(media_dir):
+                self.update_label("Restoring photos/videos over AFC...")
+                await restore_media_via_afc(
+                    lc, media_dir, progress_callback=self._progress_cb)
         self.update_label("Data restored successfully.")
 
     def _progress_cb(self, value):

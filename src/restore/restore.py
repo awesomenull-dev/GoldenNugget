@@ -12,6 +12,7 @@ from . import backup, perform_restore, reboot_device
 from src.utils.file_to_restore import FileToRestore, _FileMode
 from .lastapply import is_ios27_scaffolding, load_lastapply, sparse_signature
 from .skip_setup27 import skip_all_setup27
+from .afc_media import afc_media_dir_for, afc_media_enabled, restore_media_via_afc
 from .protective import (
     PreparedBackup,
     clean_backup_for_restore,
@@ -406,7 +407,8 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
 skip_setup: bool = True,
                            skip_protective_backup: bool = False,
                           include_keychain: bool = False,
-                          prompt_choice=None):
+                          prompt_choice=None,
+                          afc_media: bool = False):
     """iOS 27+ restore: backup → tweak → wipe → restore → skip setup → reboot.
 
     Phase 1 (0-40%):  Selective backup of photos, Apple ID, user
@@ -433,6 +435,13 @@ skip_setup: bool = True,
     udid = lockdown_client.udid
     started = time.monotonic()
     using_cache = prepared_backup_root is not None
+    # Media pulled over AFC (sibling of the run's device_backup, or the caller's
+    # prepared run) is pushed back in Phase 3 once the protective restore that
+    # carries everything else has landed. Empty when media rides the mobilebackup2
+    # backup itself (cache master, or AFC disabled) — then Phase 3 already ships it.
+    media_dir = ""
+    if prepared_backup_root is not None and getattr(prepared_backup_root, "media_src", ""):
+        media_dir = prepared_backup_root.media_src
     # The prune password comes from whichever Phase-0 path built the backup:
     #  - cache master: captured when the master was built (manifest_password);
     #  - Phase-0 LIVE backup: none is stored (it never prompts), so fall back to
@@ -464,6 +473,9 @@ skip_setup: bool = True,
         # would be swept by the cleanup below (or lost on reboot).
         backup_root = new_protective_backup_dir(udid)
         protective_dir = os.path.dirname(backup_root)
+        if afc_media and not skip_protective_backup:
+            media_dir = afc_media_dir_for(backup_root)
+            log_info(f"AFC media for this run will be pulled into: {media_dir}")
     backup_complete = False
     try:
         log_info(f"Starting iOS 27 restore for device {udid}")
@@ -511,6 +523,7 @@ skip_setup: bool = True,
                 progress_callback=_scaled_callback(progress_callback, 0, _PHASE_BACKUP_END),
                 include_photos=True,
                 include_keychain=include_keychain,
+                include_afc_media=bool(media_dir),
             )
             # Only retire the previous run once this one is solid (see the same
             # after-success prune in device_manager._live_backup).
@@ -525,7 +538,8 @@ skip_setup: bool = True,
             removed_rows, removed_files = await asyncio.to_thread(
                 clean_backup_for_restore, backup_root, udid,
                 include_keychain=include_keychain,
-                manifest_password=manifest_password
+                manifest_password=manifest_password,
+                exclude_afc_media_trees=bool(media_dir)
             )
         log_info(f"Phase 1: Pruned backup: -{removed_rows} manifest rows, -{removed_files} payload files "
                  f"({time.monotonic() - started:.1f}s into the run)")
@@ -678,6 +692,20 @@ skip_setup: bool = True,
                                                     prompt_choice=prompt_choice)
                 log_info("Phase 3: Protective backup restored successfully")
 
+            # Photos/videos pulled over AFC are pushed back now that the device
+            # is back up and accepting AFC connections. This is the ONLY channel
+            # that carries them on an AFC apply — the protective restore above
+            # ships only the non-media scope (media rows were not in its backup).
+            if media_dir and os.path.isdir(media_dir) and os.listdir(media_dir):
+                log_info(f"Phase 3: Pushing photos/videos back over AFC ({media_dir})")
+                await restore_media_via_afc(
+                    lc, media_dir,
+                    progress_callback=progress_callback)
+                log_info("Phase 3: Media restored over AFC")
+            elif media_dir:
+                log_warn(f"Phase 3: AFC media dir {media_dir} is empty/missing — "
+                         "nothing to restore (photos may be lost to the wipe)")
+
             # === Phase 4: skip setup panes (90-95%) ===
             # Runs on every apply when skip-setup is requested, including the
             # Phase 2-skipped ones (PosterBoard-only / unchanged tweaks + added
@@ -752,7 +780,7 @@ def _is_ios27_scaffolding(file) -> bool:
 
 
 # files is a list of FileToRestore objects
-async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdown_client: LockdownClient = None, progress_callback = lambda x: None, backup_password: str = "", prepared_backup_root: PreparedBackup = None, skip_setup: bool = True, skip_protective_backup: bool = False, include_keychain: bool = False, prompt_choice=None):
+async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdown_client: LockdownClient = None, progress_callback = lambda x: None, backup_password: str = "", prepared_backup_root: PreparedBackup = None, skip_setup: bool = True, skip_protective_backup: bool = False, include_keychain: bool = False, prompt_choice=None, afc_media: bool = False):
     # create the files to be backed up
     files_list = [
     ]
@@ -921,7 +949,8 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
                                  skip_setup=skip_setup,
                                  skip_protective_backup=skip_protective_backup,
                                  include_keychain=include_keychain,
-                                 prompt_choice=prompt_choice)
+                                 prompt_choice=prompt_choice,
+                                 afc_media=afc_media)
     else:
         # iOS 26.x: plain sparse restore — no security recovery wipe,
         # no protective backup needed.  When all files use the path-traversal

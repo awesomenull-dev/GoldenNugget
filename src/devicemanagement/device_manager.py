@@ -56,6 +56,7 @@ from src.tweaks.icon_themes.icon_themes_tweak import IconThemesTweak
 from src.tweaks.basic_plist_locations import FileLocation
 
 from src.restore.restore import restore_files, FileToRestore
+from src.restore.afc_media import afc_media_dir_for, afc_media_enabled
 from src.restore.original_plist import psysbackup, materialize_plist, is_empty_plist, mobile_user_fallback_path
 from src.restore.protective import log_error, log_info, log_warn
 
@@ -425,6 +426,7 @@ class DeviceManager:
                 skip_protective_backup=skip_protective_backup,
                 include_keychain=include_keychain,
                 prompt_choice=prompt_choice,
+                afc_media=afc_media_enabled(self.pref_manager.use_afc_media),
             )
             tweaks[TweakID.PosterBoard].config_manager.save_staged_ids(self.get_current_device_udid())
             if tweaks[TweakID.PosterBoard].full_reset:
@@ -680,13 +682,21 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
     
         async def _live_backup(lc) -> tuple:
             """Fresh protective backup (no cache) with the PosterBoard container
-            riding along whenever wallpapers are about to be applied."""
+            riding along whenever wallpapers are about to be applied.
+
+            When the AFC media channel is enabled (``use_afc_media`` pref,
+            off via ``GOLDENNUGGET_NO_AFC_MEDIA=1``), photos/videos are pulled
+            over AFC in parallel with the mobilebackup2 backup; the backup then
+            carries only the non-media protective scope. Either way the media
+            dir is recorded on the PreparedBackup so Phase 3 pushes it back.
+            """
             # Persistent, one directory per run. Once Phase 2 wipes the device
             # this backup is the ONLY copy of the user's photos, Apple ID and
             # settings, so it must survive a reboot and must never be swept as
             # a temp leftover. A fresh directory per run also means a failed
             # backup cannot damage the previous run's copy.
             backup_root = new_protective_backup_dir(udid)
+            use_afc_media = afc_media_enabled(self.pref_manager.use_afc_media)
             update_label(QCoreApplication.tr("Backing up device..."))
             # include_keychain is left None (auto) so it follows the device's
             # live encryption state — one less round-trip before the backup.
@@ -694,7 +704,7 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
                 is_encrypted = await perform_protective_backup(
                     lc, backup_root, progress_callback=self._backup_progress(update_label),
                     include_photos=True, include_posterboard=needs_posterboard,
-                    include_keychain=None)
+                    include_keychain=None, include_afc_media=use_afc_media)
             except Exception:
                 # A failed run carries no/useless Manifest.db, so
                 # list_protective_backups excludes it and prune would never
@@ -705,10 +715,13 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
             # early would delete the last good backup before the new run exists.
             prune_protective_backups(udid)
             self._known_backup_encryption = is_encrypted
+            media_src = afc_media_dir_for(backup_root) if use_afc_media else ""
             log_info(f"Phase 0: live protective backup ready (always fresh; "
                      f"PosterBoard container {'included' if needs_posterboard else 'not needed'}; "
-                     f"keychain {'included' if is_encrypted else 'excluded (backup not encrypted)'})")
-            prepared = PreparedBackup(root=backup_root, manifest_password="", master=False)
+                     f"keychain {'included' if is_encrypted else 'excluded (backup not encrypted)'}; "
+                     f"media via {'AFC' if use_afc_media else 'mobilebackup2'})")
+            prepared = PreparedBackup(root=backup_root, manifest_password="",
+                                      master=False, media_src=media_src)
             if needs_posterboard and is_encrypted:
                 log_warn("Encrypted backup cannot yield a readable PosterBoard DB — "
                          "falling back to a separate backup")

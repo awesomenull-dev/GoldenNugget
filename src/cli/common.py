@@ -52,6 +52,7 @@ def load_prefs(dm, settings: Settings):
         pm.auto_refresh_posterboard = settings.value("auto_refresh_posterboard", True, type=bool)
         pm.use_backup_cache = settings.value("use_backup_cache", False, type=bool)
         pm.use_encrypted_backup = settings.value("use_encrypted_backup", False, type=bool)
+        pm.use_afc_media = settings.value("use_afc_media", True, type=bool)
         pm.skip_setup = settings.value("skip_setup", True, type=bool)
         pm.supervised = settings.value("supervised", False, type=bool)
         pm.organization_name = settings.value("organization_name", "", type=str)

@@ -49,6 +49,12 @@ from pymobiledevice3.services.mobilebackup2 import Mobilebackup2Service
 from PySide6.QtCore import QCoreApplication, QStandardPaths
 
 from src.exceptions.nugget_exception import NuggetException
+from src.restore.afc_media import (  # noqa: F401  (re-exported public API)
+    AFC_MEDIA_TREES,
+    afc_media_dir_for,
+    backup_media_via_afc,
+    restore_media_via_afc,
+)
 from src.restore.inject import (  # noqa: F401  (re-exported public API)
     _is_encrypted_backup,
     _validate_sqlite_db,
@@ -71,6 +77,11 @@ class PreparedBackup:
     # makes a hardlink working copy instead. False for a fresh live backup,
     # which the restore prunes and restores from directly (no temp copy).
     master: bool = False
+    # Directory holding the photos/videos pulled over AFC in parallel with this
+    # backup ('' when the media stayed in the mobilebackup2 backup — those
+    # manifest rows ride Phase 3's protective restore). Phase 3 pushes this
+    # tree back to the device via AFC once the protective restore completes.
+    media_src: str = ""
 
 
 # Minimum free disk space required before any device backup is started.
@@ -297,7 +308,8 @@ POSTERBOARD_DB_NAME = "PBFPosterExtensionDataStoreSQLiteDatabase.sqlite3"
 POSTERBOARD_DB_STORE_DIR = "PRBPosterExtensionDataStore"
 
 
-def _is_protective_file(domain: str, relative_path: str, include_photos: bool = True, include_keychain: bool = False) -> bool:
+def _is_protective_file(domain: str, relative_path: str, include_photos: bool = True, include_keychain: bool = False,
+                        exclude_afc_media_trees: bool = False) -> bool:
     """Check if a file belongs in the protective backup."""
     filename = relative_path.rsplit("/", 1)[-1]
     # keychain-backup.plist carries the KeychainDomain payload. It is rejected
@@ -318,6 +330,12 @@ def _is_protective_file(domain: str, relative_path: str, include_photos: bool = 
                 or relative_path.startswith(WEBKIT_WEBSITE_DATA_PATH_PREFIXES)
                 or relative_path.startswith(ADDRESS_BOOK_PATH_PREFIXES))
     if include_photos and domain in PROTECTIVE_DOMAINS:
+        # Media trees moved to the AFC channel (DCIM, PhotoStreamsData) are not
+        # uploaded by mobilebackup2 at all — the manifest rows the device still
+        # records for them must be pruned too, or Phase 3 tries to restore
+        # payloads that were never written (MBErrorDomain/205).
+        if exclude_afc_media_trees and _media_tree_scope(relative_path) in AFC_MEDIA_TREES:
+            return False
         return True
     if include_keychain and domain == KEYCHAIN_DOMAIN:
         return True
@@ -391,6 +409,30 @@ def _tree_match(device_name: str, *trees: str) -> bool:
     return False
 
 
+def _media_tree_scope(device_name: str) -> str:
+    """Top-level ``Media`` child an upload lives under, or ``""`` if none.
+
+    Handles every layout the filters see:
+    - iOS 26 domain-qualified: ``CameraRollDomain/Media/DCIM/IMG_1.JPG``
+    - iOS 27 physical tree: ``/.b/<n>/Media/DCIM/IMG_1.JPG`` (also bare ``Media/...``)
+
+    ``PhotoData`` files return ``"PhotoData"`` etc. Files elsewhere in the
+    backup (HomeDomain, MessagesDomain, ...) return ``""``.
+    """
+    name = _device_tree_name(device_name)
+    for prefix in ("CameraRollDomain/Media/", "MediaDomain/Media/", "Media/"):
+        if name.startswith(prefix):
+            rest = name[len(prefix):]
+            seg = rest.split("/", 1)[0]
+            return seg
+    return ""
+
+
+def _is_afc_media_tree(device_name: str) -> bool:
+    """Whether an upload belongs to a Media tree moved to the AFC channel."""
+    return _media_tree_scope(device_name) in AFC_MEDIA_TREES
+
+
 def _posterboard_db_match(device_name: str) -> bool:
     """Match the PosterBoard sqlite database by its physical file name.
 
@@ -454,7 +496,8 @@ _install_device_link_verbose()
 
 def is_protective_device_file(device_name: str, include_photos: bool = True,
                               include_posterboard: bool = False,
-                              include_keychain: bool = False) -> bool:
+                              include_keychain: bool = False,
+                              exclude_afc_media_trees: bool = False) -> bool:
     """Mid-stream backup filter: match an upload's device-side name against the keep-set.
 
     On iOS 26 upload names carry the domain and path (``HomeDomain/Library/...``),
@@ -468,8 +511,15 @@ def is_protective_device_file(device_name: str, include_photos: bool = True,
     for domain in (("CameraRollDomain", "MediaDomain") if include_photos else ()) + \
             ("SystemPreferencesDomain", "MessagesDomain", "AddressBookDomain"):
         if _domain_match(device_name, domain):
+            # Media trees moved to the AFC channel are handed to AFC, not this
+            # backup — drop their uploads mid-stream so their payloads never
+            # hit disk (the same exclusion prunes their manifest rows later).
+            if exclude_afc_media_trees and _media_tree_scope(device_name) in AFC_MEDIA_TREES:
+                continue
             return True
-    if include_photos and _tree_match(device_name, "Media"):
+    if include_photos and not (exclude_afc_media_trees
+                               and _media_tree_scope(device_name) in AFC_MEDIA_TREES) \
+            and _tree_match(device_name, "Media"):
         return True
     if _tree_match(device_name, "Library/Messages", "Library/SMS", "Library/MessagesMetaData"):
         return True
@@ -591,9 +641,30 @@ async def perform_protective_backup(
     include_posterboard: bool = False,
     include_keychain: Optional[bool] = None,
     incremental_ok: bool = False,
+    include_afc_media: bool = False,
 ) -> bool:
     if not incremental_ok:
         Path(backup_root).mkdir(parents=True, exist_ok=True)
+
+    # When the media channel is active, the bulk photo trees (DCIM,
+    # PhotoStreamsData) go out over AFC in parallel with this mobilebackup2
+    # backup. PhotoData — the photo library database plus its protected
+    # metadata — is NOT listable over the media AFC service (PhotoData/UBF
+    # returns AFC error 10 / PERM_DENIED), so it stays inside this backup:
+    # ``include_photos`` keeps it, and the filter's ``exclude_afc_media_trees``
+    # drops only the AFC-handled trees (whose payloads are not uploaded here).
+    # The manifest prune applies the same exclusion, so no restore-time row
+    # points at a payload that was never written.
+    afc_media_task = None
+    if include_afc_media:
+        afc_media_task = asyncio.create_task(backup_media_via_afc(
+            lockdown_client,
+            afc_media_dir_for(backup_root),
+            progress_callback=progress_callback,
+        ))
+        log_info("Photos/videos over AFC in parallel: pulling "
+                 f"{sorted(AFC_MEDIA_TREES)} via AFC; mobilebackup2 keeps "
+                 "PhotoData and the rest of the protective scope")
 
     _pb_names_to_db: list = []
     _totals = {"seen": 0, "kept": 0, "containers": 0}
@@ -604,7 +675,8 @@ async def perform_protective_backup(
             name,
             include_photos=include_photos,
             include_posterboard=include_posterboard,
-            include_keychain=include_keychain)
+            include_keychain=include_keychain,
+            exclude_afc_media_trees=include_afc_media)
         _totals["seen"] += 1
         _totals["kept"] += int(keep)
         low = name.lower()
@@ -616,28 +688,56 @@ async def perform_protective_backup(
         return keep
 
     is_encrypted = False
-    async with ProtectiveBackupService(lockdown_client, include_posterboard=include_posterboard) as mb:
-        try:
-            is_encrypted = await mb.get_will_encrypt()
-        except Exception:
-            pass
-        # Keychain inclusion follows the device's real encryption state unless
-        # the caller pinned it explicitly — saves a redundant round-trip before
-        # this call. The filter callback above reads ``include_keychain`` by
-        # reference, so it picks up the resolved value.
-        if include_keychain is None:
-            include_keychain = is_encrypted
-        if is_encrypted:
-            log_info("Backup encryption already enabled on device.")
-            progress_callback("Using existing backup encryption...")
-        else:
-            progress_callback("Creating protective backup (unencrypted)...")
-        try:
-            await mb.backup(full=not incremental_ok, backup_directory=backup_root,
-                            progress_callback=progress_callback,
-                            filter_callback=_filter_callback)
-        except NotEnoughDiskSpaceError:
-            log_warn("Device sent disk space purge request — ignoring, backup data is preserved")
+    try:
+        async with ProtectiveBackupService(lockdown_client, include_posterboard=include_posterboard) as mb:
+            try:
+                is_encrypted = await mb.get_will_encrypt()
+            except Exception:
+                pass
+            # Keychain inclusion follows the device's real encryption state unless
+            # the caller pinned it explicitly — saves a redundant round-trip before
+            # this call. The filter callback above reads ``include_keychain`` by
+            # reference, so it picks up the resolved value.
+            if include_keychain is None:
+                include_keychain = is_encrypted
+            if is_encrypted:
+                log_info("Backup encryption already enabled on device.")
+                progress_callback("Using existing backup encryption...")
+            else:
+                progress_callback("Creating protective backup (unencrypted)...")
+            try:
+                await mb.backup(full=not incremental_ok, backup_directory=backup_root,
+                                progress_callback=progress_callback,
+                                filter_callback=_filter_callback)
+            except NotEnoughDiskSpaceError:
+                log_warn("Device sent disk space purge request — ignoring, backup data is preserved")
+    except Exception:
+        if afc_media_task is not None:
+            # The backup failed — the media pull (still uploading user data) is
+            # pointless without a backup to restore it next to. Cancel it and
+            # let its cancellation resolve here so it can't mask the real error.
+            afc_media_task.cancel()
+            try:
+                await afc_media_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        raise
+    else:
+        if afc_media_task is not None:
+            # The media pull either completed alongside the backup or raised on
+            # a per-file/connection failure (photos are user data — fail loudly).
+            try:
+                await afc_media_task
+            except NuggetException:
+                raise
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                raise NuggetException(
+                    QCoreApplication.translate(
+                        "Nugget",
+                        "Could not back up photos/videos over AFC: {0}")
+                    .format(e)) from e
 
     kept = sum(1 for _, keep in _pb_names_to_db if keep)
     log_info(f"Backup upload tally: seen={_totals['seen']} kept={_totals['kept']} "
@@ -992,9 +1092,11 @@ def _iter_payload_files(device_dir: Path):
 
 
 def _keep_protective_entry(domain: str, relative_path: str, include_photos: bool = True,
-                           include_keychain: bool = False) -> bool:
+                           include_keychain: bool = False,
+                           exclude_afc_media_trees: bool = False) -> bool:
     """Keep-set predicate shared by the plain and encrypted prune paths."""
-    if domain and relative_path and (_is_protective_file(domain, relative_path, include_photos, include_keychain)
+    if domain and relative_path and (_is_protective_file(domain, relative_path, include_photos, include_keychain,
+                                                         exclude_afc_media_trees)
                                      or domain == "SystemPreferencesDomain"):
         return True
     # the domain root directory row — without it the restore agent may skip
@@ -1009,7 +1111,8 @@ def _keep_protective_entry(domain: str, relative_path: str, include_photos: bool
 def clean_backup_for_restore(backup_dir: "str | Path", udid: str,
                              include_photos: bool = True,
                              include_keychain: bool = False,
-                             manifest_password: str = "") -> tuple:
+                             manifest_password: str = "",
+                             exclude_afc_media_trees: bool = False) -> tuple:
     """Prune a backup directory down to its protective payload.
 
     1. Deletes every non-protective row from Manifest.db in a single DELETE
@@ -1044,7 +1147,8 @@ def clean_backup_for_restore(backup_dir: "str | Path", udid: str,
         def _keep(bf) -> bool:
             if bf.domain is None or bf.relative_path is None:
                 return False
-            return _keep_protective_entry(bf.domain, bf.relative_path, include_photos, include_keychain)
+            return _keep_protective_entry(bf.domain, bf.relative_path, include_photos, include_keychain,
+                                          exclude_afc_media_trees)
         allowed_ids = Mobilebackup2Service.prune_backup_manifest(
             device_dir, _keep, password=manifest_password)
         removed_files = 0
@@ -1071,7 +1175,8 @@ def clean_backup_for_restore(backup_dir: "str | Path", udid: str,
         cur = conn.cursor()
         cur.execute("SELECT fileID, domain, relativePath, flags FROM Files")
         for file_id, domain, rel_path, flags in cur:
-            if _keep_protective_entry(domain, rel_path, include_photos, include_keychain):
+            if _keep_protective_entry(domain, rel_path, include_photos, include_keychain,
+                                      exclude_afc_media_trees):
                 # only regular files carry a <aa>/<fileID> payload; directory
                 # rows (flags=2) MUST survive without one — dropping them
                 # makes the restore agent fail with renameatx ENOENT

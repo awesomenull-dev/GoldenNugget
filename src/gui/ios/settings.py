@@ -135,6 +135,12 @@ class IOSSettingsPage(QWidget):
             lambda checked: self._on_encrypted_backup_toggled(checked, encrypted_switch),
         )
 
+        afc_media_switch = self._make_switch(
+            QCoreApplication.translate("Nugget", "Backup Photos Over AFC (Parallel)"),
+            pref.use_afc_media,
+            lambda checked: self._on_afc_media_toggled(checked, afc_media_switch),
+        )
+
         restore_btn = IOSPrimaryButton(
             QCoreApplication.translate("Nugget", "Restore Data From Backup"))
         restore_btn.setToolTip(QCoreApplication.translate(
@@ -401,6 +407,20 @@ class IOSSettingsPage(QWidget):
                 return
         pref.use_encrypted_backup = checked
         self.window.settings.setValue("use_encrypted_backup", checked)
+        self.window._sync_settings()
+
+    def _on_afc_media_toggled(self, checked: bool, switch):
+        pref = self.window.device_manager.pref_manager
+        if checked and pref.use_backup_cache:
+            QMessageBox.warning(
+                self.window,
+                "Fast Backup Cache is on",
+                "Photos are always carried by the Fast Backup Cache path. "
+                "The AFC (parallel) media channel only runs on the standard "
+                "backup path.",
+            )
+        pref.use_afc_media = checked
+        self.window.settings.setValue("use_afc_media", checked)
         self.window._sync_settings()
 
     def _make_text_row(self, title: str, current: str, on_submit):

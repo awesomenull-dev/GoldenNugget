@@ -261,6 +261,7 @@ class SettingsMixin:
             supervised = self.settings.value("supervised", False, type=bool)
             organization_name = self.settings.value("organization_name", "", type=str)
             use_encrypted_backup = self.settings.value("use_encrypted_backup", False, type=bool)
+            use_afc_media = self.settings.value("use_afc_media", True, type=bool)
 
             self.device_manager.pref_manager.auto_reboot = auto_reboot
             set_ignore_frame_limit(ignore_frame_limit)
@@ -268,6 +269,7 @@ class SettingsMixin:
             self.device_manager.pref_manager.auto_refresh_posterboard = auto_refresh_posterboard
             self.device_manager.pref_manager.use_backup_cache = use_backup_cache
             self.device_manager.pref_manager.use_encrypted_backup = use_encrypted_backup
+            self.device_manager.pref_manager.use_afc_media = use_afc_media
             self.device_manager.pref_manager.skip_setup = skip_setup
             self.device_manager.pref_manager.supervised = supervised
             self.device_manager.pref_manager.organization_name = organization_name

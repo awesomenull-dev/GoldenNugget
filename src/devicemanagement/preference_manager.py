@@ -15,6 +15,7 @@ class PreferenceManager:
         self.auto_refresh_posterboard = True
         self.use_backup_cache = False
         self.use_encrypted_backup = False
+        self.use_afc_media = True
         self.skip_setup = True
         self.supervised = False
         self.organization_name = ""

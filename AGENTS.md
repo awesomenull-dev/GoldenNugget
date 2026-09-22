@@ -170,11 +170,11 @@ Main entry point for applying tweaks. Order:
 `ProtectiveBackupCache` keeps a per-device master copy of the protective
 backup in the persistent app-data store
 (`<AppData>/GoldenNugget/backup_cache/master/<udid>`):
-- **EXPERIMENTAL, OFF BY DEFAULT** — the cache only engages when the user
-  enables "Use Fast Backup Cache (Experimental)" in Settings
+- **EXPERIMENTAL, ON BY DEFAULT** — the cache engages unless the user turns
+  off "Use Fast Backup Cache (Experimental)" in Settings
   (`pref.use_backup_cache`). Cache off → the classic live
-  `perform_protective_backup()` / `_backup_posterboard_database()` path runs,
-  which is the stable default. Kill switch still hard-disables it:
+  `perform_protective_backup()` / `_backup_posterboard_database()` path runs.
+  Kill switch still hard-disables it:
   `GOLDENNUGGET_NO_BACKUP_CACHE=1`.
 - **AFC media store** — the bulk photo trees (DCIM, PhotoStreamsData) ride a
   persistent per-device mirror at `<AppData>/GoldenNugget/backup_cache/media/<udid>`

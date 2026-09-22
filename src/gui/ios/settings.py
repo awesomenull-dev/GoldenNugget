@@ -370,7 +370,7 @@ class IOSSettingsPage(QWidget):
                 "Enable Fast Backup Cache?",
                 "WARNING: The cached backup feature is experimental and, when it "
                 "fails, can leave your device without wallpaper data or on the "
-                "Setup screen. It is off by default for a reason.\n\n"
+                "Setup screen.\n\n"
                 "Enable the fast backup cache anyway?",
             )
             if reply != QMessageBox.StandardButton.Yes:

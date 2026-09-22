@@ -50,7 +50,7 @@ def load_prefs(dm, settings: Settings):
         pm.auto_reboot = settings.value("auto_reboot", True, type=bool)
         pm.disable_tendies_limit = settings.value("disable_tendies_limit", False, type=bool)
         pm.auto_refresh_posterboard = settings.value("auto_refresh_posterboard", True, type=bool)
-        pm.use_backup_cache = settings.value("use_backup_cache", False, type=bool)
+        pm.use_backup_cache = settings.value("use_backup_cache", True, type=bool)
         pm.use_encrypted_backup = settings.value("use_encrypted_backup", False, type=bool)
         pm.use_afc_media = settings.value("use_afc_media", True, type=bool)
         pm.skip_setup = settings.value("skip_setup", True, type=bool)

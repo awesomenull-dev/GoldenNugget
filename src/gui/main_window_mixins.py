@@ -256,7 +256,7 @@ class SettingsMixin:
             ignore_frame_limit = self.settings.value("ignore_pb_frame_limit", False, type=bool)
             disable_tendies_limit = self.settings.value("disable_tendies_limit", False, type=bool)
             auto_refresh_posterboard = self.settings.value("auto_refresh_posterboard", True, type=bool)
-            use_backup_cache = self.settings.value("use_backup_cache", False, type=bool)
+            use_backup_cache = self.settings.value("use_backup_cache", True, type=bool)
 
             skip_setup = self.settings.value("skip_setup", True, type=bool)
             supervised = self.settings.value("supervised", False, type=bool)

@@ -5,6 +5,7 @@ from typing import Optional
 # _restore``, ``ResetPairingThread``) awaited/used ``asyncio`` while only
 # importing it inside another method's scope, which is a NameError.
 import asyncio
+import os
 import queue
 import traceback
 import threading
@@ -243,13 +244,28 @@ class RestoreCacheThread(QThread):
         # A live backup taken with the AFC channel kept bulk photo trees beside
         # the run dir (never uploaded to mobilebackup2), so its manifest rows
         # for those trees must be pruned the same way or the restore fails with
-        # payload-missing rows. A cache master never used AFC, so no exclusion.
+        # payload-missing rows. A cache master now carries photos the same way:
+        # its Persistent per-device media store lives at
+        # ``<base>/media/<udid>``. Either way, only a media dir that actually
+        # has content is treated as the AFC source (an empty dir means the
+        # media has to ride the mobilebackup2 rows).
         media_dir = afc_media_dir_for(source_root)
+        from src.restore.protective_cache import peek_cache_info
+        cache_info = peek_cache_info(udid)
+        if cache_info is not None and cache_info.get("media_afc"):
+            from pathlib import Path as _Path
+            try:
+                base = _Path(source_root).parent.parent  # <base>/master/<udid> -> <base>
+            except Exception:
+                base = None
+            if base is not None:
+                media_dir = str(base / "media" / udid)
+        media_has_content = os.path.isdir(media_dir) and bool(os.listdir(media_dir))
         removed_rows, removed_files = await asyncio.to_thread(
             clean_backup_for_restore, working_root, udid,
             include_keychain=bool(self._backup_password()),
             manifest_password=self._backup_password(),
-            exclude_afc_media_trees=os.path.isdir(media_dir) and bool(os.listdir(media_dir)))
+            exclude_afc_media_trees=media_has_content)
         self.update_label(
             f"Prepared backup (-{removed_rows} pruned rows). Connecting to device...")
         missing = await asyncio.to_thread(
@@ -271,10 +287,11 @@ class RestoreCacheThread(QThread):
                 progress_callback=self._progress_cb,
                 backup_password=self._backup_password(),
                 skip_apps=True)
-            # A live backup taken with the AFC media channel keeps photos/videos
-            # beside the device_backup dir (the cache master never does — its
-            # media rides the mobilebackup2 rows). Only the live-branch media
-            # dir needs pushing back over AFC; the cache-master case has none.
+            # Photos/videos taken through the AFC channel live beside the
+            # source dir: a live backup keeps them next to the device_backup
+            # dir, a cache master at ``<base>/media/<udid>``. Either way the
+            # media dir rides the same AFC-located store and has to be pushed
+            # back over AFC after the restore.
             if os.path.isdir(media_dir) and os.listdir(media_dir):
                 self.update_label("Restoring photos/videos over AFC...")
                 await restore_media_via_afc(
@@ -313,6 +330,58 @@ class RestoreCacheThread(QThread):
             if (base / f"{udid}.json").is_file():
                 return base
         return None
+
+
+class CacheUpdateThread(QThread):
+    """Force a refresh of the backup cache master (pre-apply "Update Cache").
+
+    Runs ``device_manager.refresh_backup_cache`` in a background thread so
+    the pre-apply summary can freshen the cache (and its creation date) before
+    the user confirms the apply. Unlike ``ApplyThread`` it never applies tweaks
+    and never teleports to a restore.
+    """
+    progress = Signal(str)
+    alert = Signal(object)  # ApplyAlertMessage
+    finished_with_result = Signal(bool, str)  # success, error_message
+
+    def __init__(self, manager):
+        super().__init__()
+        self.manager = manager
+        self.success = False
+        self._error_msg = ""
+
+    def update_label(self, txt: str):
+        self.progress.emit(txt)
+
+    def run(self):
+        import logging
+        import asyncio
+        from src.controllers.nugget_logger import log_context
+        log = logging.getLogger("GoldenNugget.cache_update")
+        try:
+            log_context("START cache-update",
+                        udid=self.manager.get_current_device_udid() or "unknown")
+        except Exception:
+            pass
+        try:
+            asyncio.run(self.manager.refresh_backup_cache(self.update_label))
+            self.success = True
+            self._error_msg = ""
+            log.info("cache update finished OK")
+        except Exception as e:
+            self.success = False
+            self._error_msg = f"{type(e).__name__}: {e}"
+            traceback_str = traceback.format_exc()
+            log.error("cache update failed: %s\n%s", e, traceback_str)
+            self.alert.emit(ApplyAlertMessage(
+                f"Failed to update the backup cache: {e}",
+                title="Update Cache",
+                icon=QMessageBox.Critical,
+                detailed_txt=traceback_str,
+                exc_type=type(e),
+                exc_value=e,
+            ))
+        self.finished_with_result.emit(self.success, self._error_msg)
 
 
 class RefreshDevicesThread(QThread):

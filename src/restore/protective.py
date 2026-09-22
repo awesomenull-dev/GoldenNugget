@@ -642,6 +642,8 @@ async def perform_protective_backup(
     include_keychain: Optional[bool] = None,
     incremental_ok: bool = False,
     include_afc_media: bool = False,
+    media_root: str = None,
+    afc_media_diff: bool = False,
 ) -> bool:
     if not incremental_ok:
         Path(backup_root).mkdir(parents=True, exist_ok=True)
@@ -655,12 +657,21 @@ async def perform_protective_backup(
     # drops only the AFC-handled trees (whose payloads are not uploaded here).
     # The manifest prune applies the same exclusion, so no restore-time row
     # points at a payload that was never written.
+    #
+    # ``media_root`` overrides where the media tree is stored. The LIVE path
+    # uses ``afc_media_dir_for(backup_root)`` (a sibling of the run's
+    # device_backup); the CACHE path hands over its persistent per-device
+    # media store, and with ``afc_media_diff=True`` the refresh only pulls
+    # objects that are new/changed on the device (size-compared against the
+    # existing store).
     afc_media_task = None
     if include_afc_media:
+        media_dir = media_root or afc_media_dir_for(backup_root)
         afc_media_task = asyncio.create_task(backup_media_via_afc(
             lockdown_client,
-            afc_media_dir_for(backup_root),
+            media_dir,
             progress_callback=progress_callback,
+            diff=afc_media_diff,
         ))
         log_info("Photos/videos over AFC in parallel: pulling "
                  f"{sorted(AFC_MEDIA_TREES)} via AFC; mobilebackup2 keeps "

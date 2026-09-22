@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Restore the last protective backup cache to the device.
+"""Restore a protective backup to the device (cache master or live run).
 
 After a failed/wedged apply (e.g. the iPhone was not unlocked in time and
 Phase 3 was aborted), the protective backup that protects the user's data is
@@ -9,17 +9,24 @@ user's data after the iOS 27 "safe state recovery" wipe without re-running a
 whole apply.
 
 It does the same thing GoldenNugget does internally for a restore:
-  1. locate the cache master for the device (temp or persistent bases),
+  1. locate the backup source for the device:
+     - cache master (temp or persistent ``backup_cache`` bases), or
+     - the newest live protective backup run
+     (``--source auto`` picks cache first, then a live run),
   2. build a throwaway hardlink working copy,
   3. prune Manifest.db down to the protective payloads (so rows that were
      drained mid-stream and have no payload cannot fail with MBErrorDomain/205),
   4. wait for the device to be reachable and unlocked,
   5. restore via mobilebackup2, retrying and waiting for the unlock while
-     the user unlocks the phone.
+     the user unlocks the phone,
+  6. push any AFC-media store (cache ``media/<udid>`` or live run ``afc_media``)
+     back over AFC, then skip-setup + reboot like Phase 5.
 
 Usage:
     python3 restore_cache.py                 # restore for the first connected device
     python3 restore_cache.py --udid UDID     # restore for a specific device
+    python3 restore_cache.py --source live   # use the newest live backup run
+    python3 restore_cache.py --source cache  # use only the cache master
     python3 restore_cache.py --password XXXX # backup password (encrypted caches)
     python3 restore_cache.py --cache-root /path  # override cache base (debug)
     python3 restore_cache.py --timeout 20    # minutes to wait for unlock
@@ -45,11 +52,17 @@ from pymobiledevice3.exceptions import (  # noqa: E402
 )
 
 from src.restore.protective import (  # noqa: E402
-    ProtectiveBackupCache,
     make_protective_working_copy,
     clean_backup_for_restore,
     verify_backup_payloads,
+    find_latest_protective_backup,
+    protective_persistent_base,
     log_info, log_warn, log_error,
+)
+from src.restore.protective_cache import peek_cache_info  # noqa: E402
+from src.restore.afc_media import (  # noqa: E402
+    afc_media_dir_for,
+    restore_media_via_afc,
 )
 from src.restore.restore import (  # noqa: E402
     _restore_protective_backup,
@@ -82,8 +95,26 @@ def _list_connected_devices() -> list:
     return asyncio.run(_list_connected_devices_async())
 
 
-async def _find_cache_udid(preferred: str, cache_root: str | None):
-    """Pick a candidate udid to attempt restoring from."""
+def _live_backup_udids() -> list:
+    """UDIDs that have at least one live protective backup run on disk."""
+    root = protective_persistent_base()
+    if not root.is_dir():
+        return []
+    return sorted(u.name for u in root.iterdir()
+                  if u.is_dir() and any(
+                      (u / entry / "device_backup" / u.name / "Manifest.db").is_file()
+                      for entry in u.iterdir()))
+
+
+async def _find_cache_udid(preferred: str, cache_root: str | None,
+                           source: str = "auto"):
+    """Pick a candidate udid to attempt restoring from.
+
+    Candidates come from the cache bases (json + master dirs) AND the live
+    protective backup store, so ``--source live`` / ``auto`` can pick a device
+    that only has a live run (no cache). ``source`` only affects preference
+    order; the actual source root is resolved in ``_resolve_source``.
+    """
     bases = []
     if cache_root:
         bases.append(Path(cache_root))
@@ -107,22 +138,70 @@ async def _find_cache_udid(preferred: str, cache_root: str | None):
                 if udid_dir.is_dir():
                     cached_udids.append(udid_dir.name)
     cached_udids = list(dict.fromkeys(cached_udids))
+    live_udids = _live_backup_udids()
 
     connected = await _list_connected_devices_async()
 
     if preferred:
         return preferred
-    # prefer a cached udid that is also connected
-    for u in cached_udids:
-        if u in connected:
-            return u
+    # Order the candidate pools by the requested source.
+    if source == "live":
+        pools = [live_udids, cached_udids]
+    elif source == "cache":
+        pools = [cached_udids, live_udids]
+    else:  # auto — cache first, then live runs
+        pools = [cached_udids, live_udids]
+    # prefer a udid that is also connected
+    for pool in pools:
+        for u in pool:
+            if u in connected:
+                return u
     # any connected device
     if connected:
         return connected[0]
-    # only a cached udid exists (device not enumerated yet)
-    if cached_udids:
-        return cached_udids[0]
+    # only a stored udid exists (device not enumerated yet)
+    for pool in pools:
+        if pool:
+            return pool[0]
     return None
+
+
+def _resolve_source(cache_root: str | None, udid: str, source: str) -> tuple:
+    """Resolve the backup source root + its media dir for ``udid``.
+
+    Returns ``(source_root, media_dir, label)``:
+    - a cache master → ``<base>/master`` with its ``media/<udid>`` store
+      (when ``peek_cache_info`` says the media rides AFC);
+    - the newest live backup run → its ``device_backup`` root with the run's
+      ``afc_media`` dir as the media store.
+    ``media_dir`` is "" when the source has no AFC media store. Raises
+    ``RuntimeError`` when nothing is found for the requested source.
+    """
+    candidates = []
+    if source in ("cache", "auto"):
+        base = _pick_base(cache_root, udid)
+        if base is not None:
+            info = peek_cache_info(udid)
+            media_dir = (str(Path(base) / "media" / udid)
+                         if info and info.get("media_afc") else "")
+            candidates.append((str(Path(base) / "master"), media_dir,
+                               f"cache master ({base})"))
+    if source in ("live", "auto"):
+        live_root = find_latest_protective_backup(udid)
+        if live_root is not None:
+            candidates.append((live_root, afc_media_dir_for(live_root),
+                               "live backup run"))
+    if not candidates:
+        raise RuntimeError(
+            f"no protective {'cache' if source == 'cache' else 'backup'} "
+            f"found for {udid}.")
+    # auto prefers the cache master (fast, incremental); live runs are the
+    # fallback after a wedged apply.
+    source_root, media_dir, label = candidates[0]
+    if source == "auto" and len(candidates) > 1:
+        log_info(f"Found both a cache master and a live run — using the cache "
+                 f"master. Pass --source live to force the live run.")
+    return source_root, media_dir, label
 
 
 def _pick_base(cache_root: str | None, udid: str):
@@ -207,34 +286,43 @@ async def _restore_with_wait(lc, backup_root: str, udid: str, backup_password: s
 
 async def run(args) -> int:
     udid = args.udid
-    udid = await _find_cache_udid(udid, args.cache_root)
+    udid = await _find_cache_udid(udid, args.cache_root, args.source)
     if not udid:
-        print("ERROR: no device and no cached backup found.")
+        print("ERROR: no device and no stored backup found.")
         print("Connect the iPhone over USB or pass --udid.")
         return 1
     print(f"Using UDID: {udid}")
 
-    base = _pick_base(args.cache_root, udid)
-    if base is None:
-        print(f"ERROR: no protective cache found for {udid}.")
-        print("Looked in temp + app-data cache bases.")
+    try:
+        source_root, media_dir, label = _resolve_source(
+            args.cache_root, udid, args.source)
+    except RuntimeError as e:
+        print(f"ERROR: {e}")
         return 1
-    print(f"Cache base: {base}")
+    print(f"Source: {label}")
+    print(f"Backup root: {source_root}")
+    if media_dir and os.path.isdir(media_dir) and os.listdir(media_dir):
+        print(f"AFC media store: {media_dir}")
+    else:
+        media_dir = ""  # no media store on disk -> media rides mobilebackup2 rows
 
     # build a restorable (pruned) working copy from the master
     try:
         working_root = await asyncio.to_thread(
-            make_protective_working_copy, str(base / "master"), udid)
+            make_protective_working_copy, source_root, udid)
     except Exception as e:
-        print(f"ERROR: could not copy cache master: {e}")
+        print(f"ERROR: could not copy backup source: {e}")
         return 1
     print(f"Working copy: {working_root}")
 
     # prune manifest to protective payloads so no mid-stream-drained row can
-    # fail the restore with MBErrorDomain/205
+    # fail the restore with MBErrorDomain/205. When an AFC media store exists,
+    # the DCIM/PhotoStreamsData rows are also pruned here — their payloads were
+    # never uploaded to the backup and get pushed back over AFC instead.
     removed_rows, removed_files = await asyncio.to_thread(
         clean_backup_for_restore, working_root, udid,
-        manifest_password=args.password or "")
+        manifest_password=args.password or "",
+        exclude_afc_media_trees=bool(media_dir))
     print(f"Pruned: -{removed_rows} manifest rows, -{removed_files} payload files")
 
     missing = await asyncio.to_thread(
@@ -261,6 +349,15 @@ async def run(args) -> int:
         await _restore_with_wait(lc, working_root, udid,
                                  args.password or "", args.timeout,
                                  progress_cb)
+        if media_dir:
+            print("Restoring photos/videos over AFC...")
+            try:
+                await restore_media_via_afc(lc, media_dir,
+                                            progress_callback=progress_cb)
+                print("Photos/videos restored over AFC.")
+            except Exception as e:  # noqa: BLE001
+                log_warn(f"AFC media restore failed (the backup restore itself "
+                         f"succeeded): {type(e).__name__}: {e}")
         print("\nSUCCESS: protective backup restored.")
         # Phase 5 (mirrors _restore_ios27): skip setup panes, then reboot so
         # the restored data + skip-setup actually take effect on iOS 27+.
@@ -297,6 +394,10 @@ async def run(args) -> int:
 def main(argv: list = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--udid", help="device UDID (default: auto-detect)")
+    parser.add_argument("--source", choices=("auto", "cache", "live"),
+                        default="auto",
+                        help="backup source: cache master, newest live run, or "
+                             "auto (cache first, then a live run) (default: auto)")
     parser.add_argument("--password", help="backup password (for encrypted caches)")
     parser.add_argument("--cache-root", help="override cache base directory")
     parser.add_argument("--timeout", type=int, default=20,
@@ -307,6 +408,19 @@ def main(argv: list = None) -> int:
                         help="do not reboot the device after restoring (Phase 5)")
     argv = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(argv)
+    # Bootstraps Qt the same way the GUI does so QStandardPaths.AppDataLocation
+    # matches the app's real persistent store (otherwise it resolves one level
+    # up, without the application name, and live backups / the cache master are
+    # never found).
+    import os as _os
+    if not _os.environ.get("QT_QPA_PLATFORM") and _os.name != "nt" and not _os.environ.get("DISPLAY"):
+        _os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import QCoreApplication
+    if QApplication.instance() is None:
+        QApplication(sys.argv)
+    QCoreApplication.setOrganizationDomain("com.leemin")
+    QCoreApplication.setApplicationName("GoldenNugget")
     try:
         return asyncio.run(run(args))
     except KeyboardInterrupt:

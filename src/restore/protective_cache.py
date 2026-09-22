@@ -27,6 +27,37 @@ from src.restore.inject import _validate_sqlite_db
 
 _logger = logging.getLogger("GoldenNugget.cache")
 
+
+def peek_cache_info(udid: str) -> Optional[dict]:
+    """Read the cache info JSON for a UDID without a device session.
+
+    Best-effort: returns the ``created`` timestamp and age (if any)
+    regardless of encryption/version matching — the pre-apply summary uses it
+    only to display "cache from <date>"; the real matching happens in
+    ``ProtectiveBackupCache.locate`` at apply time.
+    """
+    try:
+        temp_base = Path(tempfile.gettempdir()) / "goldennugget_protective_cache"
+        persist_base = Path(QStandardPaths.writableLocation(
+            QStandardPaths.AppDataLocation)) / "GoldenNugget" / "backup_cache"
+    except Exception:
+        return None
+    now = int(time.time())
+    for base in (temp_base, persist_base):
+        try:
+            with open(base / f"{udid}.json", "r", encoding="utf-8") as f:
+                info = json.load(f)
+        except Exception:
+            continue
+        if info.get("udid") != udid:
+            continue
+        created_ts = int(info.get("created_ts", now))
+        return {"created": info.get("created", ""),
+                "created_ts": created_ts,
+                "age_secs": max(0, now - created_ts),
+                "media_afc": bool(info.get("media_afc", False))}
+    return None
+
 # The master always lives in the persistent app-data store — a temp-based
 # master is the sole copy of user data between Phase 2 (wipe) and Phase 3
 # (restore), and a reboot would destroy it.
@@ -63,6 +94,12 @@ class ProtectiveBackupCache:
         self.master_root = self.base / "master"
         self.device_dir = self.master_root / self.udid
         self.info_path = self.base / f"{self.udid}.json"
+        # Persistent per-device media store: the bulk photo trees (DCIM,
+        # PhotoStreamsData) pulled over AFC live here so a diff refresh can
+        # compare against what is already local and pull only the new/changed
+        # objects. It sits OUTSIDE ``master_root`` so working copies and the
+        # manifest prune never touch it.
+        self.media_dir = self.base / "media" / self.udid
 
     def _read_info(self) -> dict:
         try:
@@ -98,6 +135,7 @@ class ProtectiveBackupCache:
             self.master_root = base / "master"
             self.device_dir = master
             self.info_path = info_path
+            self.media_dir = base / "media" / self.udid
             created = int(info.get("created_ts", now))
             return {"base": base, "info": info, "age_secs": max(0, now - created)}
         return None
@@ -107,6 +145,7 @@ class ProtectiveBackupCache:
         self.master_root = base / "master"
         self.device_dir = self.master_root / self.udid
         self.info_path = base / f"{self.udid}.json"
+        self.media_dir = base / "media" / self.udid
 
     def relocate_by_size(self):
         """Legacy no-op (kept for the placement test tool).
@@ -122,12 +161,17 @@ class ProtectiveBackupCache:
 
     async def refresh(self, lockdown_client: LockdownClient, progress_callback=None,
                       include_photos: bool = True, include_posterboard: bool = False,
-                      include_keychain: bool = False) -> str:
+                      include_keychain: bool = False,
+                      include_afc_media: bool = False) -> str:
         """Bring the master up to the device's current state (full or incremental).
 
         With ``include_posterboard`` the PosterBoard container rides along, so
         after this call ``extract_posterboard_db`` yields the live on-device
         database — refreshed BEFORE extraction, never a stale copy.
+
+        With ``include_afc_media`` the bulk photo trees go over AFC into the
+        persistent per-device media store (``media_dir``), pulled as a diff
+        (only new/changed objects) on every refresh — the cache photo store.
         """
         from src.restore.protective import perform_protective_backup
 
@@ -138,13 +182,17 @@ class ProtectiveBackupCache:
             lockdown_client, str(self.master_root), progress_callback,
             include_photos=include_photos, include_posterboard=include_posterboard,
             include_keychain=include_keychain,
-            incremental_ok=valid)
+            incremental_ok=valid,
+            include_afc_media=include_afc_media,
+            media_root=str(self.media_dir),
+            afc_media_diff=True)
 
         self.base.mkdir(parents=True, exist_ok=True)
         with open(self.info_path, "w", encoding="utf-8") as f:
             json.dump({"udid": self.udid,
                        "product_version": self.product_version,
                        "encrypted": is_encrypted,
+                       "media_afc": include_afc_media,
                        "created_ts": int(time.time()),
                        "created": time.strftime("%Y-%m-%d %H:%M:%S")}, f)
         return str(self.master_root)
@@ -156,4 +204,5 @@ class ProtectiveBackupCache:
 
     def purge(self):
         shutil.rmtree(self.master_root, ignore_errors=True)
+        shutil.rmtree(self.media_dir, ignore_errors=True)
         self.info_path.unlink(missing_ok=True)

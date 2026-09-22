@@ -7,6 +7,7 @@ NavigationMixin, ApplyMixin)``.
 """
 
 from typing import Optional
+import os
 
 from PySide6 import QtCore, QtWidgets
 from PySide6.QtCore import QCoreApplication
@@ -586,6 +587,10 @@ class NavigationMixin:
 class ApplyMixin:
     """Apply/reset orchestration, alerts and dialog prompts."""
 
+    # IOSSummaryDialog extra-button result when the user asks to update the
+    # backup cache from the pre-apply summary (QDialog.Accepted=1/Rejected=0).
+    _SUMMARY_UPDATE_CACHE = 2
+
     def update_label(self, txt: str):
         # Mirror progress into the iOS surfaces (home indicator + Apply page)
         try:
@@ -661,28 +666,112 @@ class ApplyMixin:
 
 
     def _confirm_apply_summary(self) -> bool:
-        """Show the pre-apply summary; True only if the user confirms."""
-        lines, total = self._build_apply_summary()
-        if not lines:
+        """Show the pre-apply summary; True only if the user confirms.
+
+        When the backup cache is enabled, an extra "Update Cache" button lets
+        the user force a cache refresh right here — the running summary shows
+        the cache's creation date, the refresh runs in a background thread,
+        and the dialog re-opens with the fresh date.
+        """
+        cache_enabled = self._backup_cache_enabled()
+        while True:
+            lines, total = self._build_apply_summary()
+            if not lines:
+                QtWidgets.QMessageBox.information(
+                    self,
+                    QCoreApplication.translate("Nugget", "Nothing to apply"),
+                    QCoreApplication.translate(
+                        "Nugget",
+                        "No tweaks, daemons, wallpapers or templates are enabled. "
+                        "Enable something first."))
+                return False
+            if cache_enabled:
+                cache_line = self._backup_cache_summary_line()
+                if cache_line:
+                    lines.append(cache_line)
+            from src.gui.ios.components import IOSSummaryDialog
+            dlg = IOSSummaryDialog(
+                title=QCoreApplication.translate("Nugget", "Apply Tweaks"),
+                lines=lines,
+                muted=QCoreApplication.translate(
+                    "Nugget",
+                    "Your device reboots when it's done — remember to turn Find My "
+                    "back on afterwards. A protective backup runs first."),
+                confirm_text=QCoreApplication.translate("Nugget", "Apply"),
+                extra_button=(QCoreApplication.translate("Nugget", "Update Cache")
+                              if cache_enabled else ""),
+                parent=self)
+            res = dlg.exec()
+            if res == self._SUMMARY_UPDATE_CACHE:
+                self._run_cache_update()
+                # Re-open the summary (with the refreshed cache date) so the
+                # user can review and then confirm or cancel.
+                continue
+            return res == QtWidgets.QDialog.Accepted
+
+    def _backup_cache_enabled(self) -> bool:
+        return (self.device_manager.pref_manager.use_backup_cache
+                and not os.environ.get("GOLDENNUGGET_NO_BACKUP_CACHE"))
+
+    def _backup_cache_summary_line(self) -> str:
+        udid = self.device_manager.get_current_device_udid()
+        if not udid:
+            return ""
+        from src.restore.protective_cache import peek_cache_info
+        info = peek_cache_info(udid)
+        q = QCoreApplication.translate
+        if info is None:
+            return q(
+                "Nugget",
+                "• Backup cache: none yet (will be created on this apply)")
+        return q(
+            "Nugget",
+            "• Backup cache from: {0} (reused if fresh)").format(
+                info.get("created") or "unknown")
+
+    def _run_cache_update(self) -> bool:
+        """Force a backup-cache refresh in a background thread, modally.
+
+        Returns True only when the refresh ran to completion. The progress
+        dialog stays open until ``finished_with_result`` fires; a failure
+        already surfaced through the alert pipeline.
+        """
+        from src.gui.thread_workers.apply_worker import CacheUpdateThread
+        udid = self.device_manager.get_current_device_udid()
+        if not udid:
             QtWidgets.QMessageBox.information(
                 self,
-                QCoreApplication.translate("Nugget", "Nothing to apply"),
+                QCoreApplication.translate("Nugget", "Update Cache"),
                 QCoreApplication.translate(
-                    "Nugget",
-                    "No tweaks, daemons, wallpapers or templates are enabled. "
-                    "Enable something first."))
+                    "Nugget", "No device is selected. Connect your device first."))
             return False
-        from src.gui.ios.components import IOSSummaryDialog
-        dlg = IOSSummaryDialog(
-            title=QCoreApplication.translate("Nugget", "Apply Tweaks"),
-            lines=lines,
-            muted=QCoreApplication.translate(
-                "Nugget",
-                "Your device reboots when it's done — remember to turn Find My "
-                "back on afterwards. A protective backup runs first."),
-            confirm_text=QCoreApplication.translate("Nugget", "Apply"),
-            parent=self)
-        return dlg.exec() == QtWidgets.QDialog.Accepted
+        worker = CacheUpdateThread(manager=self.device_manager)
+        self._cache_update_thread = worker  # keep a strong ref while running
+        prog = QtWidgets.QProgressDialog(
+            QCoreApplication.translate(
+                "Nugget", "Updating backup cache..."),
+            "", 0, 0, self)
+        prog.setWindowTitle(QCoreApplication.translate("Nugget", "Update Cache"))
+        prog.setWindowModality(QtCore.Qt.WindowModal)
+        prog.setCancelButton(None)
+        prog.setMinimumDuration(0)
+        result = [False]
+
+        def _on_progress(txt):
+            prog.setLabelText(txt)
+
+        def _on_finish(ok: bool, _err: str):
+            result[0] = ok
+            prog.close()
+
+        worker.progress.connect(_on_progress)
+        worker.finished_with_result.connect(_on_finish)
+        worker.alert.connect(self.alert_message)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+        # Modal event loop — worker signals keep flowing until _on_finish closes it.
+        prog.exec()
+        return result[0]
 
 
     def apply_changes(self, reset_pages: list=None):

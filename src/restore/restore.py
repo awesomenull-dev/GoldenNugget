@@ -549,7 +549,12 @@ skip_setup: bool = True,
                 clean_backup_for_restore, backup_root, udid,
                 include_keychain=include_keychain,
                 manifest_password=manifest_password,
-                exclude_afc_media_trees=bool(media_dir)
+                # AFC trees are pruned from the manifest only when the media
+                # dir actually carries them (a cache master's media store, or a
+                # fresh live AFC pull). An empty/missing dir means the media
+                # rides the mobilebackup2 rows and they must stay.
+                exclude_afc_media_trees=(bool(media_dir) and os.path.isdir(media_dir)
+                                         and bool(os.listdir(media_dir)))
             )
         log_info(f"Phase 1: Pruned backup: -{removed_rows} manifest rows, -{removed_files} payload files "
                  f"({time.monotonic() - started:.1f}s into the run)")

@@ -9,7 +9,6 @@ from typing import Optional
 from src.gui.ios.components import (
     IOSSectionHeader, IOSSwitch, IOSPrimaryButton
 )
-from src.gui.ios.theme_manager import ThemeManager
 from src.gui.pages.main.settings import available_languages
 from src.controllers.video_handler import set_ignore_frame_limit
 from src.controllers.preset_manager import PresetManager
@@ -56,13 +55,8 @@ class IOSSettingsPage(QWidget):
         accent_row.addWidget(self._accent_picker)
         self.content_layout.addWidget(accent_row_card)
 
-        theme_on = self.window.theme_manager.current_theme == ThemeManager.IOS
-        self.theme_switch = self._make_switch(
-            QCoreApplication.translate("Nugget", "iOS-style Interface"),
-            theme_on,
-            lambda ios_on: self.window.apply_theme(
-                ThemeManager.IOS if ios_on else ThemeManager.CLASSIC),
-        )
+        # TEMP: Classic UI removed — the "iOS-style Interface" switch is hidden;
+        # the app is pinned to the iOS-style interface until Classic returns.
 
         # HotLoad safety rules
         self.content_layout.addWidget(

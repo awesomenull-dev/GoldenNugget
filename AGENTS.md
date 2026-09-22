@@ -58,6 +58,14 @@ Dark/light mode + accent color customization for the whole GUI.
   frozen app via `--add-data=src/qt:src/qt`).
 - `src/qt/mainwindow_ui.py` is generated from Qt Designer — do not edit;
   theme the chrome via `_apply_global_stylesheet` instead.
+- **TEMP: Classic UI removed** — `src/qt/mainwindow.ui` is deleted (the
+  generated `mainwindow_ui.py` stays committed and keeps working at runtime),
+  the Settings "iOS-style Interface" switch is hidden, `ThemeManager.load_theme`
+  always returns `IOS`, and the first-launch `InterfacePickerDialog` is skipped
+  (saves `IOS` instead). Restore all of these when Classic comes back:
+  recreate `mainwindow.ui`, unhide the switch in `settings.py`, revert
+  `load_theme` to read `ui/theme`, and re-add the picker block in
+  `main_window.run_first_launch_prompts`.
 - Old `src/gui/ios/theme_manager.py` (`CLASSIC`/`IOS`) is layout-only
   (Classic vs iOS-style chrome) and stays untouched side-by-side.
 - Theme UI lives in Settings → **Appearance** (`src/gui/ios/settings.py`):
@@ -168,6 +176,23 @@ backup in the persistent app-data store
   `perform_protective_backup()` / `_backup_posterboard_database()` path runs,
   which is the stable default. Kill switch still hard-disables it:
   `GOLDENNUGGET_NO_BACKUP_CACHE=1`.
+- **AFC media store** — the bulk photo trees (DCIM, PhotoStreamsData) ride a
+  persistent per-device mirror at `<AppData>/GoldenNugget/backup_cache/media/<udid>`
+  (`ProtectiveBackupCache.media_dir`, OUTSIDE `master_root` so working copies
+  and the manifest prune never touch it), pulled over AFC by
+  `backup_media_via_afc(diff=True)` — only objects that are new/changed on the
+  device are pulled (size-compared; missing local files are pulled, extra local
+  files are never deleted since the store is the only photo copy after a wipe).
+  This is the same channel the LIVE path uses, so the media type is identical;
+  `GOLDENNUGGET_NO_AFC_MEDIA=1` makes the cache carry photos on the
+  mobilebackup2 rows instead.
+- The pre-apply summary in `main_window_mixins._confirm_apply_summary` shows a
+  "Backup cache from: <date>" line (via `peek_cache_info`, best-effort, no
+  device session) and — when the cache is enabled — an **"Update Cache"**
+  button (`IOSSummaryDialog.extra_button`, result `2` →
+  `_SUMMARY_UPDATE_CACHE`). Picking it runs `device_manager.refresh_backup_cache`
+  on a `CacheUpdateThread` (modal `QProgressDialog`) and re-opens the summary
+  with the fresh date; confirming proceeds with the refreshed cache.
 - The master's Manifest.db stays FULL (rows for mid-stream-drained payloads
   remain), so `perform_protective_backup(incremental_ok=True)` runs a true
   incremental refresh — repeat applies upload only what changed on the device.
@@ -456,7 +481,8 @@ _apply_changes()
     |_ _raise_if_unsupported()
     |_ [iOS 27+ only] _prepare_protective_backup()   [Phase 0: live backup (default) or cached master refresh]
     |     |_ cache OFF (default) -> fresh live perform_protective_backup()
-    |     |_ cache ON (experimental) -> incremental master refresh; "reuse as-is" fast path only when NOT needs_posterboard
+    |     |_ cache ON (experimental) -> incremental master refresh; "reuse as-is" fast path only when NOT needs_posterboard;
+    |     |     AFC media store kept in diff-sync over AFC (media/<udid>); pre-apply summary can force a refresh ("Update Cache")
     |     |_ wallpapers applied? -> include PosterBoard container in the backup + extract fresh DB after
     |_ targeted_posterboard_database_backup()        [iOS 26: the delivery channel, no Phase 0]
     |     |_ only the AppDomain-com.apple.PosterBoard container; everything else drained mid-stream

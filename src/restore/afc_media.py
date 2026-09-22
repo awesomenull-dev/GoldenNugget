@@ -148,27 +148,36 @@ async def _list_afc_tree(afc, dirpath: str, entries: list,
 
 async def backup_media_via_afc(lockdown_client, media_root: str,
                                progress_callback=None,
-                               on_error: str = "raise") -> dict:
+                               on_error: str = "raise",
+                               diff: bool = False) -> dict:
     """Pull the bulk photo trees over AFC into ``media_root``.
 
     Walks only the top-level Media trees named by ``AFC_MEDIA_TREES`` (DCIM,
     PhotoStreamsData) under the AFC root and mirrors every regular file into
     ``media_root`` preserving the on-device layout. Returns a tally dict
-    ``{"files": int, "bytes": int}``.
+    ``{"files": int, "bytes": int, "skipped": int}``.
+
+    With ``diff=True`` a local file that already exists at the same size is
+    left untouched, so only new/changed objects are pulled — that is the
+    cache refresh path, where ``media_root`` is the persistent per-device
+    media store from a previous run (the first pull is still a full one).
+    Extra local files (deleted on the device) are never removed: the media
+    dir is the ONLY copy of the user's photos after a wipe, so deleting
+    anything here would be data loss.
     """
     root = os.path.abspath(media_root)
     os.makedirs(root, exist_ok=True)
-    tally = {"files": 0, "bytes": 0}
+    tally = {"files": 0, "bytes": 0, "skipped": 0}
 
     def _log(value):
         if progress_callback is not None and not isinstance(value, (int, float)):
             progress_callback(value)
 
     if os.path.isdir(root) and os.listdir(root):
-        log_info(f"AFC media pull: {root} already populated — refreshing it")
-
-    entries: list[tuple[str, str, dict]] = []  # (src, rel, stat)
+        log_info(f"AFC media pull: {root} already populated — "
+                 f"{'diff refresh (pull only new/changed)' if diff else 'full refresh'}")
     async with AfcService(lockdown_client) as afc:
+        entries: list = []
         root_children = await afc.listdir("/")
         for name in sorted(root_children):
             if name in (".", ".."):
@@ -185,8 +194,18 @@ async def backup_media_via_afc(lockdown_client, media_root: str,
         done_files = 0
         done_bytes = 0
         failed: list[str] = []
+        skipped = 0
         for src, rel, st in entries:
             dst = os.path.join(root, *rel.split("/"))
+            if diff:
+                try:
+                    if (os.path.getsize(dst) == int(st.get("st_size", 0))):
+                        # Same size on both ends — already local, skip the pull.
+                        skipped += 1
+                        done_files += 1
+                        continue
+                except OSError:
+                    pass  # file missing locally -> pull it
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             try:
                 n = await _pull_one(afc, src, dst, st)
@@ -204,9 +223,11 @@ async def backup_media_via_afc(lockdown_client, media_root: str,
                                    done_files, total_files, done_bytes, total_bytes))
 
         log_info(f"AFC media pull complete: {total_files} files, "
-                 f"{total_bytes / (1024 * 1024):.1f} MB")
+                 f"{total_bytes / (1024 * 1024):.1f} MB"
+                 + (f" ({skipped} already present, skipped)" if skipped else ""))
         tally["files"] = total_files
         tally["bytes"] = total_bytes
+        tally["skipped"] = skipped
         if failed:
             log_warn(f"AFC media pull: {len(failed)} files skipped on error "
                      f"(e.g. {failed[:3]})")

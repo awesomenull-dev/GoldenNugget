@@ -280,15 +280,11 @@ class MainWindow(QtWidgets.QMainWindow, DeviceBarMixin, SettingsMixin,
         unmapped parent, which on several platforms renders them transparent
         and stuttering. Called from main_app right after widget.show().
         """
-        # First launch: ask user which interface they prefer
+        # First launch: ask user which interface they prefer.
+        # TEMP: Classic UI removed — skip the picker, stay on iOS-style.
         if not self.theme_manager.settings.contains("ui/theme"):
-            from src.gui.interface_picker import InterfacePickerDialog
-            dlg = InterfacePickerDialog(self)
-            if dlg.exec() == QtWidgets.QDialog.DialogCode.Accepted and dlg.choice == "ios":
-                self.theme_manager.save_theme(ThemeManager.IOS)
-            else:
-                self.theme_manager.save_theme(ThemeManager.CLASSIC)
-            self.apply_theme(self.theme_manager.current_theme)
+            self.theme_manager.save_theme(ThemeManager.IOS)
+            self.apply_theme(ThemeManager.IOS)
 
         # First launch: remind the user to back up the device before tweaking
         # (keeps asking until they confirm a backup was made)

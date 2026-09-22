@@ -16,8 +16,9 @@ class ThemeManager:
         self.current_theme = self.load_theme()
 
     def load_theme(self) -> int:
-        val = self.settings.value("ui/theme", "classic")
-        return self.IOS if val == "ios" else self.CLASSIC
+        # TEMP: Classic UI removed — always load the iOS-style interface.
+        # Revert to the persisted ``ui/theme`` once Classic is back.
+        return self.IOS
 
     def save_theme(self, theme: int):
         val = "ios" if theme == self.IOS else "classic"

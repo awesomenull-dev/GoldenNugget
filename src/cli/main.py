@@ -67,8 +67,8 @@ Backups:
 Standalone recovery / wallpapers:
   Nugget apply-wallpaper [TENDIE] [--udid UDID] [--list]
   Nugget restore-cache [--udid UDID] [--password PASSWORD]
-                       [--cache-root DIR] [--timeout MINUTES]
-                       [--no-skip-setup] [--no-reboot]
+                       [--source auto|cache|live] [--cache-root DIR]
+                       [--timeout MINUTES] [--no-skip-setup] [--no-reboot]
   Nugget restore [same options as restore-cache]
   Nugget skip-setup [--udid UDID]
 

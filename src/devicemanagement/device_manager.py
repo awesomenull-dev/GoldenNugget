@@ -738,6 +738,7 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
                 return await _live_backup(lc)
 
             # --- EXPERIMENTAL cache path ---
+            use_afc_media = afc_media_enabled(self.pref_manager.use_afc_media)
             encrypted = await is_backup_encrypted(lc)
             self._known_backup_encryption = encrypted
             manifest_password = ""
@@ -758,9 +759,13 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
             cache = ProtectiveBackupCache(udid, product_version=self.get_current_device_version(),
                                           encrypted=encrypted)
             found = cache.locate()
-            # fast path: a fresh cache (no wallpapers pending) is reused as-is —
-            # no device session at all; past the TTL it gets an incremental refresh
-            if found and not needs_posterboard and found["age_secs"] < CACHE_REFRESH_SECS:
+            media_ready = (not use_afc_media
+                           or (cache.media_dir.is_dir() and any(cache.media_dir.iterdir())))
+            # fast path: a fresh cache (no wallpapers pending, media already in
+            # sync) is reused as-is — no device session at all; past the TTL it
+            # gets an incremental refresh. The AFC media store has to exist too,
+            # or the refresh (which pulls the photos) is still needed.
+            if found and not needs_posterboard and found["age_secs"] < CACHE_REFRESH_SECS and media_ready:
                 log_info(f"Cache is {found['age_secs'] // 60} min old — reusing without a backup session")
                 master_root = str(cache.master_root)
             else:
@@ -768,14 +773,53 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
                 master_root = await cache.refresh(
                     lc, progress_callback=self._backup_progress(update_label),
                     include_photos=True, include_posterboard=needs_posterboard,
-                    include_keychain=encrypted)
-    
-            prepared = PreparedBackup(root=master_root, manifest_password=manifest_password, master=True)
+                    include_keychain=encrypted,
+                    include_afc_media=use_afc_media)
+
+            media_src = str(cache.media_dir) if use_afc_media else ""
+            prepared = PreparedBackup(root=master_root, manifest_password=manifest_password,
+                                      master=True, media_src=media_src)
             if needs_posterboard and encrypted:
                 log_warn("Encrypted cache cannot yield a readable PosterBoard DB — "
                          "falling back to a separate backup")
                 return prepared, False
             return prepared, _register_pb_db(master_root)
+
+    async def refresh_backup_cache(self, update_label=lambda x: None) -> str:
+        """Force a refresh of the backup cache master for the current device.
+
+        Runs the same incremental master refresh + AFC media diff as an apply
+        would, without applying any tweaks. Used by the pre-apply summary's
+        "Update Cache" action so the user can freshen the cache (and from
+        which date it will be reused) before confirming. Raises NuggetException
+        when there is no device or the cache is disabled.
+        """
+        udid = self.get_current_device_udid()
+        if not udid:
+            raise NuggetException("No device selected.")
+        cache_enabled = (self.pref_manager.use_backup_cache
+                         and not os.environ.get("GOLDENNUGGET_NO_BACKUP_CACHE"))
+        if not cache_enabled:
+            raise NuggetException(
+                "The backup cache is disabled. Enable 'Use Fast Backup Cache "
+                "(Experimental)' in Settings → Backup first.")
+
+        from src.restore.protective import (
+            ProtectiveBackupCache, is_backup_encrypted)
+        use_afc_media = afc_media_enabled(self.pref_manager.use_afc_media)
+        async with lockdown_session(udid) as lc:
+            encrypted = await is_backup_encrypted(lc)
+            cache = ProtectiveBackupCache(udid,
+                                          product_version=self.get_current_device_version(),
+                                          encrypted=encrypted)
+            update_label(QCoreApplication.tr("Updating backup cache..."))
+            master_root = await cache.refresh(
+                lc, progress_callback=self._backup_progress(update_label),
+                include_photos=True, include_posterboard=False,
+                include_keychain=encrypted,
+                include_afc_media=use_afc_media)
+            log_info(f"Backup cache refreshed for {udid}")
+        return master_root
 
     async def _backup_posterboard_database(self, update_label=lambda x: None, force: bool = False):
         """Fetch the device's PosterBoard sqlite database before applying wallpapers.

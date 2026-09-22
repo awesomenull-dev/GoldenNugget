@@ -137,9 +137,14 @@ class IOSSummaryDialog(QDialog):
     Built for the pre-apply summary: takes a title, a list of ``lines`` and an
     optional muted footer note, then offers Cancel / a themed confirm button.
     ``exec()`` returns ``QDialog.Accepted`` when the user confirms.
+
+    An optional ``extra_button`` (e.g. "Update Cache") renders as an
+    additional themed button that returns ``extra_result`` (default 2) so the
+    caller can branch on it without closing with a plain confirm.
     """
     def __init__(self, title: str, lines: list[str], muted: str = "",
-                 confirm_text: str = "", parent=None):
+                 confirm_text: str = "", extra_button: str = "",
+                 extra_result: int = 2, parent=None):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setModal(True)
@@ -173,6 +178,12 @@ class IOSSummaryDialog(QDialog):
         buttons = QHBoxLayout()
         buttons.setSpacing(12)
         buttons.addStretch()
+        if extra_button:
+            extra_btn = QPushButton(extra_button, self)
+            extra_btn.setObjectName("cancelBtn")
+            extra_btn.setCursor(Qt.PointingHandCursor)
+            extra_btn.clicked.connect(lambda: self.done(extra_result))
+            buttons.addWidget(extra_btn)
         cancel_btn = QPushButton(QCoreApplication.translate("IOSSummaryDialog", "Cancel"), self)
         cancel_btn.setObjectName("cancelBtn")
         cancel_btn.setCursor(Qt.PointingHandCursor)

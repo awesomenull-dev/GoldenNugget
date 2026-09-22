@@ -31,7 +31,7 @@ It dispatches subcommands then falls through to the GUI:
 ```
 Nugget                          launch the GUI
 Nugget apply-wallpaper [TENDIE] [--udid UDID] [--list]
-Nugget restore-cache [...opts]  restore last protective cache (Phase-3 recovery)
+Nugget restore-cache [...opts]  restore protective backup (cache master or live run; --source auto|cache|live; Phase-3 recovery)
 Nugget restore [same as above]  alias for restore-cache
 Nugget skip-setup [--udid]      mark all iOS setup panes completed
 Nugget -m <module>| <script>.py  backward-compatible dispatcher

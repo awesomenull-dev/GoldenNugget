@@ -102,7 +102,7 @@ async def backup_posterboard_database(udid: str, update_label=lambda x: None, up
 
 
 async def targeted_posterboard_database_backup(udid: str, update_label=lambda x: None,
-                                               update_progress=lambda x: None) -> str:
+                                               update_progress=lambda x: None) -> tuple[str, int]:
     """Back up ONLY the PosterBoard container and return the merged sqlite path.
 
     The PosterBoard delivery channel for iOS 26 applies: there is no Phase 0
@@ -111,7 +111,9 @@ async def targeted_posterboard_database_backup(udid: str, update_label=lambda x:
     database off the device. The factory info lists only that container and the
     mid-stream filter drops every other file the device uploads, so the run
     stays small on disk and fast — no photos, contacts or settings are ever
-    written here. Returns the extracted (WAL-merged) database path.
+    written here. Returns ``(extracted_db_path, structure_version)`` — the
+    structure version parsed from the database's manifest path so the restored
+    copy lands in the same store directory it was fetched from.
     """
     from src.exceptions.device_errors import is_connection_error as _is_connection_error
     from src.exceptions.device_errors import is_device_locked_error as _is_device_locked_error
@@ -155,11 +157,11 @@ async def targeted_posterboard_database_backup(udid: str, update_label=lambda x:
                                 "keep it awake (tap screen periodically), and try again.")
                         raise
             update_label("Getting the file...")
-            db_path = extract_posterboard_db(backup_dir, udid, dest_path)
-            if db_path is None:
+            db_path_and_version = extract_posterboard_db(backup_dir, udid, dest_path)
+            if db_path_and_version is None:
                 raise NuggetException(
                     "Could not find the PosterBoard database in the backup!")
-            return db_path
+            return db_path_and_version
 
     return await async_retry(
         _attempt, max_retries, retry_if=_is_connection_error,

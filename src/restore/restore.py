@@ -404,12 +404,14 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
                           backup_password: str = "",
                           prepared_backup_root: PreparedBackup = None,
                           pb_inject_files: list = None,
-skip_setup: bool = True,
+                          skip_setup: bool = True,
                            skip_protective_backup: bool = False,
                           include_keychain: bool = False,
                           prompt_choice=None,
                           afc_media: bool = False,
-                          merge_phases: bool = True):
+                          merge_phases: bool = True,
+                          supervised: bool = False,
+                          organization_name: str = ""):
     """iOS 27+ restore: backup → tweak → wipe → restore → skip setup → reboot.
 
     Phase 1 (0-40%):  Selective backup of photos, Apple ID, user
@@ -439,8 +441,13 @@ skip_setup: bool = True,
                       not reboot; that happens after setup skip. In merged
                       mode there is no reconnect — the live session from
                       Phase 2 is reused (the device was never rebooted).
-    Phase 4 (90-95%): Skip the iOS setup panes via cloud configuration.
-    Phase 5 (95-100%): Reboot the device so the changes take effect.
+    Phase 4 (90-95%): Reboot the device so it boots fresh before the setup
+                      skip (a merged still-live session would otherwise hit
+                      CloudConfigurationAlreadyPresentError).
+    Phase 5 (95-98%): Reconnect and skip the iOS setup panes via cloud
+                      configuration.
+    Phase 6 (98-100%): Reboot again so the skipped setup takes effect on the
+                       next boot.
     """
     udid = lockdown_client.udid
     started = time.monotonic()
@@ -760,33 +767,48 @@ skip_setup: bool = True,
                 log_warn(f"Phase 3: AFC media dir {media_dir} is empty/missing — "
                          "nothing to restore (photos may be lost to the wipe)")
 
-            # === Phase 4: skip setup panes (90-95%) ===
-            # Runs on every apply when skip-setup is requested, including the
-            # Phase 2-skipped ones (PosterBoard-only / unchanged tweaks + added
-            # wallpapers): even a device that was never wiped may still want the
-            # sweep. If the device already carries a cloud configuration (the
-            # never-wiped case), SetCloudConfiguration raises
-            # CloudConfigurationAlreadyPresentError — that means setup was
-            # already configured, so it is treated as success, not an error.
+            # === Phase 4: reboot before the setup skip (90-95%) ===
+            # Swapped with the old skip-setup phase: on a merged (never-rebooted)
+            # live session the device still carries its cloud configuration and
+            # SetCloudConfiguration only raises AlreadyPresent. Rebooting first
+            # gives skip_all_setup27 a freshly-booted device (Phase 5) and the
+            # final reboot (Phase 6) lets the skip take effect on the next boot.
+            pre_skip_reboot = reboot and skip_setup
+            if pre_skip_reboot:
+                progress_callback("Rebooting device...")
+                log_info("Phase 4: Rebooting device before skipping setup")
+                await reboot_device(reboot=True, lockdown_client=lc)
+                log_info("Phase 4: Reboot command sent")
+            progress_callback(95)
+
+            # === Phase 5: reconnect + skip setup panes (95-98%) ===
             if skip_setup:
+                if pre_skip_reboot:
+                    try:
+                        await lc.close()
+                    except Exception:
+                        pass
+                    lc = await _wait_for_device(udid, progress_callback,
+                                                prompt_choice=prompt_choice)
                 progress_callback("Skipping setup panes...")
-                log_info("Phase 4: Skipping setup panes via MobileConfigService")
+                log_info("Phase 5: Skipping setup panes via MobileConfigService")
                 try:
-                    await skip_all_setup27(lc, udid)
+                    await skip_all_setup27(lc, udid, supervised=supervised,
+                                           organization_name=organization_name)
                 except CloudConfigurationAlreadyPresentError:
-                    log_info("Phase 4: device already has a cloud configuration "
+                    log_info("Phase 5: device already has a cloud configuration "
                              "— setup already handled, nothing to skip")
                 else:
-                    log_info("Phase 4: Setup panes skipped successfully")
-                progress_callback(95)
+                    log_info("Phase 5: Setup panes skipped successfully")
+                progress_callback(98)
 
-            # === Phase 5: reboot (95-100%) ===
+            # === Phase 6: final reboot so the skipped setup takes effect (98-100%) ===
             if reboot:
                 progress_callback("Rebooting device...")
-                log_info("Phase 5: Rebooting device")
+                log_info("Phase 6: Rebooting device")
                 await reboot_device(reboot=True, lockdown_client=lc)
-                log_info("Phase 5: Reboot command sent")
-                progress_callback(100)
+                log_info("Phase 6: Reboot command sent")
+            progress_callback(100)
         finally:
             try:
                 await lc.close()
@@ -834,7 +856,7 @@ def _is_ios27_scaffolding(file) -> bool:
 
 
 # files is a list of FileToRestore objects
-async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdown_client: LockdownClient = None, progress_callback = lambda x: None, backup_password: str = "", prepared_backup_root: PreparedBackup = None, skip_setup: bool = True, skip_protective_backup: bool = False, include_keychain: bool = False, prompt_choice=None, afc_media: bool = False, merge_phases: bool = True):
+async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdown_client: LockdownClient = None, progress_callback = lambda x: None, backup_password: str = "", prepared_backup_root: PreparedBackup = None, skip_setup: bool = True, skip_protective_backup: bool = False, include_keychain: bool = False, prompt_choice=None, afc_media: bool = False, merge_phases: bool = True, supervised: bool = False, organization_name: str = ""):
     # create the files to be backed up
     files_list = [
     ]
@@ -927,7 +949,7 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
     #     file diverted to pb_inject_files — the sparse pass would only re-stage
     #     the incidental iOS 27 scaffolding files, which are dropped with it.
     #     (The HomeDomain .GlobalPreferences copy is empty on such an apply and
-    #     skip-setup is re-applied natively by Phase 4.)
+    #     skip-setup is re-applied natively by Phase 5.)
     #   - Unchanged tweaks + added wallpapers: the sparse payload is identical to
     #     the last successfully applied one (lastapply.json) and only wallpapers
     #     are new — Phase 3 delivers them, the device already carries the tweaks.
@@ -1000,7 +1022,9 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
                                             progress_callback,
                                             prompt_choice=prompt_choice)
                 log_info("Raw sparse: skipping setup panes via MobileConfigService")
-                await skip_all_setup27(lc, lockdown_client.udid)
+                await skip_all_setup27(lc, lockdown_client.udid,
+                                       supervised=supervised,
+                                       organization_name=organization_name)
                 progress_callback(95)
         else:
             # iOS 27 era: three-phase protective backup + restore
@@ -1013,7 +1037,9 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
                                  include_keychain=include_keychain,
                                  prompt_choice=prompt_choice,
                                  afc_media=afc_media,
-                                 merge_phases=merge_phases)
+                                 merge_phases=merge_phases,
+                                 supervised=supervised,
+                                 organization_name=organization_name)
     else:
         # iOS 26.x: plain sparse restore — no security recovery wipe,
         # no protective backup needed.  When all files use the path-traversal

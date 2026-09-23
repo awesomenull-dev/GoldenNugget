@@ -218,7 +218,7 @@ broken on iOS 26+).
 
 ## src/restore/ — how it gets written
 
-### `restore.py` — five-phase restore (`_restore_ios27`)
+### `restore.py` — six-phase restore (`_restore_ios27`)
 All supported devices (26.2+) take this path:
 
 ```
@@ -250,11 +250,17 @@ Phase 3 (60-90%): _wait_for_device() (20 min budget, _RECONNECT_TIMEOUT);
                   callback → classic DeviceNotFoundError)
                   → _restore_protective_backup() puts user data back
                   (max_retries=18, fixed 3s sleep, only for transient errors)
-Phase 4 (90-95%): skip_all_setup27()  — if skip-setup requested, on every
+Phase 4 (90-95%): reboot_device()  — before the setup skip, so skip runs on a
+                  freshly-booted device (a merged still-live session would
+                  otherwise already carry a cloud config and
+                  SetCloudConfiguration only raises AlreadyPresent)
+Phase 5 (95-98%): _wait_for_device() reconnects (only after a Phase 4 reboot),
+                  then skip_all_setup27()  — if skip-setup requested, on every
                   apply including Phase 2-skipped ones; a device that was never
-                  wiped may already have a cloud config (the resulting
-                  CloudConfigurationAlreadyPresentError is treated as success)
-Phase 5 (95-100%): reboot_device()    — only if auto_reboot (default on iOS 27)
+                  wiped may still hit CloudConfigurationAlreadyPresentError
+                  (treated as success)
+Phase 6 (98-100%): reboot_device()  — only if auto_reboot (default on iOS 27),
+                  so the skipped setup takes effect on the next boot
 ```
 
 `prepared_backup_root` is a `PreparedBackup(root, manifest_password)`; when
@@ -262,9 +268,9 @@ absent (encrypted-without-password / kill switch), Phase 1 falls back to an
 in-place `perform_protective_backup()`.
 
 Progress ranges are the real `_PHASE_BACKUP_END=40`, `_PHASE_TWEAK_END=60`,
-and the hardcoded `90`/`95`/`100` bounds in `_restore_ios27` — the old
-"Phase 3 = 60-100%" summary is simplified: the last 10% belongs to skip-setup
-and reboot.
+and the hardcoded `95`/`98`/`100` bounds in `_restore_ios27` — the old
+"Phase 3 = 60-100%" summary is simplified: the last 10% belongs to the
+reboot-before-skip, the setup skip and the final reboot.
 
 Phase 3 details: `perform_protective_backup` itself has **no** retry loop —
 the only retry is `ProtectiveBackupService.connect()` with **5** attempts
@@ -297,7 +303,11 @@ the `ProtectiveBackupCache` to `protective_cache.py` (both re-exported from
   encryption state flipping. It ALWAYS lives in the persistent store — it is
   the only copy of user data between Phase 2 (wipe) and Phase 3 (restore), so
   a temp placement is permanent-loss-on-reboot. A legacy temp base is still
-  scanned by `locate()` for migration.
+  scanned by `locate()` for migration. During an incremental refresh the device
+  probes the prior backup's `Snapshot` payload dir via `DLContentsOfDirectory`;
+  `protective.py`'s `_install_device_link_contents_shim` answers a missing dir
+  with an empty listing (real hosts do the same) so the probe can't crash the
+  apply.
 - `perform_protective_backup(..., incremental_ok)` — selective backup:
   pymobiledevice3's native `filter_callback` drains non-protective uploads
   mid-stream while their manifest rows survive (that is what makes the next

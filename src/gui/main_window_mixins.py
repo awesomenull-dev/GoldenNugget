@@ -40,6 +40,18 @@ class DeviceBarMixin:
         # update the home page
         self.pages[Page.Home].updatePhoneInfo()
 
+        # Rebuild the tweak sections for the newly selected device: the pages
+        # are constructed at startup before any device is known, so per-device
+        # compatibility filtering (min_version / iphone_only / ipad_only) is
+        # only correct when re-evaluated against the real connected device.
+        for page in ("ios_tweaks", "ios_springboard", "ios_internal", "ios_liquidglass"):
+            section_page = getattr(self, page, None)
+            if section_page is not None:
+                try:
+                    section_page.rebuild()
+                except Exception:
+                    pass
+
 
     def _apply_hidden_feature_gating(self):
         """Hide the Sidebar buttons and iOS home cards for HotLoad-hidden

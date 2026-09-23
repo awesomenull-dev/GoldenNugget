@@ -491,7 +491,57 @@ def _install_device_link_verbose() -> None:
     DeviceLink._gn_verbose_installed = True
 
 
+def _install_device_link_contents_shim():
+    """Make ``DLContentsOfDirectory`` tolerant of missing directories.
+
+    The device enumerates the prior backup's ``Snapshot`` payload directory
+    during an incremental backup. The cache master keeps payloads directly
+    under ``<udid>/<xx>/<fileid>`` (no ``Snapshot`` subdirectory), so the
+    stock pymobiledevice3 handler crashes on ``path.iterdir()``
+    (FileNotFoundError) instead of answering. Apple's own host answers with an
+    empty listing for a missing directory, which is how the device learns there
+    is nothing to diff against and proceeds to a safe full rebuild. Mirror that:
+    any missing/inaccessible enumeration target yields an empty status dict, so
+    the backup never dies on the probe.
+    """
+    try:
+        import datetime as _datetime
+        from pymobiledevice3.services.device_link import APPLE_EPOCH, DeviceLink
+        from typing import cast
+    except Exception as e:  # pragma: no cover - defensive
+        log_debug(f"DeviceLink contents shim not installed: {e}")
+        return
+    if getattr(DeviceLink, "_gn_contents_installed", False):
+        return
+
+    async def contents_of_directory(self, message):
+        data = {}
+        path = self.root_path / cast(str, message[1])
+        if path.is_dir():
+            for file in path.iterdir():
+                ftype = "DLFileTypeUnknown"
+                if file.is_dir():
+                    ftype = "DLFileTypeDirectory"
+                if file.is_file():
+                    ftype = "DLFileTypeRegular"
+                modifications_data = _datetime.datetime.fromtimestamp(file.stat().st_mtime - APPLE_EPOCH)
+                modifications_data = modifications_data.replace(tzinfo=None)
+                data[file.name] = {
+                    "DLFileType": ftype,
+                    "DLFileSize": file.stat().st_size,
+                    "DLFileModificationDate": modifications_data,
+                }
+        else:
+            log_debug(f"DeviceLink contents-of-directory: \"{message[1]}\" absent "
+                      f"under {self.root_path} — answering with an empty listing")
+        await self.status_response(0, status_dict=data)
+
+    DeviceLink.contents_of_directory = contents_of_directory
+    DeviceLink._gn_contents_installed = True
+
+
 _install_device_link_verbose()
+_install_device_link_contents_shim()
 
 
 def is_protective_device_file(device_name: str, include_photos: bool = True,
@@ -975,13 +1025,40 @@ def verify_backup_payloads(backup_dir: "str | Path", udid: str,
     return missing
 
 
-def extract_posterboard_db(backup_root: str, udid: str, dest_path: str) -> Optional[str]:
+def posterboard_structure_version(rel_path: str) -> int:
+    """Derive the PosterBoard store structure version from a manifest path.
+
+    The store directory carries a structure version (61, 62, ...) that varies
+    between iOS releases (the codebase historically hardcoded 61, which is
+    wrong on newer 26.x builds where Apple bumped the store layout — a
+    mismatch makes the injected database land in a dead directory the device
+    never reads). The version is the numeric chunk right after the store-dir
+    name; when the tree name is absent (some iOS 27 upload paths) it falls
+    back to 61, the oldest supported layout.
+    """
+    marker = f"{POSTERBOARD_DB_STORE_DIR}/"
+    idx = rel_path.find(marker)
+    if idx >= 0:
+        num = ""
+        for ch in rel_path[idx + len(marker):]:
+            if ch.isdigit():
+                num += ch
+            else:
+                break
+        if num:
+            return int(num)
+    return 61
+
+
+def extract_posterboard_db(backup_root: str, udid: str, dest_path: str) -> Optional[tuple[str, int]]:
     """Pull the PosterBoard sqlite database out of a (refreshed) protective backup.
 
     Call this AFTER ``ProtectiveBackupCache.refresh(include_posterboard=True)``
-    so the extracted database mirrors the live on-device state. Returns the
-    destination path, or None when the backup does not carry the database
-    (e.g. container inclusion was rejected by the device).
+    so the extracted database mirrors the live on-device state. Returns
+    ``(destination_path, structure_version)`` — the structure version as parsed
+    from the database's manifest path, so the restore can write it back to the
+    same store directory it came from — or None when the backup does not carry
+    the database (e.g. container inclusion was rejected by the device).
     """
     device_dir = Path(backup_root) / udid
     if not device_dir.is_dir():
@@ -1031,6 +1108,7 @@ def extract_posterboard_db(backup_root: str, udid: str, dest_path: str) -> Optio
                  f"sample rows: {[r[1] for r in pb_rows[:5]]}")
         return None
     file_id, rel_path = candidates[0]
+    structure_version = posterboard_structure_version(rel_path)
 
     def _payload_for(suffix: str) -> Optional[Path]:
         target = rel_path + suffix
@@ -1055,7 +1133,7 @@ def extract_posterboard_db(backup_root: str, udid: str, dest_path: str) -> Optio
     if wal_payload is None:
         # no WAL sibling — the main file already holds the whole state
         shutil.copyfile(main_payload, dest)
-        return str(dest)
+        return str(dest), structure_version
 
     # The on-device database runs in WAL mode: recent wallpaper data may live
     # in the -wal sibling rather than the main file. Copy main + wal into a
@@ -1089,7 +1167,7 @@ def extract_posterboard_db(backup_root: str, udid: str, dest_path: str) -> Optio
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
 
-    return str(dest)
+    return str(dest), structure_version
 
 
 def _iter_payload_files(device_dir: Path):

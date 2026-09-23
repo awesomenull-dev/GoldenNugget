@@ -31,7 +31,7 @@ def is_ios27_scaffolding(domain: str, path: str) -> bool:
     """True for incidental files written AROUND the real tweak payload on the
     iOS 27 path (they never decide whether Phase 2 has anything new to
     deliver): the HomeDomain ``.GlobalPreferences.plist`` secondary copy and
-    the skip-setup plists that Phase 4 re-applies natively on iOS 27.
+    the skip-setup plists that Phase 5 re-applies natively on iOS 27.
     """
     if (domain == "HomeDomain"
             and path == "Library/Preferences/.GlobalPreferences.plist"):

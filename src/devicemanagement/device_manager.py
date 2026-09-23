@@ -404,7 +404,7 @@ class DeviceManager:
                 "GoldenNugget only supports iOS 26.2 and newer. "
                 "Please use the original Nugget for iOS 26.1 and earlier."))
 
-    async def start_restore(self, files_to_restore: list[FileToRestore], update_label=lambda x: None, backup_password: str = "", prepared_backup_root: str = None, skip_protective_backup: bool = False, include_keychain: bool = False, prompt_choice=None):
+    async def start_restore(self, files_to_restore: list[FileToRestore], update_label=lambda x: None, backup_password: str = "", prepared_backup_root: str = None, skip_protective_backup: bool = False, include_keychain: bool = False, prompt_choice=None, supervised: bool = False, organization_name: str = ""):
         # hard-block any restore on an unsupported (old) iOS version
         self._raise_if_unsupported()
         self.update_label = update_label
@@ -427,6 +427,8 @@ class DeviceManager:
                 include_keychain=include_keychain,
                 prompt_choice=prompt_choice,
                 afc_media=afc_media_enabled(self.pref_manager.use_afc_media),
+                supervised=supervised,
+                organization_name=organization_name,
             )
             tweaks[TweakID.PosterBoard].config_manager.save_staged_ids(self.get_current_device_udid())
             if tweaks[TweakID.PosterBoard].full_reset:
@@ -663,15 +665,17 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
                 return True
             import tempfile as _tempfile
             with _tempfile.TemporaryDirectory(prefix="nugget_pbdb_") as tmp_dir:
-                db_path = extract_posterboard_db(
+                db_path_and_version = extract_posterboard_db(
                     backup_root, udid, os.path.join(tmp_dir, "posterboard.sqlite3"))
-                if db_path is None:
+                if db_path_and_version is None:
                     log_warn("PosterBoard DB missing from the protective backup — "
                              "falling back to a separate backup")
                     return False
+                db_path, structure_version = db_path_and_version
                 pb = tweaks[TweakID.PosterBoard]
                 try:
-                    if not pb.config_manager.update_database_file(db_path, udid):
+                    if not pb.config_manager.update_database_file(
+                            db_path, udid, structure_version=structure_version):
                         raise NuggetException("The PosterBoard database is not of the correct format!")
                     pb.config_manager.update_for_saved_database(udid)
                     update_label(QCoreApplication.tr("PosterBoard database backed up successfully."))
@@ -853,12 +857,14 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
         update_label(QCoreApplication.tr("Fetching PosterBoard database..."))
         from src.restore.posterboard_backup import targeted_posterboard_database_backup
         try:
-            db_file_path = await targeted_posterboard_database_backup(
+            db_result = await targeted_posterboard_database_backup(
                 udid, update_label, self._backup_progress(update_label))
-            if not db_file_path or not os.path.exists(db_file_path):
+            if not db_result or not os.path.exists(db_result[0]):
                 raise NuggetException("The PosterBoard database file doesn't exist!")
+            db_file_path, structure_version = db_result
             update_label(QCoreApplication.tr("Saving PosterBoard database..."))
-            if not pb.config_manager.update_database_file(db_file_path, udid):
+            if not pb.config_manager.update_database_file(
+                    db_file_path, udid, structure_version=structure_version):
                 raise NuggetException("The PosterBoard database is not of the correct format!")
             pb.config_manager.update_for_saved_database(udid)
             update_label(QCoreApplication.tr("PosterBoard database backed up successfully."))
@@ -1099,7 +1105,9 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
                 prepared_backup_root=prepared_backup_root,
                 skip_protective_backup=skip_protective_backup,
                 include_keychain=bool(backup_password),
-                prompt_choice=prompt_choice)
+                prompt_choice=prompt_choice,
+                supervised=self.pref_manager.supervised,
+                organization_name=self.pref_manager.organization_name)
             return final_alert, files_to_restore
         finally:
             if len(tmp_dirs) > 0:

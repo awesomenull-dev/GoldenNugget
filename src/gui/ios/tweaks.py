@@ -56,13 +56,45 @@ class IOSSectionContent(QWidget):
         self.window = window
         self.sections = sections
         self._switch_labels = []
+        self._solarium_visible: bool = None
 
         # Load tweaks (idempotent) so the sections below actually populate
         load_plist_tweaks()
 
-        layout = QVBoxLayout(self)
+        # persistent root layout: keeps only a rebuildable inner widget
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        self._inner = None
+
+        self.rebuild()
+
+    def rebuild(self):
+        """(Re)build the section controls for the currently selected device.
+
+        Called once in ``__init__`` and again whenever the selected device
+        changes, so per-device compatibility filtering (``min_version`` /
+        ``iphone_only`` / ``ipad_only`` from the registry) and HotLoad-hiding
+        are re-evaluated instead of being frozen at startup, when no device is
+        known yet (that would wrongly hide e.g. the Dynamic Island tweaks).
+        """
+        # Tear down the previous build (widgets + layout) so the section can be
+        # re-rendered in place from the single registry definition below.
+        if self._inner is not None:
+            self.layout().removeWidget(self._inner)
+            self._inner.deleteLater()
+            self._inner = None
+
+        layout = QVBoxLayout()
         layout.setContentsMargins(16, 16, 16, 32)
         layout.setSpacing(8)
+        inner = QWidget(self)
+        inner.setLayout(layout)
+        self._inner = inner
+        self.layout().addWidget(inner)
+
+        self._switch_labels = []
+        self.force_solarium_fallback_card = None
 
         try:
             device_ver = self.window.device_manager.get_current_device_version()
@@ -76,8 +108,6 @@ class IOSSectionContent(QWidget):
 
         def is_compatible(tweak_id: TweakID) -> bool:
             return is_tweak_compatible(tweak_id, device_ver, is_iphone)
-
-        self.force_solarium_fallback_card = None
 
         # Helper to create a switch row for boolean tweaks
         def make_switch(tweak_id: TweakID, title: str, description: str = ""):
@@ -188,7 +218,14 @@ class IOSSectionContent(QWidget):
 
         layout.addStretch()
 
+        # re-apply any remembered solarium-card visibility to the fresh card
+        if self._solarium_visible is not None and self.force_solarium_fallback_card is not None:
+            self.force_solarium_fallback_card.setVisible(self._solarium_visible)
+
     def set_force_solarium_fallback_visible(self, visible: bool):
+        # remember the intended state so a rebuild re-applies it (the card
+        # pointer is recreated by rebuild())
+        self._solarium_visible = visible
         if self.force_solarium_fallback_card is not None:
             self.force_solarium_fallback_card.setVisible(visible)
 
@@ -241,6 +278,9 @@ class IOSTweaksPage(QWidget):
     def set_force_solarium_fallback_visible(self, visible: bool):
         self.content.set_force_solarium_fallback_visible(visible)
 
+    def rebuild(self):
+        self.content.rebuild()
+
 
 class IOSSectionPage(QWidget):
     """Standalone iOS-style page for a single tweak section."""
@@ -272,3 +312,6 @@ class IOSSectionPage(QWidget):
 
     def set_force_solarium_fallback_visible(self, visible: bool):
         self.content.set_force_solarium_fallback_visible(visible)
+
+    def rebuild(self):
+        self.content.rebuild()

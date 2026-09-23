@@ -106,8 +106,9 @@ class PosterBoardDBWizard(QWizard):
             # Local import: the restore chain pulls in pymobiledevice3, which
             # must not be loaded while the GUI is still starting up.
             from src.restore.posterboard_backup import targeted_posterboard_database_backup
-            db_file_path = await targeted_posterboard_database_backup(self.udid, update_label, update_progress)
-            if not tweaks[TweakID.PosterBoard].config_manager.update_database_file(db_file_path, self.udid):
+            db_result = await targeted_posterboard_database_backup(self.udid, update_label, update_progress)
+            if not tweaks[TweakID.PosterBoard].config_manager.update_database_file(
+                    db_result[0], self.udid, structure_version=db_result[1]):
                 raise NuggetException("The database is not of the correct format!")
             update_label("sqlite: Selected")
 

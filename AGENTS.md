@@ -196,6 +196,15 @@ backup in the persistent app-data store
 - The master's Manifest.db stays FULL (rows for mid-stream-drained payloads
   remain), so `perform_protective_backup(incremental_ok=True)` runs a true
   incremental refresh — repeat applies upload only what changed on the device.
+- Snapshot-probe tolerance: during an incremental refresh the device enumerates
+  the prior backup's `Snapshot` payload directory (`DLContentsOfDirectory`),
+  which does not exist in the cache layout (payloads sit directly under
+  `<udid>/<xx>/<fileid>`). Upstream pymobiledevice3's handler crashes on
+  `iterdir()` for a missing dir. A runtime shim in `src/restore/protective.py`
+  (`_install_device_link_contents_shim`) answers a missing enumeration target
+  with an empty listing (Apple's host behaviour), so the device treats the
+  probe as "nothing to diff" and proceeds with a safe full rebuild instead of
+  aborting the apply.
 - Restores never touch the master: `make_protective_working_copy()` builds a
   throwaway hardlink copy (metadata files are real copies — pruning rewrites
   Manifest.db and a hardlink would corrupt the master). Only the CACHE master
@@ -270,11 +279,12 @@ backup in the persistent app-data store
 ### `restore_files()`
 - Main restore orchestration
 - Builds a `backup.Backup` object from the `FileToRestore` list
-- Always delegates to `_restore_ios27()` (three-phase) — all supported devices (26.2+) go through this path
+- Always delegates to `_restore_ios27()` (six-phase) — all supported devices (26.2+) go through this path
 
-### `_restore_ios27()` — Five-Phase Restore
-> The code executes **five** phases; the older docs summarised it as three, but
-> Phase 3 ends at 90% and the last 10% belongs to skip-setup and reboot.
+### `_restore_ios27()` — Six-Phase Restore
+> The code executes **six** phases; the older docs summarised it as three, but
+> Phase 3 ends at 90% and the last 10% belongs to a reboot-before-skip, the
+> setup skip and a final reboot.
 
 **Phase 1 (0-40%)**: Protective Backup
 - With `prepared_backup_root` (cached master -> hardlink working copy; fresh Phase-0 live backup -> pruned in place, no copy): no device backup runs here. Without it: `perform_protective_backup()` runs live. With `skip_protective_backup`: the phase is skipped entirely (user opted out on low disk space)
@@ -326,15 +336,23 @@ backup in the persistent app-data store
   case (`PasswordRequiredError` seen during the cycle) and a plain no-show.
 - `_restore_protective_backup()` — restores the Phase 1 backup, with password if encrypted; retries **18 times at fixed 3 s**, only for `_is_transient_restore_error` results
 
-**Phase 4 (90-95%)**: `skip_all_setup27()` — runs whenever skip-setup is
-  requested, on every apply including the Phase 2-skipped ones (PosterBoard-only
-  / unchanged tweaks + added wallpapers). When the device was never wiped it
+**Phase 4 (90-95%)**: `reboot_device()` — **before** the setup skip, so
+  `skip_all_setup27` runs on a freshly-booted device. A merged still-live
+  session would otherwise already carry a cloud configuration and only raise
+  `CloudConfigurationAlreadyPresentError`.
+
+**Phase 5 (95-98%)**: `_wait_for_device()` reconnects (only after a Phase 4
+  reboot; the reused live session is closed first), then
+  `skip_all_setup27()` — runs whenever skip-setup is requested, on every
+  apply including the Phase 2-skipped ones (PosterBoard-only / unchanged
+  tweaks + added wallpapers). When the device was never wiped it
   typically already carries a cloud configuration and
   `SetCloudConfiguration` raises `CloudConfigurationAlreadyPresentError`,
   which is caught and treated as success (setup already handled) instead of
   aborting the apply.
 
-**Phase 5 (95-100%)**: `reboot_device()` — only when auto-reboot is on
+**Phase 6 (98-100%)**: `reboot_device()` — only when auto-reboot is on, so
+  the skipped setup takes effect on the next boot.
 
 ### `perform_protective_backup()` (src/restore/protective.py)
 - Creates a selective device backup via mobilebackup2. The module keeps the
@@ -502,8 +520,9 @@ _apply_changes()
                         Phase 3 (60-90%): [merged] reuse live session -> _restore_protective_backup(password) [18x3s]
                                          [classic] _wait_for_device() -> _restore_protective_backup(password) [18x3s]
                                          (skipped when data protection was opted out)
-                        Phase 4 (90-95%): skip_all_setup27()      (only if skip-setup)
-                        Phase 5 (95-100%): reboot_device()        (only if auto_reboot)
+                        Phase 4 (90-95%): reboot before skip-setup          (only if reboot + skip-setup)
+                        Phase 5 (95-98%): reconnet + skip_all_setup27()     (only if skip-setup)
+                        Phase 6 (98-100%): reboot_device()                  (only if auto_reboot)
 ```
 
 ## Logging

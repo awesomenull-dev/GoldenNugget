@@ -138,6 +138,11 @@ class PBConfigManager:
         self.staged_database = None
         self.config_files: list[str] = []
         self.config_files_folder: Optional[str] = None
+        # The store directory carries a structure version (61, 62, ...) that
+        # varies between iOS releases. It is learned from the fetched DB's
+        # manifest path (see extract_posterboard_db) and reused when the
+        # tweak writes the database back; 61 is the oldest supported layout.
+        self.structure_version = 61
 
     def start_staging(self):
         self.staged_items.clear()
@@ -197,7 +202,10 @@ class PBConfigManager:
         self.saved_items = PreferenceManager.get_pbconfig_ids(udid)
         return True
 
-    def update_database_file(self, new_db: str, udid: str) -> bool:
+    def update_database_file(self, new_db: str, udid: str,
+                             structure_version: Optional[int] = None) -> bool:
+        if structure_version and structure_version > 0:
+            self.structure_version = structure_version
         # make sure it has the tables: "poster", "posterAttributes", "posterRoleMembership", and "sqlite_sequence"
         # copy to a writeable path
         app_data_path = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)

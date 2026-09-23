@@ -291,9 +291,12 @@ class PosterboardTweak(Tweak):
                     version: str, force_pb_refresh: bool,
                     update_label=lambda x: None):
         # find the directory
-        # structure version 61 for all supported iOS versions (26.2+); the
-        # iOS-16 era value 59 applied only to unsupported devices and is gone.
-        self.structure_version = 61
+        # The on-device store structure version is learned from the fetched
+        # DB's manifest path (61, 62, ... vary between iOS releases) by
+        # extract_posterboard_db and carried on the config manager; fall back
+        # to 61 (the oldest supported layout) when no DB was fetched.
+        self.structure_version = self.config_manager.structure_version if (
+            getattr(self.config_manager, "structure_version", 0)) else 61
         if self.full_reset:
             # Full reset: wipe the entire PosterBoard container and replace
             # the on-device sqlite with an empty (schema-only) database.

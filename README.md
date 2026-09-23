@@ -11,7 +11,8 @@ Make sure you have installed the [requirements](#requirements) if you are on Win
 > Please back up your data before using this Project! GoldenNugget may cause unforeseen problems, so it is better to be safe than sorry. We are not responsible for any damage done to your device.
 
 > [!WARNING]
-> This fork implements a three-phase backup→tweak→restore workflow to prevent data loss on iOS 27, **this saves almost all data**. But don't forget that **I AM NOT RESPONSIBLE IN ANY DATA LOSS OR BOOTLOOPS, IF SOMETHING GOES OFF ITS YOUR FAULT**
+> This fork implements backup→tweak→restore workflow to prevent data loss on iOS 27, **this saves almost all data**.\
+>  **I AM NOT RESPONSIBLE IN ANY DATA LOSS OR BOOTLOOPS, IF SOMETHING GOES OFF ITS YOUR FAULT**
 ## Discord server
 Wanted support? join our [Discord Server][server].
 

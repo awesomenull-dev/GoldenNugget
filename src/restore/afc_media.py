@@ -8,7 +8,8 @@ slow (the whole Media tree uploads through DeviceLink). When
 ``use_afc_media`` is on, the *bulk* photo trees (``DCIM``,
 ``PhotoStreamsData`` — the actual photo/video files) are instead pulled over
 plain ``com.apple.afc`` in *parallel* with the mobilebackup2 backup of
-everything else, and pushed back over the same channel during Phase 3.
+everything else, and pushed back over the same channel during Phase 5
+(after the Phase 4 reboot and reconnect, on the freshly-booted device).
 
 The scope is deliberately narrow: only the top-level Media trees in
 ``AFC_MEDIA_TREES`` go over AFC. ``PhotoData`` — the photo library database

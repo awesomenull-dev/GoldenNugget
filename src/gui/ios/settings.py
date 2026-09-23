@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QDialog
 )
 from typing import Optional
+from pathlib import Path
 
 from src.gui.ios.components import (
     IOSSectionHeader, IOSSwitch, IOSPrimaryButton
@@ -134,6 +135,8 @@ class IOSSettingsPage(QWidget):
             pref.use_afc_media,
             lambda checked: self._on_afc_media_toggled(checked, afc_media_switch),
         )
+
+        self._make_backup_location_row()
 
         restore_btn = IOSPrimaryButton(
             QCoreApplication.translate("Nugget", "Restore Data From Backup"))
@@ -416,6 +419,86 @@ class IOSSettingsPage(QWidget):
         pref.use_afc_media = checked
         self.window.settings.setValue("use_afc_media", checked)
         self.window._sync_settings()
+
+    def _custom_backup_dir_value(self) -> str:
+        try:
+            return str(self.window.settings.value("backup_storage_dir", "", type=str)).strip()
+        except Exception:
+            return ""
+
+    def _default_backup_dir_text(self) -> str:
+        try:
+            from src.restore.storage import cache_base
+            return str(cache_base())
+        except Exception:
+            return QCoreApplication.translate("Nugget", "Default (system drive)")
+
+    def _make_backup_location_row(self):
+        c = self._tm.colors
+        card = QWidget()
+        row = QVBoxLayout(card)
+        row.setContentsMargins(16, 12, 16, 12)
+        row.setSpacing(8)
+
+        title = QLabel(QCoreApplication.translate("Nugget", "Backup/Cache Location"))
+        title.setStyleSheet(f"color: {c.text_primary}; font-size: 15px;")
+        row.addWidget(title)
+
+        custom = self._custom_backup_dir_value()
+        self.backup_location_lbl = QLabel(
+            custom if custom else self._default_backup_dir_text())
+        self.backup_location_lbl.setWordWrap(True)
+        self.backup_location_lbl.setStyleSheet(
+            f"color: {c.text_secondary}; font-size: 13px;")
+        row.addWidget(self.backup_location_lbl)
+
+        hint = QLabel(QCoreApplication.translate(
+            "Nugget",
+            "The protective backup cache, AFC media cache and temporary "
+            "backup/restore files for iOS 27 are stored in this folder. "
+            "Useful when the system drive is small (e.g. C: 28 GB)."))
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color: {c.text_secondary}; font-size: 12px;")
+        row.addWidget(hint)
+
+        btns = QHBoxLayout()
+        browse_btn = self._make_mini_button(
+            QCoreApplication.translate("Nugget", "Browse"))
+        browse_btn.clicked.connect(self._on_backup_location_browse)
+        btns.addWidget(browse_btn)
+        if custom:
+            reset_btn = self._make_mini_button(
+                QCoreApplication.translate("Nugget", "Reset to Default"))
+            reset_btn.clicked.connect(self._on_backup_location_reset)
+            btns.addWidget(reset_btn)
+        btns.addStretch()
+        row.addLayout(btns)
+
+        self.content_layout.addWidget(card)
+
+    def _on_backup_location_browse(self):
+        current = self._custom_backup_dir_value()
+        folder = QFileDialog.getExistingDirectory(
+            self.window,
+            QCoreApplication.translate("Nugget", "Choose Backup/Cache Location"),
+            current if current else str(Path.home()),
+        )
+        if not folder:
+            return
+        self.window.settings.setValue("backup_storage_dir", folder)
+        self.window._sync_settings()
+        self._refresh_backup_location_row()
+
+    def _on_backup_location_reset(self):
+        self.window.settings.remove("backup_storage_dir")
+        self.window._sync_settings()
+        self._refresh_backup_location_row()
+
+    def _refresh_backup_location_row(self):
+        custom = self._custom_backup_dir_value()
+        if hasattr(self, "backup_location_lbl"):
+            self.backup_location_lbl.setText(
+                custom if custom else self._default_backup_dir_text())
 
     def _make_text_row(self, title: str, current: str, on_submit):
         c = self._tm.colors

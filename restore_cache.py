@@ -10,8 +10,9 @@ whole apply.
 
 It does the same thing GoldenNugget does internally for a restore:
   1. locate the backup source for the device:
-     - cache master (temp or persistent ``backup_cache`` bases), or
-     - the newest live protective backup run
+     - cache master (temp, or the persistent ``backup_cache`` base which
+       honours the Settings → Backup → "Backup/Cache Location" custom dir),
+     - or the newest live protective backup run
      (``--source auto`` picks cache first, then a live run),
   2. build a throwaway hardlink working copy,
   3. prune Manifest.db down to the protective payloads (so rows that were
@@ -60,6 +61,10 @@ from src.restore.protective import (  # noqa: E402
     log_info, log_warn, log_error,
 )
 from src.restore.protective_cache import peek_cache_info  # noqa: E402
+from src.restore.storage import (  # noqa: E402
+    cache_base,
+    is_custom_backup_dir,
+)
 from src.restore.afc_media import (  # noqa: E402
     afc_media_dir_for,
     restore_media_via_afc,
@@ -120,8 +125,11 @@ async def _find_cache_udid(preferred: str, cache_root: str | None,
         bases.append(Path(cache_root))
     else:
         bases.append(Path(tempfile.gettempdir()) / "goldennugget_protective_cache")
-        bases.append(
-            Path(QtCore.QStandardPaths.writableLocation(
+        bases.append(cache_base())
+        if is_custom_backup_dir():
+            # A cache created under the previous default location may still
+            # exist there; keep it reachable for standalone recovery.
+            bases.append(Path(QtCore.QStandardPaths.writableLocation(
                 QtCore.QStandardPaths.AppDataLocation)) / "GoldenNugget" / "backup_cache")
 
     # candidates for udid
@@ -210,8 +218,11 @@ def _pick_base(cache_root: str | None, udid: str):
         bases.append(Path(cache_root))
     else:
         bases.append(Path(tempfile.gettempdir()) / "goldennugget_protective_cache")
-        bases.append(
-            Path(QtCore.QStandardPaths.writableLocation(
+        bases.append(cache_base())
+        if is_custom_backup_dir():
+            # A cache created under the previous default location may still
+            # exist there; keep it reachable for standalone recovery.
+            bases.append(Path(QtCore.QStandardPaths.writableLocation(
                 QtCore.QStandardPaths.AppDataLocation)) / "GoldenNugget" / "backup_cache")
     for base in bases:
         json_path = base / f"{udid}.json"

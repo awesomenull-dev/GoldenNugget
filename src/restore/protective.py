@@ -29,6 +29,7 @@ encrypted at rest and iOS rejects them in an unencrypted backup.
 """
 
 import asyncio
+import json
 import os
 import shutil
 import sqlite3
@@ -46,7 +47,7 @@ from pymobiledevice3.lockdown import LockdownClient
 from pymobiledevice3.exceptions import NotEnoughDiskSpaceError
 from pymobiledevice3.services.mobilebackup2 import Mobilebackup2Service
 
-from PySide6.QtCore import QCoreApplication, QStandardPaths
+from PySide6.QtCore import QCoreApplication
 
 from src.exceptions.nugget_exception import NuggetException
 from src.restore.afc_media import (  # noqa: F401  (re-exported public API)
@@ -72,15 +73,17 @@ class PreparedBackup:
     """A protective backup prepared ahead of the three-phase restore."""
     root: str
     manifest_password: str = ""  # required to prune/inject encrypted manifests
-    # True when ``root`` is the CACHE MASTER — an immutable, incrementally
-    # refreshed store. Restores must never prune/inject it in place; the caller
-    # makes a hardlink working copy instead. False for a fresh live backup,
-    # which the restore prunes and restores from directly (no temp copy).
+    # True when ``root`` is the CACHE MASTER — a pristine, incrementally
+    # refreshed store. The restore snapshots it, prunes/injects the tweaks
+    # directly into the master in place, restores from it, then regenerates the
+    # cache from the snapshot (restoring the pristine full-manifest master).
+    # False for a fresh live backup, which the restore prunes and restores from
+    # directly (no temp copy).
     master: bool = False
     # Directory holding the photos/videos pulled over AFC in parallel with this
     # backup ('' when the media stayed in the mobilebackup2 backup — those
-    # manifest rows ride Phase 3's protective restore). Phase 3 pushes this
-    # tree back to the device via AFC once the protective restore completes.
+    # manifest rows ride Phase 3's protective restore). Phase 5 pushes this
+    # tree back to the device via AFC, after the Phase 4 reboot and reconnect.
     media_src: str = ""
 
 
@@ -828,7 +831,9 @@ async def is_backup_encrypted(lockdown_client: LockdownClient) -> bool:
 # copies. Both used to be true: every backup and working copy shared the
 # ``nugget_protective_`` prefix under ``tempfile.gettempdir()``, so a failed
 # apply had its only surviving copy deleted one hour later, with no prompt.
-PROTECTIVE_PERSIST_DIRNAME = "protective"
+# The default live-backup location is ``protective_base()`` in
+# ``src/restore/storage.py`` (Settings -> Backup -> "Backup/Cache Location"
+# can move it off the system drive).
 
 # Disposable working copies carry a prefix of their own so the periodic sweep
 # in restore.py can never match a real backup.
@@ -843,8 +848,8 @@ PROTECTIVE_KEEP_RUNS = 1
 
 def protective_persistent_base() -> Path:
     """Per-user folder holding live protective backups that survive reboots."""
-    return Path(QStandardPaths.writableLocation(
-        QStandardPaths.AppDataLocation)) / "GoldenNugget" / PROTECTIVE_PERSIST_DIRNAME
+    from src.restore.storage import protective_base
+    return protective_base()
 
 
 def new_protective_backup_dir(udid: str) -> str:
@@ -933,6 +938,31 @@ def prune_protective_backups(udid: str, keep: int = PROTECTIVE_KEEP_RUNS) -> int
     return removed
 
 
+def _copy_backup_tree(src_root: Path, dst_root: Path) -> None:
+    """Faithfully copy one backup device dir into ``dst_root``.
+
+    Metadata (incl. sqlite sidecars) is real-copied — pruning rewrites
+    Manifest.db, and a hardlink would corrupt the cache master through the
+    shared inode/-wal. Everything else is hardlinked (near-instant, size-free),
+    with a copy fallback for cross-device destinations.
+    """
+    dst_root.mkdir(parents=True, exist_ok=True)
+    always_copy = set(_BACKUP_METADATA_FILES) | {"Manifest.db-wal", "Manifest.db-shm"}
+    for dirpath, _dirnames, filenames in os.walk(src_root):
+        rel = Path(dirpath).relative_to(src_root)
+        (dst_root / rel).mkdir(parents=True, exist_ok=True)
+        for name in filenames:
+            src_file = Path(dirpath) / name
+            dst_file = dst_root / rel / name
+            if name in always_copy:
+                shutil.copy2(src_file, dst_file)
+            else:
+                try:
+                    os.link(src_file, dst_file)
+                except OSError:
+                    shutil.copy2(src_file, dst_file)
+
+
 def make_protective_working_copy(backup_root: str, udid: str) -> str:
     """Build a throwaway hardlink copy of a protective backup for prune + injection.
 
@@ -952,26 +982,72 @@ def make_protective_working_copy(backup_root: str, udid: str) -> str:
         else:
             raise NuggetException("Protective backup is missing its payload.")
 
-    dst_root = working_root / udid
-    dst_root.mkdir(parents=True, exist_ok=True)
-    # metadata (incl. sqlite sidecars) must be real copies: pruning rewrites
-    # Manifest.db, and a hardlink would corrupt the cache master through the
-    # shared inode/-wal.
-    always_copy = set(_BACKUP_METADATA_FILES) | {"Manifest.db-wal", "Manifest.db-shm"}
-    for dirpath, _dirnames, filenames in os.walk(src_root):
-        rel = Path(dirpath).relative_to(src_root)
-        (dst_root / rel).mkdir(parents=True, exist_ok=True)
-        for name in filenames:
-            src_file = Path(dirpath) / name
-            dst_file = dst_root / rel / name
-            if name in always_copy:
-                shutil.copy2(src_file, dst_file)
-            else:
-                try:
-                    os.link(src_file, dst_file)
-                except OSError:
-                    shutil.copy2(src_file, dst_file)
+    _copy_backup_tree(src_root, working_root / udid)
     return str(working_root)
+
+
+def make_cache_snapshot(backup_root: str, udid: str, inject_files: list = None) -> str:
+    """Record the pristine state of a cache master before an apply modifies it.
+
+    The cache master is both the Phase 3 restore source AND the next apply's
+    incremental-refresh store. So before pruning + tweak-injection touch the
+    master in place, this snapshots it under ``<base>/snapshot/<udid>`` (the
+    same hardlink-copy semantics as ``make_protective_working_copy``, but in
+    the persistent store next to the master — never the temp dir, since the
+    snapshot is the pristine full-manifest record that must survive a crash
+    between Phase 2's wipe and Phase 3's restore).
+
+    The files the upcoming injection will change are recorded as
+    ``inject_plan.json`` beside the snapshot for diagnostics. Returns the
+    snapshot base dir (``<base>/snapshot``).
+    """
+    snap_base = Path(backup_root).parent / "snapshot"
+    # Drop a stale snapshot left by a crashed run before recording a new one.
+    shutil.rmtree(snap_base, ignore_errors=True)
+    src_root = Path(backup_root) / udid
+    if not src_root.is_dir():
+        # Tolerate a root pointing directly at the device directory.
+        if (Path(backup_root) / "Manifest.db").is_file():
+            src_root = Path(backup_root)
+        else:
+            raise NuggetException("Cache master is missing its payload.")
+
+    _copy_backup_tree(src_root, snap_base / udid)
+    plan = [{"domain": f.domain, "path": f.restore_path.lstrip("/")}
+            for f in (inject_files or [])]
+    (snap_base / "inject_plan.json").write_text(json.dumps(plan, indent=2), encoding="utf-8")
+    return str(snap_base)
+
+
+def regenerate_cache_from_snapshot(snapshot_dir: str, backup_root: str, udid: str) -> str:
+    """Regenerate the cache master from the snapshot taken before the apply.
+
+    The master (pruned + tweak-injected in place for this apply) is replaced by
+    the pristine snapshot: its device dir is deleted and the snapshot's is moved
+    into place — an instant rename on the same filesystem. The snapshot (and
+    its recorded inject plan) is then removed. Returns the regenerated master
+    root (``backup_root``).
+    """
+    snap_root = Path(snapshot_dir) / udid
+    if not snap_root.is_dir():
+        # Tolerate a snapshot dir pointing directly at the device directory.
+        if (Path(snapshot_dir) / "Manifest.db").is_file():
+            snap_root = Path(snapshot_dir)
+        else:
+            log_warn("Cache snapshot missing — cannot regenerate")
+            return backup_root
+    master_dev = Path(backup_root) / udid
+    if not master_dev.is_dir():
+        if (Path(backup_root) / "Manifest.db").is_file():
+            master_dev = Path(backup_root)
+        else:
+            log_warn("Cache master missing — cannot regenerate")
+            return backup_root
+    shutil.rmtree(master_dev, ignore_errors=True)
+    shutil.move(str(snap_root), str(master_dev))
+    shutil.rmtree(Path(snapshot_dir), ignore_errors=True)
+    log_info(f"Cache master regenerated from snapshot: {master_dev}")
+    return str(backup_root)
 
 
 def verify_backup_payloads(backup_dir: "str | Path", udid: str,
@@ -1212,8 +1288,10 @@ def clean_backup_for_restore(backup_dir: "str | Path", udid: str,
 
     Encrypted backups are supported when ``manifest_password`` is given:
     pymobiledevice3 decrypts the manifest, prunes it and re-encrypts it in
-    place (the caller works on a working copy, so the cache master keeps its
-    own encrypted manifest untouched).
+    place. For a cache master the caller snapshots it first and regenerates it
+    from the snapshot afterwards, so the master's own full-manifest encrypted
+    state always comes back; for a fresh live backup the pruned directory IS
+    the restore source.
 
     Returns (removed_manifest_rows, removed_payload_files).
     """

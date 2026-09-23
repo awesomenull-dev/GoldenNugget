@@ -5,6 +5,7 @@ import shutil
 import ssl
 import tempfile
 import time
+from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication
 
@@ -13,6 +14,7 @@ from src.utils.file_to_restore import FileToRestore, _FileMode
 from .lastapply import is_ios27_scaffolding, load_lastapply, sparse_signature
 from .skip_setup27 import skip_all_setup27
 from .afc_media import afc_media_dir_for, afc_media_enabled, restore_media_via_afc
+from .inject import _is_encrypted_backup
 from .protective import (
     PreparedBackup,
     clean_backup_for_restore,
@@ -20,10 +22,11 @@ from .protective import (
     log_error,
     log_warn,
     log_info,
-    make_protective_working_copy,
+    make_cache_snapshot,
     new_protective_backup_dir,
     perform_protective_backup,
     prune_protective_backups,
+    regenerate_cache_from_snapshot,
     verify_backup_payloads,
     WORKING_COPY_PREFIX,
 )
@@ -125,9 +128,10 @@ _RECONNECT_TIMEOUT = 20 * 60
 
 # Tweak files are delivered through Phase 1's backup injection
 # (``inject_file_into_backup``) on iOS 27 — the sparse restore clears whatever
-# it stages otherwise. Only PosterBoard files (``pb_inject_files``,
-# AppDomain-com.apple.PosterBoard) are injected today; the old HomeDomain /
-# SystemPreferencesDomain path lists were removed as dead code.
+# it stages otherwise. On unencrypted prepared backups ALL tweak files are
+# injected (see ``inject_all`` in restore_files); encrypted backups fall back
+# to the sparse pass since plaintext injection into an encrypted manifest is
+# impossible.
 
 
 def _scaled_callback(progress_callback, lo: float, hi: float):
@@ -403,7 +407,7 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
                           lockdown_client: LockdownClient, progress_callback,
                           backup_password: str = "",
                           prepared_backup_root: PreparedBackup = None,
-                          pb_inject_files: list = None,
+                          inject_files: list = None,
                           skip_setup: bool = True,
                            skip_protective_backup: bool = False,
                           include_keychain: bool = False,
@@ -423,8 +427,9 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
                       earlier in the apply flow (fresh Phase-0 live
                       backup, or the persistent cache master + incremental
                       refresh): a fresh live run is pruned IN PLACE, a cache
-                      master first gets a hardlink working copy. With
-                      ``skip_protective_backup`` the whole phase
+                      master is snapshotted first then pruned and
+                      tweak-injected in place (the master IS the restore
+                      source). With ``skip_protective_backup`` the whole phase
                       (and Phase 3) is skipped — the user opted out on low
                       disk space.
     Phase 2 (40-60%): Apply tweaks via sparse restore → reboot, which
@@ -433,7 +438,10 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
                       device stays up and never enters safe-state recovery,
                       so no wipe happens — the protective restore lands on
                       the still-live device (the same delivery the
-                      PosterBoard-only path already uses). Set
+                      PosterBoard-only path already uses). On unencrypted
+                      prepared backups every tweak file is injected into the
+                      protective backup instead, so this phase has nothing
+                      left to sparse-restore and is skipped entirely. Set
                       GOLDENNUGGET_NO_MERGE_PHASES=1 to restore the classic
                       reboot-then-wipe flow.
     Phase 3 (60-90%):  Reconnect and restore the pruned Phase 1 backup so
@@ -441,11 +449,14 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
                       not reboot; that happens after setup skip. In merged
                       mode there is no reconnect — the live session from
                       Phase 2 is reused (the device was never rebooted).
-    Phase 4 (90-95%): Reboot the device so it boots fresh before the setup
-                      skip (a merged still-live session would otherwise hit
-                      CloudConfigurationAlreadyPresentError).
-    Phase 5 (95-98%): Reconnect and skip the iOS setup panes via cloud
-                      configuration.
+    Phase 4 (90-95%): Reboot the device so it boots fresh before the media
+                      restore and the setup skip (a merged still-live session
+                      would otherwise already carry a cloud configuration and
+                      Phase 5's SetCloudConfiguration only raises AlreadyPresent).
+    Phase 5 (95-98%): Reconnect (only after a Phase 4 reboot; the reused live
+                      session is closed first), push the AFC-pulled
+                      photos/videos back over AFC, then skip the iOS setup
+                      panes via cloud configuration.
     Phase 6 (98-100%): Reboot again so the skipped setup takes effect on the
                        next boot.
     """
@@ -453,9 +464,10 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
     started = time.monotonic()
     using_cache = prepared_backup_root is not None
     # Media pulled over AFC (sibling of the run's device_backup, or the caller's
-    # prepared run) is pushed back in Phase 3 once the protective restore that
-    # carries everything else has landed. Empty when media rides the mobilebackup2
-    # backup itself (cache master, or AFC disabled) — then Phase 3 already ships it.
+    # prepared run) is pushed back in Phase 5, after the Phase 4 reboot and
+    # reconnect, once the protective restore that carries everything else has
+    # landed (Phase 3). Empty when media rides the mobilebackup2 backup itself
+    # (cache master, or AFC disabled) — then Phase 3 already ships it.
     media_dir = ""
     if prepared_backup_root is not None and getattr(prepared_backup_root, "media_src", ""):
         media_dir = prepared_backup_root.media_src
@@ -469,13 +481,20 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
     manifest_password = ((prepared_backup_root.manifest_password if using_cache else "")
                          or backup_password)
     protective_dir = None
-    need_working_copy = using_cache and prepared_backup_root.master
-    if need_working_copy:
-        # Cache master is immutable (incremental store): prune/inject happens on
-        # a throwaway hardlink copy so the master keeps its full manifest.
-        backup_root = await asyncio.to_thread(
-            make_protective_working_copy, prepared_backup_root.root, udid)
-        protective_dir = os.path.dirname(backup_root)
+    snapshot_dir = None
+    # Cache masters carry the tweak files through Phase 3 in place (they ARE the
+    # restore source), returning to their pristine full-manifest state once the
+    # apply succeeds via a snapshot/regenerate cycle.
+    regenerate_cache = using_cache and prepared_backup_root.master
+    if regenerate_cache:
+        # Record the pristine state of the master (and what this injection will
+        # change) BEFORE pruning/injecting tweaks into it in place. After the
+        # apply the master is regenerated from this snapshot.
+        snapshot_dir = await asyncio.to_thread(
+            make_cache_snapshot, prepared_backup_root.root, udid, list(inject_files or []))
+        backup_root = prepared_backup_root.root
+        # No protective_dir: a cache master must never be rmtree'd (it is the
+        # incremental store + the only copy of user data between Phase 2 and 3).
     elif using_cache:
         # A fresh Phase-0 live backup is disposable by nature — prune it in
         # place, no /tmp copy (a hardlink copy can spill onto another volume
@@ -496,7 +515,7 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
     backup_complete = False
     try:
         log_info(f"Starting iOS 27 restore for device {udid}")
-        log_info(f"Protective backup directory: {protective_dir}")
+        log_info(f"Protective backup directory: {protective_dir or backup_root}")
 
         # Clean up stale working copies from crashed runs (>1h old).
         #
@@ -529,7 +548,8 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
         progress_callback(0)
         if using_cache:
             log_info("Phase 1: Using prepared protective backup "
-                     "(cached master or the fresh Phase-0 live backup)")
+                     "(cached master snapshotted + modified in place, "
+                     "or the fresh Phase-0 live backup pruned in place)")
         elif skip_protective_backup:
             log_warn("Phase 1: protective backup SKIPPED at the user's request "
                      "(no data protection for this apply)")
@@ -567,11 +587,13 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
                  f"({time.monotonic() - started:.1f}s into the run)")
 
 
-        # PosterBoard files (staged DB + configuration plists) ride the
-        # protective restore on beta 6+, since AppDomain sparse restores are
-        # rejected there — see the pb_via_protective note in restore_files.
+        # Tweak files ride the protective restore on beta 6+, since AppDomain
+        # sparse restores are rejected there — see the pb_via_protective note
+        # in restore_files. On unencrypted backups ALL tweak files are injected
+        # here (see restore_files); the sparse phase (Phase 2) then has nothing
+        # left to deliver.
         if backup_complete:
-            for f in (pb_inject_files or []):
+            for f in (inject_files or []):
                 rel = f.restore_path.lstrip("/")
                 data = f.contents
                 if data is None and f.contents_path:
@@ -587,9 +609,9 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
                     injected += 1
                 else:
                     failed += 1
-            if pb_inject_files:
+            if inject_files:
                 level = log_error if failed else log_info
-                level(f"PosterBoard files delivered via protective restore: "
+                level(f"Tweak files delivered via protective restore: "
                       f"{injected} ok, {failed} failed")
 
             # Last line of defence against MBErrorDomain/205: the device requests
@@ -605,12 +627,12 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
 
         # === Phase 2: apply tweaks → reboot (40-60%) ===
         if len(back.files) == 0:
-            # Nothing left for the sparse/partial pass. PosterBoard-only
-            # applies divert every payload to pb_inject_files (delivered by
-            # Phase 3's protective restore), so the device never needs the
-            # security-recovery reboot here — go straight to Phase 3.
+            # Nothing left for the sparse/partial pass: every tweak payload was
+            # diverted to inject_files (delivered by Phase 3's protective
+            # restore), so the device never needs the security-recovery reboot
+            # here — go straight to Phase 3.
             log_info("Phase 2: nothing to sparse-restore — skipping the partial "
-                     "restore; PosterBoard is delivered by the protective "
+                     "restore; tweaks are delivered by the protective "
                      "restore (Phase 3)")
             progress_callback(_PHASE_TWEAK_END)
         else:
@@ -702,7 +724,9 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
                             lc, backup_root, udid, False,
                             _scaled_callback(progress_callback, _PHASE_TWEAK_END, 90),
                             backup_password=backup_password,
-                            skip_apps=not bool(pb_inject_files))
+                            skip_apps=not any(
+                                getattr(f, "domain", "").startswith("AppDomain")
+                                for f in (inject_files or [])))
                         break
                     except PasswordRequiredError:
                         if prompt_choice is None:
@@ -753,26 +777,13 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
                         merge_fallback_done = True
                 log_info("Phase 3: Protective backup restored successfully")
 
-            # Photos/videos pulled over AFC are pushed back now that the device
-            # is back up and accepting AFC connections. This is the ONLY channel
-            # that carries them on an AFC apply — the protective restore above
-            # ships only the non-media scope (media rows were not in its backup).
-            if media_dir and os.path.isdir(media_dir) and os.listdir(media_dir):
-                log_info(f"Phase 3: Pushing photos/videos back over AFC ({media_dir})")
-                await restore_media_via_afc(
-                    lc, media_dir,
-                    progress_callback=progress_callback)
-                log_info("Phase 3: Media restored over AFC")
-            elif media_dir:
-                log_warn(f"Phase 3: AFC media dir {media_dir} is empty/missing — "
-                         "nothing to restore (photos may be lost to the wipe)")
-
-            # === Phase 4: reboot before the setup skip (90-95%) ===
+            # === Phase 4: reboot before the media restore + setup skip (90-95%) ===
             # Swapped with the old skip-setup phase: on a merged (never-rebooted)
             # live session the device still carries its cloud configuration and
             # SetCloudConfiguration only raises AlreadyPresent. Rebooting first
-            # gives skip_all_setup27 a freshly-booted device (Phase 5) and the
-            # final reboot (Phase 6) lets the skip take effect on the next boot.
+            # gives the media restore and skip_all_setup27 a freshly-booted
+            # device (Phase 5) and the final reboot (Phase 6) lets the skip take
+            # effect on the next boot.
             pre_skip_reboot = reboot and skip_setup
             if pre_skip_reboot:
                 progress_callback("Rebooting device...")
@@ -781,15 +792,32 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
                 log_info("Phase 4: Reboot command sent")
             progress_callback(95)
 
-            # === Phase 5: reconnect + skip setup panes (95-98%) ===
+            # === Phase 5: reconnect (if rebooted) + push media + skip setup (95-98%) ===
+            if pre_skip_reboot:
+                try:
+                    await lc.close()
+                except Exception:
+                    pass
+                lc = await _wait_for_device(udid, progress_callback,
+                                            prompt_choice=prompt_choice)
+
+            # Photos/videos pulled over AFC are pushed back now that the device
+            # is back up and accepting AFC connections (after the Phase 4
+            # reboot, on the freshly-reconnected session; or straight on the
+            # live session when no reboot happened). This is the ONLY channel
+            # that carries them on an AFC apply — the protective restore ships
+            # only the non-media scope (media rows were not in its backup).
+            if media_dir and os.path.isdir(media_dir) and os.listdir(media_dir):
+                log_info(f"Phase 5: Pushing photos/videos back over AFC ({media_dir})")
+                await restore_media_via_afc(
+                    lc, media_dir,
+                    progress_callback=progress_callback)
+                log_info("Phase 5: Media restored over AFC")
+            elif media_dir:
+                log_warn(f"Phase 5: AFC media dir {media_dir} is empty/missing — "
+                         "nothing to restore (photos may be lost to the wipe)")
+
             if skip_setup:
-                if pre_skip_reboot:
-                    try:
-                        await lc.close()
-                    except Exception:
-                        pass
-                    lc = await _wait_for_device(udid, progress_callback,
-                                                prompt_choice=prompt_choice)
                 progress_callback("Skipping setup panes...")
                 log_info("Phase 5: Skipping setup panes via MobileConfigService")
                 try:
@@ -816,24 +844,38 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
                 pass
     except Exception as e:
         if backup_complete:
+            if regenerate_cache:
+                # The master was pruned + tweak-injected in place for this
+                # apply; put the pristine snapshot back so the cache stays
+                # valid for the next apply (and stays the crash-safe copy).
+                try:
+                    await asyncio.to_thread(
+                        regenerate_cache_from_snapshot,
+                        snapshot_dir, prepared_backup_root.root, udid)
+                except Exception as regen_err:
+                    log_warn(f"Cache regeneration after failure failed: {regen_err}")
             kept = backup_root if not using_cache else prepared_backup_root.root
             log_error(f"Restore failed; protective backup kept at: {kept}")
             try:
                 e.add_note(f"Protective backup kept at: {kept}")
             except AttributeError:
                 pass
-            if need_working_copy:
-                # the master stays for debugging; drop only the pruned working copy
-                shutil.rmtree(protective_dir, ignore_errors=True)
             raise
         log_error(f"Restore failed before backup completed: {e}")
+        if snapshot_dir:
+            # master was never modified (prune/inject only run when complete);
+            # drop only the stale snapshot
+            shutil.rmtree(snapshot_dir, ignore_errors=True)
         if protective_dir:
             shutil.rmtree(protective_dir, ignore_errors=True)
         raise
 
-    if need_working_copy:
-        # working copy was fully restored; the master cache stays for next apply
-        shutil.rmtree(protective_dir, ignore_errors=True)
+    if regenerate_cache:
+        # The master carried the injected tweaks for this apply; regenerate the
+        # cache from the snapshot, returning the master to its pristine
+        # full-manifest state for the next incremental refresh.
+        await asyncio.to_thread(
+            regenerate_cache_from_snapshot, snapshot_dir, prepared_backup_root.root, udid)
     elif skip_protective_backup:
         # user opted out of data protection — nothing was kept
         shutil.rmtree(protective_dir, ignore_errors=True)
@@ -871,13 +913,29 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
     # iOS 27 dev beta 6 / public beta 4 reject sparse restores that contain
     # AppDomain-* domains: the device drops the connection at 0% and no
     # security recovery triggers. With a prepared protective backup we can
-    # deliver PosterBoard files through Phase 3's native restore instead —
-    # injected into the backup Phase 3 restores (hardlink working copy for
-    # the cache master, pruned in place for a fresh Phase-0 live run).
+    # deliver tweak files through Phase 3's native restore instead — injected
+    # into the backup Phase 3 restores (the cache master is snapshotted,
+    # pruned and tweak-injected in place, then regenerated from the snapshot;
+    # a fresh Phase-0 live run is pruned in place). ALL tweak files
+    # ride that channel when the backup is unencrypted (plaintext injection;
+    # encrypted backups fill their rows with wrapped per-file keys, so a
+    # locally injected payload would fail the Phase 3 decrypt with
+    # MBErrorDomain/205 — those keep the sparse delivery).
     # GOLDENNUGGET_PB_SPARSE=1 forces the old sparse delivery.
     pb_via_protective = (prepared_backup_root is not None
                          and os.environ.get("GOLDENNUGGET_PB_SPARSE") != "1")
-    pb_inject_files = []
+    inject_all = False
+    if pb_via_protective:
+        udid = getattr(lockdown_client, "udid", "")
+        dev_dir = Path(prepared_backup_root.root) / udid
+        if not dev_dir.is_dir() and (Path(prepared_backup_root.root) / "Manifest.db").exists():
+            dev_dir = Path(prepared_backup_root.root)
+        inject_all = not _is_encrypted_backup(dev_dir)
+        if not inject_all:
+            log_warn("Prepared backup is encrypted — injecting tweaks is "
+                     "impossible (MBErrorDomain/205); falling back to sparse "
+                     "restore delivery")
+    inject_files = []
     for file in sorted_files:
         if file.domain == "" or file.domain == "z":
             # Files without a real domain were only ever delivered via the
@@ -885,8 +943,9 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
             # restore cannot use — they are dropped.
             continue
         else:
-            if pb_via_protective and file.domain == "AppDomain-com.apple.PosterBoard":
-                pb_inject_files.append(file)
+            if pb_via_protective and (inject_all
+                                      or file.domain == "AppDomain-com.apple.PosterBoard"):
+                inject_files.append(file)
                 continue
             last_domain, last_path = concat_regular_file(file, files_list, last_domain, last_path)
             exploit_only = False
@@ -945,9 +1004,9 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
     # Phase 2 (sparse / partial restore) is skipped when it has nothing new to
     # deliver and the protective restore (Phase 3) already carries what this
     # apply adds:
-    #   - PosterBoard-only: every real payload is an AppDomain-com.apple.PosterBoard
-    #     file diverted to pb_inject_files — the sparse pass would only re-stage
-    #     the incidental iOS 27 scaffolding files, which are dropped with it.
+    #   - Inject-all applies: every real payload is diverted to inject_files
+    #     (delivered by the protective restore), so the sparse pass only has the
+    #     incidental iOS 27 scaffolding files — which are dropped with it.
     #     (The HomeDomain .GlobalPreferences copy is empty on such an apply and
     #     skip-setup is re-applied natively by Phase 5.)
     #   - Unchanged tweaks + added wallpapers: the sparse payload is identical to
@@ -956,7 +1015,7 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
     # Directory rows (path scaffolding for the concrete files) never count as
     # payload.
     skip_sparse = False
-    if pb_inject_files:
+    if inject_files:
         if not any(
                 isinstance(f, backup.ConcreteFile) and not _is_ios27_scaffolding(f)
                 for f in files_list):
@@ -968,9 +1027,10 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
                 if prev and prev == sparse_signature(files):
                     skip_sparse = True
     if skip_sparse:
-        log_info("Phase 2 sparse/partial pass skipped: no changed tweak payload "
-                 "on this apply — the protective restore (Phase 3) delivers the "
-                 "wallpapers directly")
+        log_info("Phase 2 sparse/partial pass skipped: no new tweak payload "
+                 "rides the sparse restore on this apply — the protective "
+                 "restore (Phase 3) delivers the tweak/wallpaper files "
+                 "directly")
         files_list = []
 
     # create the backup
@@ -1031,7 +1091,7 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
             await _restore_ios27(back, reboot, lockdown_client, progress_callback,
                                  backup_password=backup_password,
                                  prepared_backup_root=prepared_backup_root,
-                                 pb_inject_files=pb_inject_files,
+                                 inject_files=inject_files,
                                  skip_setup=skip_setup,
                                  skip_protective_backup=skip_protective_backup,
                                  include_keychain=include_keychain,

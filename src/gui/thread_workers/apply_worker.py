@@ -311,19 +311,24 @@ class RestoreCacheThread(QThread):
             return ""
 
     def _find_cache_base(self, udid: str):
-        from PySide6.QtCore import QStandardPaths
         import tempfile
         from pathlib import Path
+        from src.restore.storage import cache_base, is_custom_backup_dir
         bases = []
         try:
             bases.append(Path(tempfile.gettempdir()) / "goldennugget_protective_cache")
         except Exception:
             pass
-        try:
-            bases.append(Path(QStandardPaths.writableLocation(
-                QStandardPaths.AppDataLocation)) / "GoldenNugget" / "backup_cache")
-        except Exception:
-            pass
+        bases.append(cache_base())
+        if is_custom_backup_dir():
+            # A cache created under the previous default location may still
+            # exist there; read it so it can be migrated on the next refresh.
+            from PySide6.QtCore import QStandardPaths
+            try:
+                bases.append(Path(QStandardPaths.writableLocation(
+                    QStandardPaths.AppDataLocation)) / "GoldenNugget" / "backup_cache")
+            except Exception:
+                pass
         for base in bases:
             if (base / "master" / udid / "Manifest.db").is_file():
                 return base

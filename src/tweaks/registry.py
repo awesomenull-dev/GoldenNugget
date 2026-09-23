@@ -555,6 +555,9 @@ SPECS: tuple[TweakSpec, ...] = (
     _t(TweakID.SBDisableIconParallax, Section.SPRINGBOARD, "Disable Icon Parallax",
        FileLocation.springboard, "SBDisableParallax",
        description=QT_TRANSLATE_NOOP("Nugget", "Stops Home Screen icons from shifting with the device tilt (the parallax effect). Pair with Disable Icon Page-Control Parallax for a fully static Home Screen.")),
+    _t(TweakID.SBHideSearchAffordance, Section.SPRINGBOARD, "Hide Search Button on Home Screen",
+       FileLocation.springboard, "SBHomeScreenShowsSearchAffordance", value=False,
+       description=QT_TRANSLATE_NOOP("Nugget", "Removes the search button below the icons on the Home Screen (the faint search bar/icon above the Dock). Enabled when the switch is ON.")),
 
     # --- Internal Options ---
     _t(TweakID.SBBuildNumber, Section.INTERNAL, "Show Build Version in Status Bar", GP, "UIStatusBarShowBuildVersion",

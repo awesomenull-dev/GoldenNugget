@@ -226,7 +226,10 @@ Phase 0 (in device_manager): protective backup + PosterBoard DB
                   (fresh live perform_protective_backup(), or the persistent
                    cache master + incremental refresh when the experimental
                    cache is enabled)
-Phase 1 (0-40%):  cache master → hardlink working copy; a fresh Phase-0 live
+Phase 1 (0-40%):  cache master → snapshot, then pruned + tweak-injected IN
+                  PLACE (it IS the Phase 3 restore source; the cached master
+                  returns to its pristine full-manifest state afterwards via
+                  regenerate_cache_from_snapshot); a fresh Phase-0 live
                   backup is pruned IN PLACE (no /tmp copy ever)
                   → clean_backup_for_restore() prune
                   → inject PosterBoard files (pb_inject_files, AppDomain)
@@ -250,11 +253,13 @@ Phase 3 (60-90%): _wait_for_device() (20 min budget, _RECONNECT_TIMEOUT);
                   callback → classic DeviceNotFoundError)
                   → _restore_protective_backup() puts user data back
                   (max_retries=18, fixed 3s sleep, only for transient errors)
-Phase 4 (90-95%): reboot_device()  — before the setup skip, so skip runs on a
-                  freshly-booted device (a merged still-live session would
-                  otherwise already carry a cloud config and
+Phase 4 (90-95%): reboot_device()  — before the media restore and setup skip,
+                  so skip runs on a freshly-booted device (a merged still-live
+                  session would otherwise already carry a cloud config and
                   SetCloudConfiguration only raises AlreadyPresent)
 Phase 5 (95-98%): _wait_for_device() reconnects (only after a Phase 4 reboot),
+                  then restore_media_via_afc() pushes the AFC-pulled
+                  photos/videos back (they were excluded from the backup),
                   then skip_all_setup27()  — if skip-setup requested, on every
                   apply including Phase 2-skipped ones; a device that was never
                   wiped may still hit CloudConfigurationAlreadyPresentError
@@ -303,7 +308,14 @@ the `ProtectiveBackupCache` to `protective_cache.py` (both re-exported from
   encryption state flipping. It ALWAYS lives in the persistent store — it is
   the only copy of user data between Phase 2 (wipe) and Phase 3 (restore), so
   a temp placement is permanent-loss-on-reboot. A legacy temp base is still
-  scanned by `locate()` for migration. During an incremental refresh the device
+  scanned by `locate()` for migration. The whole location is relocatable:
+  Settings → Backup → "Backup/Cache Location" stores `backup_storage_dir` in
+  the `Settings("settings")` QSettings store (`src/restore/storage.py` is the
+  single source of truth for `cache_base()` / `protective_base()` /
+  `posterboard_dir()` / `legacy_backups_dir()`, env override
+  `GOLDENNUGGET_BACKUP_DIR` wins over the setting; unset = historical
+  `<AppData>/GoldenNugget/...` defaults) so a small system drive can point
+  everything at another volume. During an incremental refresh the device
   probes the prior backup's `Snapshot` payload dir via `DLContentsOfDirectory`;
   `protective.py`'s `_install_device_link_contents_shim` answers a missing dir
   with an empty listing (real hosts do the same) so the probe can't crash the
@@ -319,7 +331,11 @@ the `ProtectiveBackupCache` to `protective_cache.py` (both re-exported from
   (Note: the module's own doc-comment at `protective.py:212-220` claims
   ConfigurationProfiles was reverted, but the code still keeps it.)
 - `make_protective_working_copy()` — hardlink clone (metadata real-copied);
-  pruning never corrupts the master.
+  pruning never corrupts the master. Used by the manual restore tools
+  (`restore_cache.py`, `apply_worker.py`); the main apply flow instead snapshots
+  the master (`make_cache_snapshot`), modifies it in place (`clean_backup_for_restore`
+  + `inject_file_into_backup`) and regenerates it afterwards
+  (`regenerate_cache_from_snapshot`).
 - `clean_backup_for_restore()` — prunes to the keep-set; self-heals by
   dropping regular-file rows whose payload is missing (MBErrorDomain/205)
   while keeping directory rows (renameatx ENOENT). Encrypted manifests are

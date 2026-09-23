@@ -16,12 +16,11 @@ import os
 import sqlite3
 import tempfile
 
-from PySide6.QtCore import QStandardPaths
-
 from pymobiledevice3.services.mobilebackup2 import Mobilebackup2Service
 
 from src.devicemanagement.session import lockdown_session
 from src.restore.protective import check_disk_space_for_backup, _validate_sqlite_db
+from src.restore.storage import legacy_backups_dir, posterboard_dir as _posterboard_dir
 from src.exceptions.nugget_exception import NuggetException
 from src.devicemanagement.constants import is_supported_by_fork
 from src.utils.async_retry import async_retry
@@ -32,7 +31,7 @@ async def backup_posterboard_database(udid: str, update_label=lambda x: None, up
     from src.exceptions.device_errors import is_device_locked_error as _is_device_locked_error
     from src.exceptions.device_errors import is_connection_error as _is_connection_error
 
-    app_data_path = os.path.join(QStandardPaths.writableLocation(QStandardPaths.AppDataLocation), 'Backups')
+    app_data_path = str(legacy_backups_dir())
     if not os.path.exists(app_data_path):
         os.makedirs(app_data_path)
     backup_folder = os.path.join(app_data_path, udid)
@@ -121,8 +120,7 @@ async def targeted_posterboard_database_backup(udid: str, update_label=lambda x:
         POSTERBOARD_DB_DOMAIN, _domain_match,
         _posterboard_db_match, extract_posterboard_db)
 
-    app_data_path = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)
-    pb_dir = os.path.join(app_data_path, "PosterBoard")
+    pb_dir = str(_posterboard_dir())
     if not os.path.exists(pb_dir):
         os.makedirs(pb_dir)
     dest_path = os.path.join(pb_dir, f"{udid}.sqlite3")

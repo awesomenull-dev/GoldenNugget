@@ -16,11 +16,21 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from src.restore.protective import (
     ProtectiveBackupCache,
     clean_backup_for_restore,
+    make_cache_snapshot,
     make_protective_working_copy,
+    regenerate_cache_from_snapshot,
 )
 
 UDID = "00008101-TESTUDID"
 PASS = 0
+
+
+class _FakeInject:
+    """Minimal stand-in for FileToRestore (only what make_cache_snapshot touches)."""
+
+    def __init__(self, domain, restore_path):
+        self.domain = domain
+        self.restore_path = restore_path
 
 
 def check(name, cond):
@@ -150,6 +160,32 @@ def main():
     master_rels = {r[0] for r in conn.execute("SELECT relativePath FROM Files")}
     conn.close()
     check("master manifest still has sms.db row", "Library/SMS/sms.db" in master_rels)
+
+    # --- snapshot/regenerate cycle (apply flow): master IS the restore source ---
+    snap_base = make_cache_snapshot(str(cache.master_root), UDID,
+                                    inject_files=[_FakeInject("HomeDomain", "Library/Preferences/testTweak.plist")])
+    snap_device = Path(snap_base) / UDID
+    check("snapshot created", snap_device.is_dir())
+    check("snapshot recorded inject plan",
+          (Path(snap_base) / "inject_plan.json").is_file())
+    # master pruned and tweak-injected IN PLACE (old working-copy semantics gone)
+    clean_backup_for_restore(str(cache.master_root), UDID)
+    conn = sqlite3.connect(str(cache.device_dir / "Manifest.db"))
+    pruned_rels = {r[0] for r in conn.execute("SELECT relativePath FROM Files")}
+    conn.close()
+    check("master pruned in place by apply", "Library/SMS/sms.db" not in pruned_rels)
+    # the snapshot still carries the pristine full manifest
+    conn = sqlite3.connect(str(snap_device / "Manifest.db"))
+    snap_rels = {r[0] for r in conn.execute("SELECT relativePath FROM Files")}
+    conn.close()
+    check("snapshot kept the full manifest", "Library/SMS/sms.db" in snap_rels)
+    # regenerate: the master returns to its pristine full-manifest state
+    regenerate_cache_from_snapshot(snap_base, str(cache.master_root), UDID)
+    conn = sqlite3.connect(str(cache.device_dir / "Manifest.db"))
+    restored_rels = {r[0] for r in conn.execute("SELECT relativePath FROM Files")}
+    conn.close()
+    check("regeneration restored full manifest", "Library/SMS/sms.db" in restored_rels)
+    check("regeneration removed the snapshot", not Path(snap_base).exists())
 
     print(f"\nALL {PASS} CHECKS PASSED")
 

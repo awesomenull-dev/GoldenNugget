@@ -24,6 +24,7 @@ class TweakID(Enum):
     SBShowAuthenticationEngineeringUI = auto()
     UseFloatingTabBar = auto()
     SBDisableIconParallax = auto()
+    SBHideSearchAffordance = auto()
 
     # internal
     SBBuildNumber = auto()

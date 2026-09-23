@@ -170,6 +170,19 @@ Main entry point for applying tweaks. Order:
 `ProtectiveBackupCache` keeps a per-device master copy of the protective
 backup in the persistent app-data store
 (`<AppData>/GoldenNugget/backup_cache/master/<udid>`):
+- **Storage location is configurable** — Settings → Backup →
+  "Backup/Cache Location" (`backup_storage_dir` in the `Settings("settings")`
+  QSettings store; env override `GOLDENNUGGET_BACKUP_DIR` for headless tools
+  like `restore_cache.py`). `src/restore/storage.py` is the single source of
+  truth: `cache_base()` (backup_cache), `protective_base()` (live backup
+  runs), `posterboard_dir()` and `legacy_backups_dir()` all derive from the
+  same root so a small system drive (e.g. a 28 GB `C:`) can be relieved by
+  pointing them at e.g. `D:\GoldenNugget\`. Unset → the historical
+  `<AppData>/GoldenNugget/...` (backup_cache/protective) and
+  `<AppData>/PosterBoard|Backups` locations, byte-for-byte. The recovery
+  tools (`apply_worker.py`, `restore_cache.py`) also search the legacy
+  AppData `backup_cache` as a read-only fallback when a custom location is
+  set (migration/recovery of pre-existing caches).
 - **EXPERIMENTAL, ON BY DEFAULT** — the cache engages unless the user turns
   off "Use Fast Backup Cache (Experimental)" in Settings
   (`pref.use_backup_cache`). Cache off → the classic live
@@ -205,12 +218,23 @@ backup in the persistent app-data store
   with an empty listing (Apple's host behaviour), so the device treats the
   probe as "nothing to diff" and proceeds with a safe full rebuild instead of
   aborting the apply.
-- Restores never touch the master: `make_protective_working_copy()` builds a
-  throwaway hardlink copy (metadata files are real copies — pruning rewrites
-  Manifest.db and a hardlink would corrupt the master). Only the CACHE master
-  goes through a working copy; a fresh Phase-0 live backup is pruned **in
-  place** in the restore (no /tmp copy to spill onto another volume and OSError
-  with ENOSPC), and the retained run IS that pruned backup.
+- Restores regenerate the master after every apply: the apply **snapshots**
+  the pristine master (`make_cache_snapshot`, snapshot at
+  `<base>/snapshot/<udid>`, hardlinked payloads + real-copied metadata — the
+  metadata is real because pruning rewrites Manifest.db and a hardlink would
+  corrupt the master), then prunes and tweak-injects the master **in place**
+  (the master IS the Phase 3 restore source), and on success — or any failure
+  after the backup completed — regenerates it from the snapshot
+  (`regenerate_cache_from_snapshot`: the modified master is replaced by the
+  pristine snapshot, so the FULL manifest and pre-tweak payload states come
+  back for the next incremental refresh). The snapshot records the inject plan
+  (`inject_plan.json`) for diagnostics; a leftover snapshot left by a crashed
+  apply is self-healed on the next cache `refresh()`. Only the CACHE master
+  goes through this snapshot/regenerate cycle; a fresh Phase-0 live backup is
+  pruned **in place** in the restore (no /tmp copy to spill onto another
+  volume and OSError with ENOSPC), and the retained run IS that pruned backup.
+  (`make_protective_working_copy` still exists for the manual restore tools
+  `restore_cache.py` / `apply_worker.py`, which never touch the master.)
 - Invalidated by UDID/iOS-version change. The master ALWAYS lives in the
   persistent store (never temp): it is the only copy of user data between
   Phase 2 (device wipe) and Phase 3 (restore), so a temp placement would
@@ -287,10 +311,16 @@ backup in the persistent app-data store
 > setup skip and a final reboot.
 
 **Phase 1 (0-40%)**: Protective Backup
-- With `prepared_backup_root` (cached master -> hardlink working copy; fresh Phase-0 live backup -> pruned in place, no copy): no device backup runs here. Without it: `perform_protective_backup()` runs live. With `skip_protective_backup`: the phase is skipped entirely (user opted out on low disk space)
+- With `prepared_backup_root` (cached master -> snapshotted, then pruned + tweak-injected **in place** and used as the restore source; fresh Phase-0 live backup -> pruned in place, no copy): no device backup runs here. Without it: `perform_protective_backup()` runs live. With `skip_protective_backup`: the phase is skipped entirely (user opted out on low disk space)
 - Otherwise: `perform_protective_backup()` — selective backup of photos, Apple ID, settings
 - `clean_backup_for_restore()` — prunes manifest to protective files only
-- Injects PosterBoard files (`pb_inject_files`, AppDomain) — the only injected tweak payload today
+- Injects ALL the apply's tweak files (`inject_files` from `restore_files`) into
+  the pruned manifest when the prepared backup is unencrypted
+  (`inject_all` in `restore_files`, plaintext injection) — the sparse pass
+  (Phase 2) then has nothing left to deliver. Encrypted prepared backups can't
+  hold plaintext-injected rows (per-file wrapped keys → MBErrorDomain/205), so
+  on those the tweaks still ride the sparse pass; PosterBoard-only edge cases
+  keep injecting just the AppDomain rows.
 
 **Phase 2 (40-60%)**: Sparse Restore — **no reboot** (default, merged phases)
 - `perform_restore()` applies tweaks via sparse restore with `reboot=not merge_phases`; if it drops at 0% it waits 25 s and retries once on a fresh connection.
@@ -302,17 +332,17 @@ backup in the persistent app-data store
   restore, not a tamper). One session, no 20-minute wait, no data wipe.
 - **`GOLDENNUGGET_NO_MERGE_PHASES=1`** restores the classic flow: sparse
   restore → reboot → "safe state recovery" wipe → reconnect → restore.
-- **Skipped for PosterBoard-only applies**: `restore_files()` diverts every
-  payload to `pb_inject_files`, drops the incidental iOS 27 scaffolding files
-  (HomeDomain `.GlobalPreferences.plist` copy + skip-setup plists —
-  `_is_ios27_scaffolding`), and Phase 2 sees an empty sparse list, so the
-  protective restore (Phase 3) delivers the wallpapers right after Phase 1 —
-  no partial restore, no wipe.
+- **Skipped when everything is injected**: on an unencrypted prepared backup
+  `restore_files()` diverts every payload to `inject_files`, drops the
+  incidental iOS 27 scaffolding files (HomeDomain `.GlobalPreferences.plist`
+  copy + skip-setup plists — `_is_ios27_scaffolding`), and Phase 2 sees an
+  empty sparse list, so the protective restore (Phase 3) delivers the tweaks
+  right after Phase 1 — no partial restore, no wipe.
 - **Skipped for unchanged tweaks + new wallpapers**: the apply record in
   `lastapply.json` (`src/restore/lastapply.py`, per-UDID under the persistent
   app-data store) holds the sha1 signature of the last successfully applied
   sparse payload. When the freshly generated sparse signature matches it AND
-  wallpapers are pending (`pb_inject_files` non-empty), Phase 2 is skipped the
+  wallpapers are pending (`inject_files` non-empty), Phase 2 is skipped the
   same way — the device already carries the (unchanged) tweak files and Phase
   3 delivers the wallpapers. The record is written after every successful
   apply and cleared after a reset; `sparse_signature` excludes PosterBoard
@@ -336,13 +366,16 @@ backup in the persistent app-data store
   case (`PasswordRequiredError` seen during the cycle) and a plain no-show.
 - `_restore_protective_backup()` — restores the Phase 1 backup, with password if encrypted; retries **18 times at fixed 3 s**, only for `_is_transient_restore_error` results
 
-**Phase 4 (90-95%)**: `reboot_device()` — **before** the setup skip, so
-  `skip_all_setup27` runs on a freshly-booted device. A merged still-live
-  session would otherwise already carry a cloud configuration and only raise
+**Phase 4 (90-95%)**: `reboot_device()` — **before** the media restore and
+  setup skip, so `restore_media_via_afc()` and `skip_all_setup27` run on a
+  freshly-booted device (Phase 5). A merged still-live session would
+  otherwise already carry a cloud configuration and only raise
   `CloudConfigurationAlreadyPresentError`.
 
 **Phase 5 (95-98%)**: `_wait_for_device()` reconnects (only after a Phase 4
   reboot; the reused live session is closed first), then
+  `restore_media_via_afc()` pushes the AFC-pulled photos/videos back (media
+  travels only on that channel — it was excluded from the backup), then
   `skip_all_setup27()` — runs whenever skip-setup is requested, on every
   apply including the Phase 2-skipped ones (PosterBoard-only / unchanged
   tweaks + added wallpapers). When the device was never wiped it
@@ -510,18 +543,20 @@ _apply_changes()
          |_ generate tweak files
          |_ backup encryption handling (iOS 27+ password prompt)
          |_ start_restore(prepared_backup_root)
-              |_ restore_files()
-                   |_ _restore_ios27()
-                        Phase 1 (0-40%):  cache master -> hardlink working copy; fresh Phase-0 live -> prune in place
-                                         + clean_backup_for_restore() + inject PosterBoard (AppDomain)
-                                         (skipped entirely if the user opted out on low disk space)
-                        Phase 2 (40-60%): perform_restore() (sparse) -> NO reboot (default, merged phases)
-                                         (25s+retry if drop at 0%); GOLDENNUGGET_NO_MERGE_PHASES=1 restores the classic reboot+wipe
+|_ restore_files()
+                    |_ _restore_ios27()
+                         Phase 1 (0-40%):  cache master -> snapshot, then prune + inject tweaks in place (restore source)
+                                          + clean_backup_for_restore() + inject ALL tweak files (inject_files, unencrypted only)
+                                          (skipped entirely if the user opted out on low disk space)
+                         Phase 2 (40-60%): perform_restore() (sparse) -> NO reboot (default, merged phases)
+                                          (skipped when everything rides Phase 1's inject; encrypted backups keep sparse)
+                                          (25s+retry if drop at 0%); GOLDENNUGGET_NO_MERGE_PHASES=1 restores the classic reboot+wipe
                         Phase 3 (60-90%): [merged] reuse live session -> _restore_protective_backup(password) [18x3s]
                                          [classic] _wait_for_device() -> _restore_protective_backup(password) [18x3s]
                                          (skipped when data protection was opted out)
-                        Phase 4 (90-95%): reboot before skip-setup          (only if reboot + skip-setup)
-                        Phase 5 (95-98%): reconnet + skip_all_setup27()     (only if skip-setup)
+                        Phase 4 (90-95%): reboot before media restore + skip-setup (only if reboot + skip-setup)
+                        Phase 5 (95-98%): reconnect (if rebooted) + restore_media_via_afc() (AFC photos/videos,
+                                          only when media_dir set) + skip_all_setup27()     (only if skip-setup)
                         Phase 6 (98-100%): reboot_device()                  (only if auto_reboot)
 ```
 

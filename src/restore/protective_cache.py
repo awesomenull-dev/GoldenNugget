@@ -3,12 +3,15 @@
 The master keeps the FULL Manifest.db (rows for drained payloads stay put)
 so mobilebackup2 can run true incremental refreshes against it: after the
 first apply, each next apply only uploads what actually changed on the
-device. Restores never touch the master — ``make_working_copy`` builds a
-throwaway hardlink copy that gets pruned and tweak-injected instead.
+device. Restores never mutate the master permanently — the apply snapshots
+it under ``<base>/snapshot/<udid>``, prunes and tweak-injects the master in
+place (it IS the Phase 3 restore source), then regenerates the cache from
+the snapshot, returning the master to its full-manifest state.
 
 The master always lives in the persistent app-data store (never the system
 temp dir): it is the sole copy of user data between Phase 2 (device wipe)
-and Phase 3 (restore), so it must survive reboots and crashes.
+and Phase 3 (restore), so it must survive reboots and crashes. A leftover
+snapshot from a crashed apply is self-healed on the next refresh.
 """
 
 import json
@@ -20,10 +23,10 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QStandardPaths
 from pymobiledevice3.lockdown import LockdownClient
 
 from src.restore.inject import _validate_sqlite_db
+from src.restore.storage import cache_base as _cache_base
 
 _logger = logging.getLogger("GoldenNugget.cache")
 
@@ -38,8 +41,7 @@ def peek_cache_info(udid: str) -> Optional[dict]:
     """
     try:
         temp_base = Path(tempfile.gettempdir()) / "goldennugget_protective_cache"
-        persist_base = Path(QStandardPaths.writableLocation(
-            QStandardPaths.AppDataLocation)) / "GoldenNugget" / "backup_cache"
+        persist_base = _cache_base()
     except Exception:
         return None
     now = int(time.time())
@@ -74,8 +76,10 @@ class ProtectiveBackupCache:
     The master keeps the FULL Manifest.db (rows for drained payloads stay put)
     so mobilebackup2 can run true incremental refreshes against it: after the
     first apply, each next apply only uploads what actually changed on the
-    device. Restores never touch the master — ``make_working_copy`` builds a
-    throwaway hardlink copy that gets pruned and tweak-injected instead.
+    device. Restores never mutate the master permanently — the apply snapshots
+    it under ``<base>/snapshot/<udid>``, prunes and tweak-injects the master in
+    place (it IS the Phase 3 restore source), then regenerates the cache from
+    the snapshot, returning the master to its full-manifest state.
     """
 
     def __init__(self, udid: str, product_version: str, encrypted: bool = False):
@@ -83,8 +87,7 @@ class ProtectiveBackupCache:
         self.product_version = product_version
         self.encrypted = encrypted
         self._temp_base = Path(tempfile.gettempdir()) / "goldennugget_protective_cache"
-        self._persist_base = Path(QStandardPaths.writableLocation(
-            QStandardPaths.AppDataLocation)) / "GoldenNugget" / "backup_cache"
+        self._persist_base = _cache_base()
         # Always use the persistent store: the master is the sole copy of the
         # user's data between Phase 2 (device wipe) and Phase 3 (restore).  A
         # reboot would destroy a temp-based master, turning a recoverable
@@ -173,7 +176,17 @@ class ProtectiveBackupCache:
         persistent per-device media store (``media_dir``), pulled as a diff
         (only new/changed objects) on every refresh — the cache photo store.
         """
-        from src.restore.protective import perform_protective_backup
+        from src.restore.protective import perform_protective_backup, regenerate_cache_from_snapshot
+
+        # Self-heal: a crashed apply leaves a modified (pruned + tweak-injected)
+        # master beside its take-before snapshot. Regenerate first so the
+        # incremental refresh below diffs against the pristine full-manifest
+        # state, never a half-applied one.
+        snap_base = self.base / "snapshot"
+        if (snap_base / self.udid).is_dir():
+            _logger.warning("Leftover cache snapshot found — regenerating master "
+                            "from it before refreshing (crashed apply?)")
+            regenerate_cache_from_snapshot(str(snap_base), str(self.master_root), self.udid)
 
         valid = self.has_valid_master()
         mode = "incremental" if valid else "full"
@@ -205,4 +218,5 @@ class ProtectiveBackupCache:
     def purge(self):
         shutil.rmtree(self.master_root, ignore_errors=True)
         shutil.rmtree(self.media_dir, ignore_errors=True)
+        shutil.rmtree(self.base / "snapshot", ignore_errors=True)
         self.info_path.unlink(missing_ok=True)

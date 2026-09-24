@@ -20,9 +20,10 @@ Wanted support? join our [Discord Server][server].
 <details>
 <summary>iOS 26.2 - 27.0+</summary>
 
-- PosterBoard: Animated wallpapers and descriptors. (Does not support Apple's system descriptor, such as iOS 16 wallpaper)
+- PosterBoard: Animated wallpapers and descriptors.
   - Community wallpapers can be found [here][WallpapersWebsite] or [here][caplayground]
   - Customizing community-made wallpapers via batter files
+  - Device-Specific wallpapers in MercuryPoster can be installed
   - See documentation on the structure of tendies and batter files in [documentation.md](documentation.md)
 - Templates: Custom Operations and file editing
   - See documentation on the structure of batter files in [documentation.md](documentation.md)

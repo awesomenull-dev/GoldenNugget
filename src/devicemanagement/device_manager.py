@@ -331,8 +331,9 @@ class DeviceManager:
         # skip-setup plists always carry real domains, so they can always ride
         # the domain delivery on iOS 26, even when the selected tweaks are basic
         # plist tweaks that never set ``restoring_domains``.
+        dev_version = self.get_current_device_version()
         if self.pref_manager.skip_setup and (restoring_domains
-                or self.get_current_device_version() < Version("27.0")):
+                or (dev_version and Version(dev_version) < Version("27.0"))):
             # get the already existing cloud config info
             async with lockdown_session(self.data_singleton.current_device.udid) as ld:
                 async with MobileConfigService(lockdown=ld) as mcs:
@@ -1107,29 +1108,33 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
             self._raise_if_unsupported()
             # create the restore file list
             files_to_restore: list[FileToRestore] = []
-            # Capture the device's original plists fresh via psysbackup so the
-            # reset can restore the user's files instead of empty ones.
             udid = self.get_current_device_udid()
             if not udid:
                 raise NuggetException(QCoreApplication.tr("No device connected."))
-            all_values = await self._get_lockdown_values()
-            update_label(QCoreApplication.tr("Capturing original plists..."))
-            # The capture is best-effort: on a device that is already half-broken
-            # the mobilebackup2 protocol chatter can fail (e.g. PlistParseError
-            # mid-stream). Falling back to stock defaults restores the device
-            # instead of aborting the whole reset on a metadata capture.
-            try:
-                captured = await self._capture_original_plists(udid, update_label)
-            except Exception as e:
-                print(f"[reset_tweaks] Original-plist capture failed: {e}")
-                update_label(QCoreApplication.tr("Original plists unavailable — restoring default values..."))
-                captured = {}
+            dev_version = self.get_current_device_version()
+            # The original-plist capture (psysbackup) exists for iOS 27 only.
+            # On iOS 26 the reset matches the original Nugget: it writes empty
+            # files straight to disk, no capture.
+            all_values = {}
             original_plists = {}
-            for path, data in captured.items():
+            if dev_version and Version(dev_version) >= Version("27.0"):
+                all_values = await self._get_lockdown_values()
+                update_label(QCoreApplication.tr("Capturing original plists..."))
+                # The capture is best-effort: on a device that is already half-broken
+                # the mobilebackup2 protocol chatter can fail (e.g. PlistParseError
+                # mid-stream). Falling back to stock defaults restores the device
+                # instead of aborting the whole reset on a metadata capture.
                 try:
-                    original_plists[path] = plistlib.loads(data)
-                except Exception:
-                    continue
+                    captured = await self._capture_original_plists(udid, update_label)
+                except Exception as e:
+                    print(f"[reset_tweaks] Original-plist capture failed: {e}")
+                    update_label(QCoreApplication.tr("Original plists unavailable — restoring default values..."))
+                    captured = {}
+                for path, data in captured.items():
+                    try:
+                        original_plists[path] = plistlib.loads(data)
+                    except Exception:
+                        continue
             files_to_null: list[str] = []
             uses_domains = False
 
@@ -1137,21 +1142,35 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
             for page in reset_pages:
                 if page == Page.StatusBar:
                     ## STATUS BAR
-                    # iOS 26.2+ (iOS 27 era): the status bar is Speakeasy, a SpringBoard
-                    # feature flag — disable it instead of writing the
-                    # unread classic statusBarOverrides file. An empty flag
-                    # dict (no "Enabled" key) keeps SpringBoard's default
-                    # behavior — {"Enabled": False} could be read as
-                    # disabling the whole Speakeasy status bar.
-                    self.concat_file(
-                        contents=plistlib.dumps({
-                            "SpringBoard": {
-                                "SpeakeasyNewStatusBar": {}
-                            }
-                        }),
-                        path=FileLocation.featureflags.value,
-                        files_to_restore=files_to_restore
-                    )
+                    dev_version = self.get_current_device_version()
+                    if dev_version and Version(dev_version) >= Version("27.0"):
+                        # iOS 27: the status bar is Speakeasy, a SpringBoard
+                        # feature flag — disable it instead of writing the
+                        # unread classic statusBarOverrides file. An empty flag
+                        # dict (no "Enabled" key) keeps SpringBoard's default
+                        # behavior — {"Enabled": False} could be read as
+                        # disabling the whole Speakeasy status bar.
+                        self.concat_file(
+                            contents=plistlib.dumps({
+                                "SpringBoard": {
+                                    "SpeakeasyNewStatusBar": {}
+                                }
+                            }),
+                            path=FileLocation.featureflags.value,
+                            files_to_restore=files_to_restore
+                        )
+                    else:
+                        # iOS 26 and below: the tweak writes a classic binary
+                        # statusBarOverrides file. Reset it to a fresh (all-
+                        # default) override struct so the status bar returns to
+                        # stock — the apply path reads the same file, so an
+                        # untouched zeroed file makes every override "off".
+                        fresh = StatusBarTweak()
+                        files_to_restore.append(FileToRestore(
+                            contents=fresh.setter.get_data(),
+                            restore_path="/Library/SpringBoard/statusBarOverrides",
+                            domain="HomeDomain"
+                        ))
                 elif page == Page.Springboard:
                     ## SPRINGBOARD
                     files_to_null.append(FileLocation.springboard.value)
@@ -1176,6 +1195,7 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
                 elif page == Page.InternalOptions:
                     ## INTERNAL OPTIONS
                     files_to_null.append(FileLocation.globalPreferences.value)
+                    files_to_null.append(FileLocation.globalPreferencesHomeDomain.value)
                     files_to_null.append(FileLocation.appStore.value)
                     files_to_null.append(FileLocation.backboardd.value)
                     files_to_null.append(FileLocation.coreMotion.value)
@@ -1187,7 +1207,7 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
                 original = original_plists.get(file_path)
                 if original is not None:
                     contents = plistlib.dumps(materialize_plist(original, all_values))
-                else:
+                elif dev_version and Version(dev_version) >= Version("27.0"):
                     # Restore a valid empty plist instead of a zero-byte
                     # file: on iOS 26.2+ a truncated plist (e.g. an empty
                     # com.apple.springboard.plist) makes SpringBoard crash
@@ -1195,6 +1215,12 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
                     # empty dict parses fine and makes the system fall back
                     # to its default values.
                     contents = plistlib.dumps({})
+                else:
+                    # iOS 26: reset matches the original Nugget, which writes
+                    # empty (zero-byte) files without any capture. The managed
+                    # preferences copy on iOS 26 already holds the tweaked
+                    # values, so restoring it would just re-write the tweaks.
+                    contents = b""
                 self.concat_file(
                     contents=contents,
                     path=file_path,

@@ -1,5 +1,5 @@
 from .status_setter import Setter, StatusBarItem
-from ..tweak_classes import Tweak
+from ..tweak_classes import Tweak, _notify_tweak_change
 from src.utils.file_to_restore import FileToRestore
 
 from cffi import FFI
@@ -9,6 +9,12 @@ class StatusBarTweak(Tweak):
     def __init__(self):
         super().__init__(key=None)
         self.setter = Setter()
+
+    def _apply_changes(self, overrides) -> None:
+        setter = self.setter
+        setter.apply_changes(overrides)
+        _notify_tweak_change()
+        return None
 
     # iOS 27+: the status bar is Speakeasy, a SpringBoard feature flag, but
     # writing SpeakeasyNewStatusBar fails due to no write permissions, so the
@@ -48,12 +54,12 @@ class StatusBarTweak(Tweak):
         if field is not None:
             data = value[:max_len] if max_len is not None else value
             setattr(overrides.values, field, data.encode() if isinstance(data, str) else data)
-        self.setter.apply_changes(overrides)
+        self._apply_changes(overrides)
 
     def _unset_flag(self, flag: str) -> None:
         overrides = self._overrides()
         setattr(overrides, flag, 0)
-        self.setter.apply_changes(overrides)
+        self._apply_changes(overrides)
 
     ### PRIMARY CARRIER
     # CELLULAR SERVICE
@@ -130,12 +136,12 @@ class StatusBarTweak(Tweak):
         overrides.values.itemIsEnabled[idx] = 1 if shown else 0
         overrides.overrideSecondaryCellularConfigured = 1
         overrides.values.secondaryCellularConfigured = 1 if shown else 0
-        self.setter.apply_changes(overrides)
+        self._apply_changes(overrides)
     def unset_secondary_cellular_service(self) -> None:
         overrides = self._overrides()
         overrides.overrideItemIsEnabled[StatusBarItem.SecondaryCellularServiceStatusBarItem.value] = 0
         overrides.overrideSecondaryCellularConfigured = 0
-        self.setter.apply_changes(overrides)
+        self._apply_changes(overrides)
 
     # SERVICE STRING
     def is_secondary_carrier_overridden(self) -> bool:
@@ -222,12 +228,12 @@ class StatusBarTweak(Tweak):
         overrides.overrideBreadcrumb = 1
         new_crumb = text[:254] + " ▶" if text != "" else ""
         overrides.values.breadcrumbTitle = new_crumb.encode()
-        self.setter.apply_changes(overrides)
+        self._apply_changes(overrides)
     def unset_crumb(self) -> None:
         overrides = self._overrides()
         overrides.overrideBreadcrumb = 0
         overrides.values.breadcrumbTitle = "".encode()
-        self.setter.apply_changes(overrides)
+        self._apply_changes(overrides)
 
     # BATTERY DETAIL STRING
     def is_battery_detail_overridden(self) -> bool:
@@ -271,7 +277,7 @@ class StatusBarTweak(Tweak):
         overrides.overrideDisplayRawWifiSignal = 1 if shown else 0
         if shown:
             overrides.values.displayRawWifiSignal = 1
-        self.setter.apply_changes(overrides)
+        self._apply_changes(overrides)
     # GSM
     def is_raw_gsm_signal_shown(self) -> bool:
         return self._is_flag_overridden("overrideDisplayRawGSMSignal")
@@ -280,7 +286,7 @@ class StatusBarTweak(Tweak):
         overrides.overrideDisplayRawGSMSignal = 1 if shown else 0
         if shown:
             overrides.values.displayRawGSMSignal = 1
-        self.setter.apply_changes(overrides)
+        self._apply_changes(overrides)
 
     ## RADIO BUTTONS
     def is_item_overridden(self, item: StatusBarItem) -> bool:
@@ -291,11 +297,11 @@ class StatusBarTweak(Tweak):
         overrides = self._overrides()
         overrides.overrideItemIsEnabled[item.value] = 1
         overrides.values.itemIsEnabled[item.value] = 1 if shown else 0
-        self.setter.apply_changes(overrides)
+        self._apply_changes(overrides)
     def unset_item_override(self, item: StatusBarItem) -> None:
         overrides = self._overrides()
         overrides.overrideItemIsEnabled[item.value] = 0
-        self.setter.apply_changes(overrides)
+        self._apply_changes(overrides)
 
 
     def is_silly_mode_enabled(self) -> bool:

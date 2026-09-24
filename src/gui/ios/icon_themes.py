@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 from src.gui.ios.components import IOSCard
 from src.gui.theme import ColorThemeManager, theme_icon
 from src.gui.dialogs.icon_pack_downloader import IconPackDownloaderDialog
+from src.gui.dialogs.app_list_dialog import AppListExportDialog
 from src.tweaks.tweaks import tweaks, TweakID
 from src.tweaks.icon_themes.icon_theme import IconTheme
 
@@ -56,6 +57,14 @@ class IOSIconThemesPage(QWidget):
         download_btn.clicked.connect(self.show_download_packs)
         self._download_btn = download_btn
         self.content_layout.addWidget(download_btn)
+
+        apps_btn = QPushButton(QCoreApplication.translate(
+            "Nugget", "Apps on iPhone"))
+        apps_btn.setObjectName("appsOnIphone")
+        apps_btn.setCursor(Qt.PointingHandCursor)
+        apps_btn.clicked.connect(self.show_app_list_export)
+        self._apps_btn = apps_btn
+        self.content_layout.addWidget(apps_btn)
 
         self.themes_placeholder = QLabel(QCoreApplication.translate(
             "Nugget", "No icon themes yet. Tap + Add Icon or download a pack."))
@@ -113,6 +122,18 @@ class IOSIconThemesPage(QWidget):
                 padding: 12px;
             }}
             QPushButton#downloadIconPacks:hover {{ background-color: {c.surface_hover}; }}
+        """)
+        self._apps_btn.setStyleSheet(f"""
+            QPushButton#appsOnIphone {{
+                background-color: {c.bg_secondary};
+                border: 1px solid {c.border};
+                border-radius: 12px;
+                color: {c.accent};
+                font-size: 14px;
+                font-weight: 600;
+                padding: 12px;
+            }}
+            QPushButton#appsOnIphone:hover {{ background-color: {c.surface_hover}; }}
         """)
         self.themes_placeholder.setStyleSheet(
             f"color: {c.text_secondary}; font-size: 15px; padding: 24px 0;")
@@ -207,8 +228,20 @@ class IOSIconThemesPage(QWidget):
         tweak.set_enabled(not tweak.is_empty())
         self.refresh_themes()
 
-    def show_add_icon_dialog(self):
-        dialog = IconThemeDialog(self.window)
+    def show_app_list_export(self):
+        dialog = AppListExportDialog(self.window)
+        if dialog.exec() == QDialog.Accepted:
+            app = dialog.selected_app()
+            if app is None:
+                return
+            self.show_add_icon_dialog(bundle_id=app["bundle_id"],
+                                      display_name=app["display_name"],
+                                      preset=True)
+
+    def show_add_icon_dialog(self, bundle_id: str = "", display_name: str = "",
+                             preset: bool = False):
+        dialog = IconThemeDialog(self.window, bundle_id=bundle_id,
+                                 display_name=display_name, preset=preset)
         if dialog.exec() == QDialog.Accepted:
             theme = dialog.build_theme()
             if theme is None:
@@ -235,7 +268,8 @@ class IOSIconThemesPage(QWidget):
 class IconThemeDialog(QDialog):
     """Pick an app bundle id, an icon image and an optional label."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, bundle_id: str = "",
+                 display_name: str = "", preset: bool = False):
         super().__init__(parent)
         self.setWindowTitle(QCoreApplication.translate("Nugget", "Add Icon Theme"))
         self.setModal(True)
@@ -255,6 +289,10 @@ class IconThemeDialog(QDialog):
         self.bundle_input = QLineEdit()
         self.bundle_input.setObjectName("fieldInput")
         self.bundle_input.setPlaceholderText("com.apple.mobilesafari")
+        if bundle_id:
+            self.bundle_input.setText(bundle_id)
+            if preset:
+                self.bundle_input.setReadOnly(True)
         bundle_row.addWidget(self.bundle_input, 1)
         layout.addLayout(bundle_row)
 
@@ -267,6 +305,8 @@ class IconThemeDialog(QDialog):
         self.name_input.setObjectName("fieldInput")
         self.name_input.setPlaceholderText(QCoreApplication.translate(
             "Nugget", "Custom label (empty hides it)"))
+        if preset and display_name:
+            self.name_input.setText(display_name)
         name_row.addWidget(self.name_input, 1)
         layout.addLayout(name_row)
 
@@ -274,6 +314,11 @@ class IconThemeDialog(QDialog):
             "Nugget",
             "The app bundle id is the same identifier the app icon uses "
             "under the hood (e.g. com.instagram.instagram)."))
+        if preset:
+            hint.setText(QCoreApplication.translate(
+                "Nugget",
+                "Picked from your iPhone: {0}. Type a custom label or "
+                "leave it empty to hide it.").format(bundle_id))
         hint.setObjectName("fieldHint")
         hint.setWordWrap(True)
         layout.addWidget(hint)

@@ -7,11 +7,6 @@ import traceback
 
 from tempfile import TemporaryDirectory
 from typing import Optional
-from pathlib import Path
-
-from cryptography import x509
-from cryptography.hazmat.primitives.serialization import Encoding
-from uuid import uuid4
 
 from PySide6.QtWidgets import QMessageBox
 from PySide6.QtCore import QSettings, QCoreApplication
@@ -19,7 +14,6 @@ from PySide6.QtCore import QSettings, QCoreApplication
 from packaging.version import Version
 
 from pymobiledevice3 import usbmux
-from pymobiledevice3.ca import create_keybag_file
 from pymobiledevice3.services.mobile_config import MobileConfigService
 from pymobiledevice3.exceptions import MuxException, PasswordRequiredError, ConnectionTerminatedError, AccessDeniedError, InvalidServiceError
 from pymobiledevice3.services.mobilebackup2 import Mobilebackup2Service
@@ -29,7 +23,7 @@ import pymobiledevice3.service_connection as _sc
 from src.devicemanagement.session import lockdown_session
 from src.exceptions.device_errors import is_device_locked_error as _is_device_locked_error
 from src.controllers.hotload import HotLoad
-from src.restore.skip_setup27 import skip_setup_panes
+from src.restore.skip_setup27 import build_cloud_config
 
 # Bump SSL handshake timeout from 10s to 60s for all lockdown services.
 _sc.DEFAULT_SSL_HANDSHAKE_TIMEOUT = 60
@@ -329,39 +323,25 @@ class DeviceManager:
 
     async def add_skip_setup(self, files_to_restore: list[FileToRestore], restoring_domains: bool):
         # TODO: Probably should move this to its own file
-        if self.pref_manager.skip_setup and restoring_domains:
+        # Build the cloud config with the same single-source builder that iOS 27
+        # pushes natively (skip_all_setup27), so iOS 26's Phase 2 sparse restore
+        # carries the byte-identical CloudConfigurationDetails.plist. On iOS 26
+        # (MBDB sparse restore) every file is delivered through a real domain —
+        # files with an empty domain are dropped during the restore. The
+        # skip-setup plists always carry real domains, so they can always ride
+        # the domain delivery on iOS 26, even when the selected tweaks are basic
+        # plist tweaks that never set ``restoring_domains``.
+        if self.pref_manager.skip_setup and (restoring_domains
+                or self.get_current_device_version() < Version("27.0")):
             # get the already existing cloud config info
             async with lockdown_session(self.data_singleton.current_device.udid) as ld:
                 async with MobileConfigService(lockdown=ld) as mcs:
-                    cloud_config_plist = await mcs.get_cloud_configuration()
+                    existing = await mcs.get_cloud_configuration()
+            cloud_config_plist = build_cloud_config(
+                existing,
+                supervised=self.pref_manager.supervised,
+                organization_name=self.pref_manager.organization_name)
             # add the 2 skip setup files
-            cloud_config_plist["SkipSetup"] = skip_setup_panes()
-            cloud_config_plist["AllowPairing"] = True
-            cloud_config_plist["ConfigurationWasApplied"] = True
-            cloud_config_plist["CloudConfigurationUIComplete"] = True
-            cloud_config_plist["IsSupervised"] = False
-            cloud_config_plist["ConfigurationSource"] = 0
-            cloud_config_plist["PostSetupProfileWasInstalled"] = True
-            if self.pref_manager.supervised == True:
-                cloud_config_plist["IsSupervised"] = True
-                # create/add the keybag
-                if self.pref_manager.organization_name != None and self.pref_manager.organization_name != "":
-                    with TemporaryDirectory() as temp_dir:
-                        keybag_file = Path(temp_dir) / 'keybag'
-                        create_keybag_file(keybag_file, self.pref_manager.organization_name)
-                        cer = x509.load_pem_x509_certificate(keybag_file.read_bytes())
-                        public_key = cer.public_bytes(Encoding.DER)
-                        # make sure the mdm is removable
-                        cloud_config_plist["OrganizationName"] = self.pref_manager.organization_name
-                        cloud_config_plist['OrganizationMagic'] = str(uuid4())
-                        cloud_config_plist['IsMDMUnremovable'] = False
-                        cloud_config_plist['SupervisorHostCertificates'] = [public_key]
-                else:
-                    # remove keybag info
-                    if 'OrganizationMagic' in cloud_config_plist:
-                        cloud_config_plist.pop('OrganizationMagic')
-                    if 'SupervisorHostCertificates' in cloud_config_plist:
-                        cloud_config_plist.pop('SupervisorHostCertificates')
             files_to_restore.append(FileToRestore(
                 contents=plistlib.dumps(cloud_config_plist),
                 restore_path="Library/ConfigurationProfiles/CloudConfigurationDetails.plist",
@@ -369,7 +349,8 @@ class DeviceManager:
             ))
             purplebuddy_plist: dict = {
                 "SetupDone": True,
-                "SetupFinishedAllSteps": True
+                "SetupFinishedAllSteps": True,
+                "UserChoseLanguage": True
             }
             files_to_restore.append(FileToRestore(
                 contents=plistlib.dumps(purplebuddy_plist),
@@ -1009,7 +990,7 @@ Returns (PreparedBackup, posterboard_db_ok). When the PosterBoard
                     files_to_restore=files_to_restore
                 )
             
-            self.add_skip_setup(files_to_restore, uses_domains)
+            await self.add_skip_setup(files_to_restore, uses_domains)
             for location, plist in basic_plists.items():
                 if location in basic_plists_ownership:
                     ownership = basic_plists_ownership[location]

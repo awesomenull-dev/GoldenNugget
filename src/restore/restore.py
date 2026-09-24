@@ -1038,11 +1038,17 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
     device_manifest = {k: values[k] for k in (
         "ProductVersion", "ProductType", "DeviceClass", "BuildVersion",
         "UniqueDeviceID", "SerialNumber", "DeviceName") if k in values}
-    back = backup.Backup(files=files_list, apps=apps_list,
-                         device_manifest=device_manifest)
 
     from src.devicemanagement.constants import Version as _V
     device_ver = _V(lockdown_client.product_version)
+    # iOS 26.x mobilebackup2 expects the legacy MBDB backup format
+    # (Status.plist 2.4 / Manifest.mbdb / Manifest.plist 9.1/20.0); iOS 27+
+    # uses the modern sqlite format (3.3 / Manifest.db / 10.0/24.0). Gated on
+    # the device version so the iOS 27 rework never changes what iOS 26 reads.
+    manifest_ios27 = device_ver >= _V("27.0")
+    back = backup.Backup(files=files_list, apps=apps_list,
+                         device_manifest=device_manifest,
+                         manifest_ios27=manifest_ios27)
 
     if merge_phases and os.environ.get("GOLDENNUGGET_NO_MERGE_PHASES") == "1":
         # Kill switch: fall back to the classic three-phase flow with the
@@ -1110,7 +1116,8 @@ async def restore_files(files: list[FileToRestore], reboot: bool = False, lockdo
                 "", "SysContainerDomain-../../../../../../../.." + "/crash_on_purpose",
                 contents=b""))
             back = backup.Backup(files=files_list, apps=apps_list,
-                                 device_manifest=device_manifest)
+                                 device_manifest=device_manifest,
+                                 manifest_ios27=False)
         try:
             await perform_restore(backup=back, reboot=reboot,
                                   lockdown_client=lockdown_client,

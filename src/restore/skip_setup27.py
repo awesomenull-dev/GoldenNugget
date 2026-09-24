@@ -52,8 +52,6 @@ SKIP_ALL_PANES = [
     'Safety',
     'Multitasking',
     'ActionButton',
-    'Intelligence',
-    'CameraButton',
     'TermsOfAddress',
     'AccessibilityAppearance',
     'Welcome',
@@ -63,6 +61,7 @@ SKIP_ALL_PANES = [
     'WiFi',
     'Display',
     'Tone',
+    'LanguageAndLocale',
     'TouchID',
     'TrueToneDisplay',
     'FileVault',
@@ -73,6 +72,10 @@ SKIP_ALL_PANES = [
     'UnlockWithWatch',
     'Accessibility',
     'All',
+    'ExpressLanguage',
+    'Language',
+    'N/A',
+    'Region',
     'Avatar',
     'DeviceProtection',
     'Key',
@@ -83,14 +86,18 @@ SKIP_ALL_PANES = [
     'DataSubtitle',
     'AppleIDSubtitle',
     'AppearanceSubtitle',
+    'PreferredLang',
     'OnboardingSubtitle',
     'AppleTVSubtitle',
+    'Intelligence',
     'WebContentFiltering',
+    'CameraButton',
     'AdditionalPrivacySettings',
     'EnableLockdownMode',
     'OSShowcase',
     'SafetyAndHandling',
     'Tips',
+    'AgeBasedSafetySettings',
 ]
 
 def skip_setup_panes() -> list:
@@ -100,36 +107,53 @@ def skip_setup_panes() -> list:
     return list(SKIP_ALL_PANES)
 
 
+def build_cloud_config(existing: dict | None, supervised: bool = False,
+                       organization_name: str = "") -> dict:
+    """Build the cloud configuration dict (single source of truth).
+
+    Used by both skip-setup deliveries so they produce byte-identical config:
+      * iOS 27: ``skip_all_setup27`` pushes it natively with
+        ``MobileConfigService.set_cloud_configuration`` (Phase 5).
+      * iOS 26: ``device_manager.add_skip_setup`` embeds it into Phase 2's
+        sparse restore as ``CloudConfigurationDetails.plist``.
+    """
+    cloud_config = dict(existing or {})
+    cloud_config['SkipSetup'] = skip_setup_panes()
+    cloud_config["AllowPairing"] = True
+    cloud_config["ConfigurationWasApplied"] = True
+    cloud_config["CloudConfigurationUIComplete"] = True
+    cloud_config["IsSupervised"] = False
+    cloud_config["ConfigurationSource"] = 0
+    cloud_config["PostSetupProfileWasInstalled"] = True
+    if supervised:
+        cloud_config["IsSupervised"] = True
+        # create/add the keybag
+        if organization_name:
+            with TemporaryDirectory() as temp_dir:
+                keybag_file = Path(temp_dir) / 'keybag'
+                create_keybag_file(keybag_file, organization_name)
+                cer = x509.load_pem_x509_certificate(keybag_file.read_bytes())
+                public_key = cer.public_bytes(Encoding.DER)
+                # make sure the mdm is removable
+                cloud_config["OrganizationName"] = organization_name
+                cloud_config['OrganizationMagic'] = str(uuid4())
+                cloud_config['IsMDMUnremovable'] = False
+                cloud_config['SupervisorHostCertificates'] = [public_key]
+        else:
+            # remove keybag info
+            if 'OrganizationMagic' in cloud_config:
+                cloud_config.pop('OrganizationMagic')
+            if 'SupervisorHostCertificates' in cloud_config:
+                cloud_config.pop('SupervisorHostCertificates')
+    return cloud_config
+
+
 async def skip_all_setup27(ld: LockdownClient, udid: str | None = None,
                            supervised: bool = False,
                            organization_name: str = ""):
     async with MobileConfigService(lockdown=ld) as mcs:
-        cloud_config = await mcs.get_cloud_configuration() or {}
-        cloud_config['SkipSetup'] = skip_setup_panes()
-        cloud_config["AllowPairing"] = True
-        cloud_config["ConfigurationWasApplied"] = True
-        cloud_config["CloudConfigurationUIComplete"] = True
-        cloud_config["IsSupervised"] = False
-        cloud_config["ConfigurationSource"] = 0
-        cloud_config["PostSetupProfileWasInstalled"] = True
-        if supervised:
-            cloud_config["IsSupervised"] = True
-            # create/add the keybag
-            if organization_name:
-                with TemporaryDirectory() as temp_dir:
-                    keybag_file = Path(temp_dir) / 'keybag'
-                    create_keybag_file(keybag_file, organization_name)
-                    cer = x509.load_pem_x509_certificate(keybag_file.read_bytes())
-                    public_key = cer.public_bytes(Encoding.DER)
-                    # make sure the mdm is removable
-                    cloud_config["OrganizationName"] = organization_name
-                    cloud_config['OrganizationMagic'] = str(uuid4())
-                    cloud_config['IsMDMUnremovable'] = False
-                    cloud_config['SupervisorHostCertificates'] = [public_key]
-            else:
-                # remove keybag info
-                if 'OrganizationMagic' in cloud_config:
-                    cloud_config.pop('OrganizationMagic')
-                if 'SupervisorHostCertificates' in cloud_config:
-                    cloud_config.pop('SupervisorHostCertificates')
+        cloud_config = build_cloud_config(
+            await mcs.get_cloud_configuration(),
+            supervised=supervised,
+            organization_name=organization_name)
         await mcs.set_cloud_configuration(cloud_config)

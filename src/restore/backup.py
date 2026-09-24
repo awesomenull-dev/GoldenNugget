@@ -6,6 +6,7 @@ import sqlite3
 from base64 import b64decode
 from hashlib import sha1
 from src.utils.file_to_restore import _FileMode
+from src.restore import mbdb
 from random import randbytes
 from typing import Optional
 
@@ -17,6 +18,9 @@ DEFAULT = _FileMode.S_IRUSR | _FileMode.S_IWUSR | _FileMode.S_IXUSR | _FileMode.
 class BackupFile:
     path: str
     domain: str
+
+    def to_record(self) -> mbdb.MbdbRecord:
+        raise NotImplementedError()
 
 @dataclass
 class ConcreteFile(BackupFile):
@@ -42,11 +46,53 @@ class ConcreteFile(BackupFile):
         self.size = len(contents)
         return contents
 
+    def to_record(self) -> mbdb.MbdbRecord:
+        if self.inode is None:
+            self.inode = int.from_bytes(randbytes(8), "big")
+        if self.hash == None or self.size == None:
+            self.read_contents()
+        return mbdb.MbdbRecord(
+            domain=self.domain,
+            filename=self.path,
+            link="",
+            hash=self.hash,
+            key=self.key,
+            mode=self.mode | _FileMode.S_IFREG,
+            inode=self.inode,
+            user_id=self.owner,
+            group_id=self.group,
+            mtime=int(datetime.now().timestamp()),
+            atime=int(datetime.now().timestamp()),
+            ctime=int(datetime.now().timestamp()),
+            size=self.size,
+            flags=self.flags,
+            properties=[]
+        )
+
 @dataclass
 class Directory(BackupFile):
     owner: int = 0
     group: int = 0
     mode: _FileMode = DEFAULT
+
+    def to_record(self) -> mbdb.MbdbRecord:
+        return mbdb.MbdbRecord(
+            domain=self.domain,
+            filename=self.path,
+            link="",
+            hash=b"",
+            key=b"",
+            mode=self.mode | _FileMode.S_IFDIR,
+            inode=0,
+            user_id=self.owner,
+            group_id=self.group,
+            mtime=int(datetime.now().timestamp()),
+            atime=int(datetime.now().timestamp()),
+            ctime=int(datetime.now().timestamp()),
+            size=0,
+            flags=4,
+            properties=[]
+        )
     
 @dataclass
 class AppBundle:
@@ -60,17 +106,34 @@ class Backup:
     files: list[BackupFile]
     apps: list[AppBundle]
     device_manifest: Optional[dict] = None
+    # iOS 26.x mobilebackup2 speaks the legacy MBDB backup format
+    # (Status.plist 2.4 / Manifest.mbdb / Manifest.plist 9.1/20.0 with an empty
+    # Lockdown). iOS 27+ uses the modern sqlite format (3.3 / Manifest.db /
+    # Manifest.plist 10.0/24.0 with Lockdown filled from device_manifest).
+    manifest_ios27: bool = True
 
     def write_to_directory(self, directory: Path):
-        for file in self.files:
-            if isinstance(file, ConcreteFile):
-                file_id = sha1((file.domain + "-" + file.path).encode()).digest().hex()
-                payload = directory / file_id[:2] / file_id
-                payload.parent.mkdir(parents=True, exist_ok=True)
-                with open(payload, "wb") as f:
-                    f.write(file.read_contents())
+        if not self.manifest_ios27:
+            # iOS 26 and below: legacy MBDB layout — every payload sits flat in
+            # the backup root, named by its sha1. The device's restore daemon
+            # reads the file set out of Manifest.mbdb.
+            for file in self.files:
+                if isinstance(file, ConcreteFile):
+                    with open(directory / sha1((file.domain + "-" + file.path).encode()).digest().hex(), "wb") as f:
+                        f.write(file.read_contents())
+            with open(directory / "Manifest.mbdb", "wb") as f:
+                f.write(self.generate_manifest_db().to_bytes())
+        else:
+            # iOS 27+: modern sqlite manifest with payloads under <xx>/<fileID>.
+            for file in self.files:
+                if isinstance(file, ConcreteFile):
+                    file_id = sha1((file.domain + "-" + file.path).encode()).digest().hex()
+                    payload = directory / file_id[:2] / file_id
+                    payload.parent.mkdir(parents=True, exist_ok=True)
+                    with open(payload, "wb") as f:
+                        f.write(file.read_contents())
 
-        self._write_manifest_db(directory)
+            self._write_manifest_db(directory)
 
         with open(directory / "Status.plist", "wb") as f:
             f.write(self.generate_status())
@@ -160,6 +223,12 @@ class Backup:
         finally:
             conn.close()
     
+    def generate_manifest_db(self): # Manifest.mbdb
+        records = []
+        for file in self.files:
+            records.append(file.to_record())
+        return mbdb.Mbdb(records=records)
+    
     def generate_status(self) -> bytes: # Status.plist
         return plistlib.dumps({
             "BackupState": "new",
@@ -167,7 +236,7 @@ class Backup:
             "IsFullBackup": False,
             "SnapshotState": "finished",
             "UUID": "00000000-0000-0000-0000-000000000000",
-            "Version": "3.3"
+            "Version": "3.3" if self.manifest_ios27 else "2.4"
         })
     
     def generate_manifest(self) -> bytes: # Manifest.plist
@@ -201,10 +270,11 @@ class Backup:
 	A0tUWVAAAAAEAAAAAFdQS1kAAAAocYda2jyYzzSKggRPw/qgh6QPESlkZedgDUKpTr4Z
 	Z8FDgd7YoALY1g=="""),
             "Lockdown": self.device_manifest or {},
-            "SystemDomainsVersion": "24.0",
-            "Version": "10.0",
-            "IsEncrypted": False
+            "SystemDomainsVersion": "24.0" if self.manifest_ios27 else "20.0",
+            "Version": "10.0" if self.manifest_ios27 else "9.1"
         }
+        if self.manifest_ios27:
+            plist["IsEncrypted"] = False
         # add the apps
         if len(self.apps) > 0:
             plist["Applications"] = {}

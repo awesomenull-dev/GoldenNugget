@@ -50,6 +50,14 @@ class IOSIconThemesPage(QWidget):
         self._hint = hint
         self.content_layout.addWidget(hint)
 
+        reset_btn = QPushButton(QCoreApplication.translate(
+            "Nugget", "Reset Icon Themes"))
+        reset_btn.setObjectName("resetIconThemes")
+        reset_btn.setCursor(Qt.PointingHandCursor)
+        reset_btn.clicked.connect(self._reset_themes)
+        self._reset_btn = reset_btn
+        self.content_layout.addWidget(reset_btn)
+
         download_btn = QPushButton(QCoreApplication.translate(
             "Nugget", "Download Icon Packs"))
         download_btn.setObjectName("downloadIconPacks")
@@ -74,14 +82,6 @@ class IOSIconThemesPage(QWidget):
         self._themes_box = QVBoxLayout()
         self._themes_box.setSpacing(8)
         self.content_layout.addLayout(self._themes_box)
-
-        reset_btn = QPushButton(QCoreApplication.translate(
-            "Nugget", "Reset Icon Themes"))
-        reset_btn.setObjectName("resetIconThemes")
-        reset_btn.setCursor(Qt.PointingHandCursor)
-        reset_btn.clicked.connect(self._reset_themes)
-        self._reset_btn = reset_btn
-        self.content_layout.addWidget(reset_btn)
 
         self.content_layout.addStretch()
 

@@ -18,7 +18,7 @@ from .inject import _is_encrypted_backup
 from .protective import (
     PreparedBackup,
     clean_backup_for_restore,
-    inject_file_into_backup,
+    inject_files_into_backup,
     log_error,
     log_warn,
     log_info,
@@ -38,6 +38,7 @@ from pymobiledevice3.exceptions import ConnectionTerminatedError, PyMobileDevice
 
 from src.exceptions.nugget_exception import NuggetException
 from src.exceptions.device_errors import is_transient_restore_error
+from src.exceptions.device_errors import is_connection_error
 
 def concat_regular_file(file: FileToRestore, files_list: list[FileToRestore], last_domain: str, last_path: str):
     path, name = os.path.split(file.restore_path)
@@ -569,7 +570,6 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
 
         # Prune Manifest.db + orphan payloads in a worker thread
         removed_rows = removed_files = 0
-        injected = failed = 0
         missing_payloads = []
         if backup_complete:
             removed_rows, removed_files = await asyncio.to_thread(
@@ -591,8 +591,11 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
         # sparse restores are rejected there — see the pb_via_protective note
         # in restore_files. On unencrypted backups ALL tweak files are injected
         # here (see restore_files); the sparse phase (Phase 2) then has nothing
-        # left to deliver.
+        # left to deliver. The batch keeps Phase 1 fast for large payloads: one
+        # Manifest.db transaction, one inode scan, cached donor/directory state
+        # (see inject_files_into_backup).
         if backup_complete:
+            batch = []
             for f in (inject_files or []):
                 rel = f.restore_path.lstrip("/")
                 data = f.contents
@@ -601,18 +604,15 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
                         data = fh.read()
                 if isinstance(data, str):
                     data = data.encode("utf-8")
-                if inject_file_into_backup(
-                        backup_root, udid, f.domain, rel, data,
-                        mode=_FileMode.S_IFREG | 0o644,
-                        owner=f.owner, group=f.group,
-                        manifest_password=manifest_password):
-                    injected += 1
-                else:
-                    failed += 1
-            if inject_files:
+                batch.append((f.domain, rel, data,
+                              _FileMode.S_IFREG | 0o644, f.owner, f.group))
+            if batch:
+                injected, unchanged, failed = await asyncio.to_thread(
+                    inject_files_into_backup, backup_root, udid, batch,
+                    manifest_password)
                 level = log_error if failed else log_info
                 level(f"Tweak files delivered via protective restore: "
-                      f"{injected} ok, {failed} failed")
+                      f"{injected} ok, {unchanged} unchanged, {failed} failed")
 
             # Last line of defence against MBErrorDomain/205: the device requests
             # every regular-file row's payload — a single missing one aborts the
@@ -756,6 +756,29 @@ async def _restore_ios27(back: backup.Backup, reboot: bool,
                             pass
                         lc = await _wait_for_device(udid, progress_callback,
                                                     prompt_choice=prompt_choice)
+                    except NuggetException as e:
+                        # `_on_failure` wraps the last retry error into a
+                        # NuggetException (raise ... from e), so a merged-mode
+                        # self-reboot surfaces here wrapped instead of as a raw
+                        # ConnectionTerminatedError/OSError. Unwrap and route
+                        # connection drops through the classic reconnect path
+                        # too; anything else (device-locked, invalid service,
+                        # real protocol errors) keeps its friendly message.
+                        cause = e.__cause__ or e.__context__ or e
+                        if not is_connection_error(cause):
+                            raise
+                        if not merge_phases or merge_fallback_done:
+                            raise
+                        log_warn(f"Phase 3: merged-mode session dropped "
+                                 f"({type(cause).__name__}: {cause}) — falling "
+                                 "back to the classic reconnect path")
+                        try:
+                            await lc.close()
+                        except Exception:
+                            pass
+                        lc = await _wait_for_device(udid, progress_callback,
+                                                    prompt_choice=prompt_choice)
+                        merge_fallback_done = True
                     except (ConnectionTerminatedError, ConnectionError,
                             OSError, asyncio.TimeoutError) as e:
                         # Merged mode reuses the Phase 2 session; if the device

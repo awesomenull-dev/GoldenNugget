@@ -60,6 +60,7 @@ from src.restore.inject import (  # noqa: F401  (re-exported public API)
     _is_encrypted_backup,
     _validate_sqlite_db,
     inject_file_into_backup,
+    inject_files_into_backup,
 )
 from src.restore.protective_cache import (  # noqa: F401  (re-exported public API)
     CACHE_PERSIST_MIN_GB,

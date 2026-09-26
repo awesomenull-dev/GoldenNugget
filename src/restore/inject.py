@@ -208,7 +208,9 @@ def _build_mbdir_blob(relative_path: str, mode: int = 16877) -> bytes:
     )
 
 
-def _ensure_directory_rows(conn, domain: str, relative_dir: str) -> None:
+def _ensure_directory_rows(conn, domain: str, relative_dir: str,
+                           next_inode: int = None, known_dirs: set = None,
+                           donor_blob: bytes = None) -> int:
     """Insert flags=2 directory rows for every missing path component.
 
     The iOS 27 restore agent skips a file whose parent directories have no
@@ -216,23 +218,43 @@ def _ensure_directory_rows(conn, domain: str, relative_dir: str) -> None:
     exist in Manifest.db. Rows are cloned from a real directory blob of the
     backup (byte-exact metadata) with a unique inode; falls back to a
     hand-built blob when the backup has no directory rows at all.
+
+    Batch-aware: when ``next_inode`` / ``known_dirs`` / ``donor_blob`` are
+    supplied the directory state is reused across calls — ``known_dirs`` is a
+    set of ``(domain, relativePath)`` tuples already present (so repeated
+    chains skip the SELECT) and ``next_inode`` is an in-memory counter picked
+    up where the previous call left it, avoiding a fresh manifest scan per
+    file. Returns the current inode counter (one call passes it forward).
     """
-    donor = conn.execute(
-        "SELECT file FROM Files WHERE flags = 2 AND file IS NOT NULL LIMIT 1"
-    ).fetchone()
-    donor_blob = donor[0] if donor else None
-    inode = _max_inode_in_manifest(conn)
+    if donor_blob is None:
+        donor = conn.execute(
+            "SELECT file FROM Files WHERE flags = 2 AND file IS NOT NULL LIMIT 1"
+        ).fetchone()
+        donor_blob = donor[0] if donor else None
+    if next_inode is None:
+        next_inode = _max_inode_in_manifest(conn)
     rel = ""
     for component in [""] + (relative_dir.split("/") if relative_dir else []):
         if component:
             rel = f"{rel}/{component}" if rel else component
-        exists = conn.execute(
-            "SELECT 1 FROM Files WHERE domain = ? AND relativePath = ? AND flags = 2",
-            (domain, rel),
-        ).fetchone()
-        if exists:
-            continue
-        inode += 1
+        if known_dirs is not None:
+            if (domain, rel) in known_dirs:
+                continue
+            exists = conn.execute(
+                "SELECT 1 FROM Files WHERE domain = ? AND relativePath = ? AND flags = 2",
+                (domain, rel),
+            ).fetchone()
+            if exists:
+                known_dirs.add((domain, rel))
+                continue
+        else:
+            exists = conn.execute(
+                "SELECT 1 FROM Files WHERE domain = ? AND relativePath = ? AND flags = 2",
+                (domain, rel),
+            ).fetchone()
+            if exists:
+                continue
+        next_inode += 1
         if donor_blob is not None:
             blob = plistlib.loads(donor_blob)
             objects = blob["$objects"]
@@ -241,7 +263,7 @@ def _ensure_directory_rows(conn, domain: str, relative_dir: str) -> None:
         else:
             blob = plistlib.loads(_build_mbdir_blob(rel))
             objects = blob["$objects"]
-        objects[1]["InodeNumber"] = inode
+        objects[1]["InodeNumber"] = next_inode
         blob = plistlib.dumps(blob, fmt=plistlib.FMT_BINARY)
         dir_id = hashlib.sha1(f"{domain}-{rel}".encode("utf-8")).hexdigest()
         conn.execute(
@@ -249,6 +271,9 @@ def _ensure_directory_rows(conn, domain: str, relative_dir: str) -> None:
             "VALUES (?, ?, ?, ?, ?)",
             (dir_id, domain, rel, 2, sqlite3.Binary(blob)),
         )
+        if known_dirs is not None:
+            known_dirs.add((domain, rel))
+    return next_inode
 
 
 def _max_inode_in_manifest(conn) -> int:
@@ -266,13 +291,9 @@ def _max_inode_in_manifest(conn) -> int:
     return max_inode
 
 
-def inject_file_into_backup(backup_dir: "str | Path", udid: str, domain: str,
-                            relative_path: str, contents: bytes,
-                            mode: Optional[int] = None,
-                            owner: Optional[int] = None,
-                            group: Optional[int] = None,
-                            manifest_password: str = "") -> bool:
-    """Add a file to a pruned backup's Manifest.db and payload store.
+def inject_files_into_backup(backup_dir: "str | Path", udid: str, files: list,
+                             manifest_password: str = ""):
+    """Add many files to a pruned backup in a single Manifest.db transaction.
 
     The iOS 27 "safe state recovery" wipe clears HomeDomain files that were
     staged by the sparse restore but are absent from the protective backup.
@@ -280,15 +301,25 @@ def inject_file_into_backup(backup_dir: "str | Path", udid: str, domain: str,
     content so Phase 3's mobilebackup2 restore lays them down natively (AFC
     cannot reach HomeDomain, so that is the only reliable path on iOS 27).
 
-    The iOS 27 restore agent requires a well-formed regular-file blob with a
-    real, *unique* inode (it deduplicates by inode — a clone sharing the
-    donor's inode gets restored with the donor's content, and a fresh blob
-    without an inode is skipped outright). The mode is normalized to a
-    regular 0644-style file so the agent accepts the row.
+    Batch mode: the Manifest.db connection is opened once, the maximum inode
+    is scanned once, and everything else rides on in-memory state carried
+    across the whole batch — an inode counter, per-domain donor blobs, and
+    the set of known directory rows. Payloads whose bytes already match the
+    file on disk are left untouched (no unlink, no rewrite). All rows are
+    committed together at the end. This removes the per-file
+    open-Connection / scan-max-inode / prepare-dirs / commit cycle that made
+    Phase 1 quadratic for large tweak payloads.
+
+    ``files`` is a list of ``(domain, relative_path, contents, mode, owner,
+    group)`` tuples. The iOS 27 restore agent requires a well-formed
+    regular-file blob with a real, *unique* inode (it deduplicates by inode —
+    a clone sharing the donor's inode gets restored with the donor's content,
+    and a fresh blob without an inode is skipped outright). The mode is
+    normalized to a regular 0644-style file so the agent accepts the row.
 
     The file ID follows the standard ``SHA1("<domain>-<relativePath>")``
     convention and the payload is placed in the ``<aa>/<fileID>`` layout the
-    restore agent expects. Returns True when the file was added.
+    restore agent expects. Returns ``(injected, unchanged, failed)``.
 
     Encrypted backups are NOT supported here: their payloads are written to
     disk encrypted (each with a per-file key wrapped by the manifest keybag),
@@ -302,69 +333,118 @@ def inject_file_into_backup(backup_dir: "str | Path", udid: str, domain: str,
         if (Path(backup_dir) / "Manifest.db").exists():
             device_dir = Path(backup_dir)
         else:
-            return False
+            return 0, 0, len(files)
 
     manifest_db = device_dir / "Manifest.db"
     if not manifest_db.exists():
-        return False
+        return 0, 0, len(files)
 
-    encrypted = _is_encrypted_backup(device_dir)
-    if encrypted:
+    if _is_encrypted_backup(device_dir):
         # See the docstring: plaintext injection into an encrypted backup makes
         # the Phase 3 restore fail with MBErrorDomain/205.
-        _logger.warning(f"Skipping injection into encrypted backup for {domain}/{relative_path}")
-        return False
+        _logger.warning(f"Skipping injection into encrypted backup for {len(files)} files")
+        return 0, 0, len(files)
 
     if not _validate_sqlite_db(manifest_db):
-        _logger.error(f"Manifest.db at {manifest_db} is not a valid SQLite database. Cannot inject file.")
-        return False
-
-    file_id = hashlib.sha1(f"{domain}-{relative_path}".encode("utf-8")).hexdigest()
+        _logger.error(f"Manifest.db at {manifest_db} is not a valid SQLite database. Cannot inject files.")
+        return 0, 0, len(files)
 
     conn = sqlite3.connect(str(manifest_db))
+    injected = unchanged = 0
     try:
-        # The restore agent skips a file whose parent directory rows are
-        # missing, so ensure the whole directory chain first.
-        dir_path, _ = os.path.split(relative_path)
-        _ensure_directory_rows(conn, domain, dir_path)
+        # Batch-level state, computed once instead of per file:
+        #   next_inode   - in-memory inode counter (one manifest scan total)
+        #   donor_cache  - per-domain donor blob (the device's own row format)
+        #   known_dirs   - directory rows already present / inserted
+        #   dir_donor    - one real directory blob reused for dir rows
+        next_inode = _max_inode_in_manifest(conn)
+        donor_cache: dict = {}
+        known_dirs: set = set()
+        dir_donor = conn.execute(
+            "SELECT file FROM Files WHERE flags = 2 AND file IS NOT NULL LIMIT 1"
+        ).fetchone()
+        dir_donor = dir_donor[0] if dir_donor else None
+        for domain, relative_path, contents, mode, owner, group in files:
+            file_id = hashlib.sha1(f"{domain}-{relative_path}".encode("utf-8")).hexdigest()
 
-        # The restore agent validates the blob and deduplicates by inode:
-        # pick a donor the agent accepts, then stamp a unique inode so the
-        # restored file cannot be confused with the donor's own file.
-        flags, blob = 1, None
-        donor = _pick_donor_blob(conn, domain, relative_path)
-        unique_inode = _max_inode_in_manifest(conn) + 1
-        safe_mode = (mode or 33188) & 0o100777
-        if safe_mode & 0o777 == 0:
-            safe_mode |= 0o644
-        if donor is None:
-            blob = _build_mbfile_blob(
-                relative_path, contents,
-                mode=safe_mode, owner=owner or 501, group=group or 501)
-        else:
-            blob = _patch_donor_blob(
-                donor, relative_path, contents,
-                mode=safe_mode, owner=owner or 501, group=group or 501)
-        patched = plistlib.loads(blob)
-        patched["$objects"][1]["InodeNumber"] = unique_inode
-        blob = plistlib.dumps(patched, fmt=plistlib.FMT_BINARY)
-        payload = device_dir / file_id[:2] / file_id
-        payload.parent.mkdir(parents=True, exist_ok=True)
-        # The working copy hardlinks payloads back to the cache master; writing
-        # through such a link would overwrite the master's pristine payload with
-        # tweaked content and corrupt every later apply. Break the link first so
-        # the master keeps its original bytes.
-        if payload.exists() or payload.is_symlink():
-            payload.unlink(missing_ok=True)
-        payload.write_bytes(contents)
-        conn.execute(
-            "INSERT OR REPLACE INTO Files (fileID, domain, relativePath, flags, file) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (file_id, domain, relative_path, flags, sqlite3.Binary(blob)),
-        )
+            # The restore agent skips a file whose parent directory rows are
+            # missing, so ensure the whole directory chain first.
+            dir_path, _ = os.path.split(relative_path)
+            next_inode = _ensure_directory_rows(
+                conn, domain, dir_path, next_inode, known_dirs, dir_donor)
+
+            # The restore agent validates the blob and deduplicates by inode:
+            # pick a donor the agent accepts, then stamp a unique inode so the
+            # restored file cannot be confused with the donor's own file.
+            donor = donor_cache.get(domain)
+            if donor is None:
+                donor = _pick_donor_blob(conn, domain, relative_path)
+                donor_cache[domain] = donor
+            unique_inode = next_inode + 1
+            next_inode += 1
+            safe_mode = (mode or 33188) & 0o100777
+            if safe_mode & 0o777 == 0:
+                safe_mode |= 0o644
+            if donor is None:
+                blob = _build_mbfile_blob(
+                    relative_path, contents,
+                    mode=safe_mode, owner=owner or 501, group=group or 501)
+            else:
+                blob = _patch_donor_blob(
+                    donor, relative_path, contents,
+                    mode=safe_mode, owner=owner or 501, group=group or 501)
+            patched = plistlib.loads(blob)
+            patched["$objects"][1]["InodeNumber"] = unique_inode
+            blob = plistlib.dumps(patched, fmt=plistlib.FMT_BINARY)
+            payload = device_dir / file_id[:2] / file_id
+            payload.parent.mkdir(parents=True, exist_ok=True)
+            # The working copy hardlinks payloads back to the cache master;
+            # writing through such a link would overwrite the master's pristine
+            # payload with tweaked content and corrupt every later apply. Break
+            # the link before writing — but only when the bytes actually differ;
+            # an identical payload is left alone entirely.
+            if payload.is_file() and not payload.is_symlink():
+                try:
+                    if payload.read_bytes() == contents:
+                        unchanged += 1
+                        conn.execute(
+                            "INSERT OR REPLACE INTO Files (fileID, domain, relativePath, flags, file) "
+                            "VALUES (?, ?, ?, ?, ?)",
+                            (file_id, domain, relative_path, 1, sqlite3.Binary(blob)),
+                        )
+                        continue
+                except OSError:
+                    pass
+            if payload.exists() or payload.is_symlink():
+                payload.unlink(missing_ok=True)
+            payload.write_bytes(contents)
+            conn.execute(
+                "INSERT OR REPLACE INTO Files (fileID, domain, relativePath, flags, file) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (file_id, domain, relative_path, 1, sqlite3.Binary(blob)),
+            )
+            injected += 1
         conn.commit()
-        ok = True
     finally:
         conn.close()
 
-    return ok
+    return injected, unchanged, len(files) - injected - unchanged
+
+
+def inject_file_into_backup(backup_dir: "str | Path", udid: str, domain: str,
+                            relative_path: str, contents: bytes,
+                            mode: Optional[int] = None,
+                            owner: Optional[int] = None,
+                            group: Optional[int] = None,
+                            manifest_password: str = "") -> bool:
+    """Add a single file to a pruned backup's Manifest.db and payload store.
+
+    Thin single-file wrapper around ``inject_files_into_backup`` (see its
+    docstring for the full contract). Returns True when the file was added
+    (or left in place because its payload already matched).
+    """
+    injected, unchanged, failed = inject_files_into_backup(
+        backup_dir, udid,
+        [(domain, relative_path, contents, mode, owner, group)],
+        manifest_password=manifest_password)
+    return (injected + unchanged) == 1 and failed == 0

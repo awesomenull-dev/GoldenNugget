@@ -1,0 +1,23 @@
+# Legacy build variant for older hosts (e.g. a 2016 MacBook Pro capped at
+# macOS 12 Monterey). Pins:
+#   * PySide6 6.9.x  -> the last line that supports Python 3.9 AND ships a
+#     macosx_12_0 universal2 wheel (6.10+ wheels target macOS 13+, and 6.11+
+#     drops Python 3.9 entirely). Keeping this at 6.9 lowers the app's minimum
+#     macOS to 12 so old Intel Macs can still run it.
+#   * numpy <2.1     -> numpy 2.1+ requires Python 3.10+; on 3.9 pip would
+#     skip it automatically, but this makes the intent explicit. opencv-python
+#     still pulls numpy>=2, resolving to 2.0.x here.
+# Everything else matches requirements.txt (all already support Python 3.9).
+#
+# NOTE: the recipe-run and helper entry points (compile.py, nugget_cli.py,
+# main_app.py, restore_cache.py, skip_setup.py, restore.py, apply_wallpaper.py)
+# use the `from __future__ import annotations` import so 3.10+ `X | Y` union
+# annotations stay as strings and never get evaluated at import time on 3.9.
+pymobiledevice3==10.7.1
+PySide6-Essentials==6.9.2; sys_platform != 'linux'
+PySide6==6.9.2; sys_platform == 'linux'
+PyInstaller==6.22.1
+ffmpeg-python==0.2.0
+opencv-python==4.14.0.94
+pillow-heif==1.7.0; sys_platform == 'linux'
+numpy<2.1; python_version < '3.10'

@@ -13,6 +13,8 @@ All device I/O runs on a background ``QThread`` so the UI stays responsive
 while the lockdown service is queried.
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import os

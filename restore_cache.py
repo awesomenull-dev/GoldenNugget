@@ -33,6 +33,8 @@ Usage:
     python3 restore_cache.py --timeout 20    # minutes to wait for unlock
 """
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 import os

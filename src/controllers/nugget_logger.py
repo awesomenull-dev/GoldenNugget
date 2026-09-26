@@ -13,6 +13,8 @@ Paths (first match wins):
   to ``~/.nugget_logs`` when that is not writable.
 """
 
+from __future__ import annotations
+
 import logging
 import os
 import sys

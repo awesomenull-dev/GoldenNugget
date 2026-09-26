@@ -192,11 +192,12 @@ The application itself can be compiled by running `compile.py`.
 See [CONTRIBUTING.md](https://github.com/awesomenull-dev/GoldenNugget/blob/main/CONTRIBUTING.md), want fork instead? Then see [FORKING.md](https://github.com/awesomenull-dev/GoldenNugget/blob/main/FORKING.md)
 
 ## Credits
-- Translations crowdsourced using [gNugget-i18n repository][i18n]
-- [LEGACY] Old translations was crowdsourced using [Nugget POEditor][POEditorJoin]. Thank you everyone who assisted in the translation effort!
-- [LeminLimez] for creating Nugget.
+- [awesomenull] Lead developer
 - [Wind0ws11Aero] for helping with development a lot.
+- Translations crowdsourced using [gNugget-i18n repository][i18n]
+- [LeminLimez] for creating Nugget.
 - [0xjonhnnydev] for [AirLift]
+- [LEGACY] Old translations was crowdsourced using [Nugget POEditor][POEditorJoin]. Thank you everyone who assisted in the translation effort!
 - [PosterRestore][PosterRestoreDiscord] for their help with PosterBoard
   - Special thanks to [dootskyre][dootskyreX], [Middo][MiddoX], [dulark][dularkGitHub], forcequitOS, and pingubow for their work on nugget. It would not have been possible without them!
   - Thanks to [Snoolie for aar handling][python-aar-stuffGitHub]!
@@ -243,4 +244,5 @@ See [CONTRIBUTING.md](https://github.com/awesomenull-dev/GoldenNugget/blob/main/
 [iTechExpertTwitter]: https://twitter.com/iTechExpert21
 [server]: https://discord.gg/Rm6r4zeE3y
 [0xjonhnnydev]: https://github.com/0xjohnnydev
+[awesomenull]: https://github.com/awesomenull-dev
 [AirLift]: https://github.com/0xjohnnydev/airlift
